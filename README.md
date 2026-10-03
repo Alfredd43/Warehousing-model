@@ -44,11 +44,11 @@ Run every command from the **repository root** (the folder that contains `docker
 ### Step 1: Get the code (once)
 
 ```bash
-git clone https://github.com/hong-tiantian/PetHaven_data_solution.git
+git clone https://github.com/Alfredd43/Warehousing-model.git
 ```
 
 ```bash
-cd PetHaven_data_solution
+cd Warehousing-model
 ```
 
 ### Step 2: Start Docker Desktop

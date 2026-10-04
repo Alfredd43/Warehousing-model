@@ -69,36 +69,49 @@ SELECT event_type, units, event_ts, date_key, source_ref
 
 
 -- -----------------------------------------------------------------------------
--- 3. Online orders (Source 3). The customer collects at the store closest
---    to their postcode; lines that store cannot supply come from the
---    next-nearest store that can, and are transferred.
+-- 3. Online shopping (Source 3): bag -> checkout. Checkout checks REAL store
+--    stock BEFORE payment; if any item is unavailable, nothing is charged.
+--    Items are collected at the store closest to the customer; items that
+--    store lacks come from the next-nearest store and are transferred.
 -- -----------------------------------------------------------------------------
--- 3a. One item: Bondi customer (2026) buys 2 x WEB-10001 -> held at Bondi.
-SELECT online.place_online_order('2026', 'WEB-10001', 2);                 -- order 9
-SELECT * FROM online.web_order_line WHERE order_no = 9;
+-- 3a. One item: Bondi customer (2026) buys 2 x WEB-10001 -> paid, held at Bondi.
+SELECT online.place_online_order('2026', 'WEB-10001', 2);                 -- bag 9 -> order 8
+SELECT * FROM online.web_order_line WHERE order_no = 8;
 SELECT * FROM online.online_stock WHERE web_sku = 'WEB-10001';           -- website lowered by 2 at once
 
--- 3b. Three items, not all at Bondi: duck (Bondi has it), aquarium kit
---     (Bondi has none, Newtown has 1) and 2 dog beds (no store has 2).
+-- 3b. Bag with three items: duck (Bondi has it), aquarium kit (Bondi has
+--     none, Newtown has 1) and 2 dog beds (no single store has 2).
 SELECT store_no, barcode, in_store_quantity, reserved_quantity FROM store_ops.store_stock
  WHERE barcode IN ('9300601001095', '9300601001187', '9300601001132') ORDER BY barcode, store_no;
-SELECT online.place_online_order('2026', ARRAY['WEB-10009', 'WEB-10018', 'WEB-10013'], ARRAY[1, 1, 2]);  -- order 10
-SELECT o.order_no, o.pickup_cp_code, o.status, l.line_no, l.web_sku, l.quantity, l.source_cp_code, l.line_status
-  FROM online.web_order o JOIN online.web_order_line l USING (order_no) WHERE o.order_no = 10 ORDER BY l.line_no;
-SELECT * FROM store_ops.reservation WHERE web_order_ref = '10';           -- kit held at Newtown for Bondi
-SELECT * FROM dw.rpt_shortfall_orders WHERE order_no = '10';              -- beds: split across stores
+SELECT online.create_basket('2026');                                      -- bag 10
+SELECT online.add_to_basket(10, 'WEB-10009', 1);
+SELECT online.add_to_basket(10, 'WEB-10018', 1);
+SELECT online.add_to_basket(10, 'WEB-10013', 2);
+SELECT * FROM online.basket_item WHERE basket_id = 10;                    -- the website showed them in stock
+
+SELECT online.checkout(10);                                               -- NULL = BLOCKED before payment
+SELECT a.attempt_no, a.outcome, a.pickup_cp_code, i.web_sku, i.quantity, i.website_qty_shown, i.result, i.source_cp_code
+  FROM online.checkout_attempt a JOIN online.checkout_attempt_item i USING (attempt_no)
+ WHERE a.basket_id = 10 ORDER BY a.attempt_no, i.web_sku;               -- beds unavailable; nothing held
+SELECT * FROM dw.rpt_checkout_blocked WHERE basket = 'basket 10';         -- reason: split across stores
+
+-- The customer removes the beds and checks out again -> paid.
+SELECT online.remove_from_basket(10, 'WEB-10013');
+SELECT online.checkout(10);                                               -- order 9
+SELECT * FROM online.web_order_line WHERE order_no = 9;                   -- duck from Bondi, kit from Newtown
+SELECT * FROM store_ops.reservation WHERE web_order_ref = '9';
 
 -- 3c. Transfer: Newtown sends the kit, Bondi receives it.
-SELECT * FROM dw.rpt_open_reservations WHERE order_no = '10';             -- waiting to be sent
-SELECT store_ops.dispatch_order_transfers('10');
-SELECT * FROM dw.rpt_open_reservations WHERE order_no = '10';             -- in transit
-SELECT store_ops.collect_order('10');                                     -- refused: not arrived yet
-SELECT store_ops.receive_order_transfers('10');
-SELECT * FROM dw.rpt_open_reservations WHERE order_no = '10';             -- ready for collection
+SELECT * FROM dw.rpt_open_reservations WHERE order_no = '9';              -- kit waiting to be sent
+SELECT store_ops.dispatch_order_transfers('9');
+SELECT * FROM dw.rpt_open_reservations WHERE order_no = '9';              -- in transit
+SELECT store_ops.collect_order('9');                                      -- refused: not arrived yet
+SELECT store_ops.receive_order_transfers('9');
+SELECT * FROM dw.rpt_open_reservations WHERE order_no = '9';              -- ready for collection
 SELECT f.event_type, s.store_code, pk.store_code AS pickup, f.quantity_change, f.reserved_change, f.source_ref
   FROM dw.fact_stock_event f JOIN dw.dim_store s USING (store_key)
   LEFT JOIN dw.dim_store pk ON pk.store_key = f.pickup_store_key
- WHERE f.order_ref = '10' ORDER BY f.event_id;
+ WHERE f.order_ref = '9' ORDER BY f.event_id;
 
 
 -- -----------------------------------------------------------------------------
@@ -115,24 +128,25 @@ SELECT * FROM dw.rpt_online_staleness;                          -- pending 0, ou
 
 
 -- -----------------------------------------------------------------------------
--- 5. Shortfall: sell the last aquarium kit in store, then order it online
---    before the next sync. The website still shows stock.
+-- 5. Stale website: sell the last aquarium kit in store, then try to buy it
+--    online before the next sync. The website still shows it, so it goes in
+--    the bag - but checkout blocks it before payment.
 -- -----------------------------------------------------------------------------
-SELECT store_no, in_store_quantity FROM store_ops.store_stock WHERE barcode = '9300601001187' ORDER BY store_no;
+SELECT store_no, in_store_quantity, reserved_quantity FROM store_ops.store_stock WHERE barcode = '9300601001187' ORDER BY store_no;
 SELECT store_ops.record_sale('105', ARRAY['9300601001187'], ARRAY[1]);
 SELECT * FROM online.online_stock WHERE web_sku = 'WEB-10018';           -- still says 1
-SELECT online.place_online_order('2026', 'WEB-10018', 1);                 -- order 11
-SELECT * FROM dw.rpt_shortfall_orders ORDER BY ordered_at;
+SELECT online.place_online_order('2026', 'WEB-10018', 1);                 -- NULL: blocked, nothing charged
+SELECT * FROM dw.rpt_checkout_blocked ORDER BY attempted_at;             -- reason: stale website number
 
 
 -- -----------------------------------------------------------------------------
--- 6. Click and collect: finish the seed's 3-item order 6, cancel overdue order 3
+-- 6. Click and collect: finish the seed's 3-item order 5, cancel overdue order 3
 -- -----------------------------------------------------------------------------
-SELECT * FROM dw.rpt_open_reservations ORDER BY order_no, product_code;  -- order 6 in transit, order 3 overdue
-SELECT store_ops.receive_order_transfers('6');
-SELECT store_ops.collect_order('6');
+SELECT * FROM dw.rpt_open_reservations ORDER BY order_no, product_code;  -- order 5 in transit, order 3 overdue
+SELECT store_ops.receive_order_transfers('5');
+SELECT store_ops.collect_order('5');
 SELECT store_ops.cancel_order('3', 'Not collected within 3 days');       -- beds back on Penrith's shelf
-SELECT store_ops.collect_order('10');
+SELECT store_ops.collect_order('9');
 SELECT * FROM dw.rpt_open_reservations ORDER BY order_no, product_code;
 
 
@@ -158,7 +172,7 @@ SELECT * FROM etl.etl_run ORDER BY etl_run_id DESC LIMIT 5;
 -- -----------------------------------------------------------------------------
 SELECT * FROM dw.rpt_current_stock_by_store WHERE store_code = 'S01' ORDER BY product_code;  -- Report 1
 SELECT * FROM dw.rpt_online_staleness;                                                    -- Report 2
-SELECT * FROM dw.rpt_shortfall_orders ORDER BY ordered_at;                                -- Report 3
+SELECT * FROM dw.rpt_checkout_blocked ORDER BY attempted_at;                              -- Report 3
 SELECT * FROM dw.rpt_daily_sales ORDER BY full_date, store_name, category;                -- Report 4
 SELECT * FROM dw.rpt_open_reservations ORDER BY reserved_at;                              -- Report 5
 SELECT * FROM dw.rpt_reconciliation WHERE status <> 'match';                              -- Report 6

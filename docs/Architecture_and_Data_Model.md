@@ -9,7 +9,7 @@ This document is the solution design behind the prototype in `workspace/`. It co
 
 ## 1. Problem in one paragraph
 
-PetHaven has five Sydney stores and an online store. The website shows **one combined available quantity per product** for all five stores, but that number is only refreshed when a **sync** is run. Between syncs, in-store sales, supplier deliveries and store-side cancellations change the real stock without the website knowing. The website can therefore accept a click-and-collect order that no store can supply (a **shortfall**), or hide stock that is really there. The prototype integrates the three operational systems into one data warehouse, uses the warehouse's single history of stock events to recalculate and publish the website number on demand, and reports how stale the website is, what each sync corrected, and which online orders were affected.
+PetHaven has five Sydney stores and an online store. The website shows **one combined available quantity per product** for all five stores, but that number is only refreshed when a **sync** is run. Between syncs, in-store sales, supplier deliveries and store-side cancellations change the real stock without the website knowing. Customers therefore put items in their bag that the website says are in stock but no store can supply; checkout checks real stock **before payment** and blocks them, so the stale number costs a sale and the customer's trust instead of a cancelled paid order. It can also hide stock that is really there. The prototype integrates the three operational systems into one data warehouse, uses the warehouse's single history of stock events to recalculate and publish the website number on demand, and reports how stale the website is, what each sync corrected, and which online orders were affected.
 
 ## 2. Solution architecture
 
@@ -110,7 +110,7 @@ Definitions used everywhere:
 - **Real combined available** for a product = sum of `in_store` over the five stores. Reserved units are not available.
 - **Website number** = value published by the last sync, minus the website's own reservations since then.
 - **Stale** = website number ≠ real combined available.
-- **Shortfall** = an order line the website accepted that no single store could supply.
+- **Blocked at checkout** = a bag item the website showed as in stock that no single store could supply when the customer checked out (before payment).
 
 ## 4. Source systems (logical model)
 
@@ -156,23 +156,25 @@ Operation: `record_delivery(location_code, supplier, skus[], cartons[])`.
 | `online_stock` | `web_sku` | **Website number**: `available_quantity`, `last_synced_at`. |
 | `collection_point` | `cp_code` | Pickup points with latitude/longitude and the store number. |
 | `postcode_location` | `postcode` | Approximate centre of 20 Sydney postcodes. |
-| `web_order` | `order_no` | Order header: customer postcode, **pickup collection point**, status `reserved` / `partial_shortfall` / `shortfall` / `rejected`. |
-| `web_order_line` | `order_no, line_no` | One product: web SKU, quantity, website number shown, the collection point the units come from, store reservation number, line status `reserved` / `shortfall` / `rejected`. |
+| `basket` / `basket_item` | `basket_id` / `basket_id, web_sku` | The customer's bag: postcode, status `open` / `checked_out`; each item with the website number shown when it was added. |
+| `checkout_attempt` / `checkout_attempt_item` | `attempt_no` / `attempt_no, web_sku` | Each press of "checkout": pickup collection point, outcome `paid` / `blocked`, order created; per item the website number at checkout, `available` / `unavailable`, and the store that would supply it. |
+| `web_order` | `order_no` | A **paid** order, one per checked-out bag: customer postcode, **pickup collection point**. |
+| `web_order_line` | `order_no, line_no` | One product on the order: web SKU, quantity, website number shown, the collection point the units come from, store reservation number. |
 
-Operation: `place_online_order(postcode, web_skus[], quantities[])` (a one-product form also exists):
+Operations: `create_basket(postcode)`, `add_to_basket(basket, web_sku, qty)`, `remove_from_basket(basket, web_sku)`, `checkout(basket)`; `place_online_order(postcode, web_skus[], quantities[])` is a shortcut for all three.
 
-1. **Pickup store** = the collection point closest to the customer's postcode (great-circle distance, `distance_km`).
-2. Lock the website numbers. If any line is above its website number, the **whole order is rejected** and nothing is held.
-3. For each line, ask the store system (`store_ops.reserve_stock`) to hold the **whole line quantity** from **real** shelf stock: first at the pickup store, then at the other stores in distance order. The first store that has it holds it. If that is not the pickup store, the line will be **transferred** (section 4.5).
-4. A line no single store can supply is a **shortfall** against the pickup store; the other lines go ahead (order status `partial_shortfall`).
-5. Every held line lowers the website number immediately.
+1. **Adding to the bag** is allowed only up to the website number — which may be stale.
+2. **Checkout, before payment.** Pickup store = the collection point closest to the customer's postcode (great-circle distance, `distance_km`). For each item the store system (`store_ops.find_stock`) finds the first store whose **real** shelf stock covers the whole quantity — the pickup store first, then the others by distance — and locks those stock rows so the answer cannot change during checkout.
+3. **Any item unavailable → checkout blocked.** Nothing is charged or held, no order is created, the attempt records which items were unavailable, and the bag stays open so the customer can remove them and check out again.
+4. **Everything available → paid.** The order is created and every item is held at its supplying store (`store_ops.reserve_stock`); items from another store are later **transferred** to the pickup store (section 4.5). Every held item lowers the website number immediately.
 
 ### 4.4 How the systems talk to each other
 
 | Business action | Owner | Calls | Effect |
 | --- | --- | --- | --- |
 | Delivery recorded | Source 2 | `store_ops.receive_goods(store_no, barcode, units, time)` | Shelf + units, immediately |
-| Online order placed | Source 3 | `store_ops.reserve_stock(store_no, barcode, qty, order_ref, line_no, pickup_store_no, time)` per line | At the supplying store: shelf − qty, reserved + qty, immediately |
+| Checkout (stock check) | Source 3 | `store_ops.find_stock(barcode, qty, stores in preference order)` per item | Returns the supplying store and locks the rows; changes nothing |
+| Checkout (paid) | Source 3 | `store_ops.reserve_stock(store_no, barcode, qty, order_ref, line_no, pickup_store_no, time)` per item | At the supplying store: shelf − qty, reserved + qty, immediately |
 | Sync run | Warehouse | writes `online.online_stock` | Website number corrected |
 
 These interfaces use the *receiving* system's codes (a delivery docket carries the store number and retail barcode; the website sends the store the barcode). They are operational routing data. The warehouse does **not** rely on them to integrate the sources; it uses its own approved cross-reference (section 5.2).
@@ -192,7 +194,7 @@ stateDiagram-v2
     cancelled --> [*]
 ```
 
-Example (in the sample data, order 6): a Bondi customer orders 2 cat food, 2 dog beds and 4 scratching posts. The pickup store is Bondi Junction. Bondi has the cat food, so it is held there. Bondi has 1 bed and 3 posts, so both lines are taken from Chatswood (the next-nearest store with the whole quantity), dispatched, and — while in transit — belong to no store. When they arrive, Bondi holds them; the customer can collect only once **every** line is at Bondi. An order cannot be cancelled while a line is in transit.
+Example (in the sample data, order 5): a Bondi customer orders 2 cat food, 2 dog beds and 4 scratching posts. The pickup store is Bondi Junction. Bondi has the cat food, so it is held there. Bondi has 1 bed and 3 posts, so both lines are taken from Chatswood (the next-nearest store with the whole quantity), dispatched, and — while in transit — belong to no store. When they arrive, Bondi holds them; the customer can collect only once **every** line is at Bondi. An order cannot be cancelled while a line is in transit.
 
 ## 5. ETL design (`etl`)
 
@@ -207,7 +209,7 @@ Row-level AFTER triggers copy each new source record, **unchanged and in source 
 | `store_ops.sale_line` (+ header) | `stg_store_sale_line` | store number, barcode, quantity, sold time |
 | `supply.delivery_line` (+ docket, item) | `stg_delivery_line` | location code, supplier SKU, **cartons**, units per carton, **UTC** time |
 | `store_ops.reservation` insert / status change | `stg_reservation_change` | `held` / `in_transit` / `arrived` / `collected` / `cancelled`; the store where that step changed stock; the pickup store; barcode, quantity, order ref |
-| `online.web_order_line` (+ header) | `stg_web_order_line` | web SKU, quantity, pickup collection point, line status |
+| `online.checkout_attempt_item` (+ attempt) | `stg_checkout_item` | basket, web SKU, quantity, pickup collection point, `available` / `unavailable` |
 
 ### 5.2 Transform: approved code cross-reference
 
@@ -220,10 +222,10 @@ Row-level AFTER triggers copy each new source record, **unchanged and in source 
 | Codes | source store/product code → conformed `store_code`/`product_code` → surrogate `store_key`/`product_key` |
 | Units | deliveries: `cartons × units_per_carton` |
 | Time | deliveries: `delivered_at_utc AT TIME ZONE 'UTC'`; every event gets the **Sydney** business `date_key` |
-| Event type | sale line → `store_sale`; delivery line → `delivery`; reservation held / in_transit / arrived / collected / cancelled → `reservation` / `transfer_out` / `transfer_in` / `collection` / `cancellation`; web order line shortfall → `shortfall` |
+| Event type | sale line → `store_sale`; delivery line → `delivery`; reservation held / in_transit / arrived / collected / cancelled → `reservation` / `transfer_out` / `transfer_in` / `collection` / `cancellation`; checkout item unavailable → `checkout_blocked` |
 | Pickup store | order events also get `pickup_store_key` (role-playing store dimension) from the pickup store code |
 | Signed quantities | from the event type (table in 6.2) |
-| Skips | reserved web order lines (their stock movements come from the store reservation, so loading both would double count) and rejected lines (no stock moved) get a `skip_reason` |
+| Skips | checkout items that were available get a `skip_reason`: no stock moved at checkout, and if the order was paid its stock movements come from the store reservations (loading both would double count) |
 
 ### 5.3 Validate: reject, never guess
 
@@ -331,11 +333,11 @@ erDiagram
 | `transfer_in` | units arrive at the pickup store | 0 | +units | order |
 | `collection` | collected at the pickup store | 0 | −units | order |
 | `cancellation` | cancelled; units back on the shelf where they are | +units | −units | order |
-| `shortfall` | order line no store could supply (at the pickup store) | 0 | 0 | order |
+| `checkout_blocked` | bag item no single store could supply at checkout (at the pickup store) | 0 | 0 | basket |
 
 Every order event also carries `pickup_store_key`, a second, role-playing use of `dim_store` (where the customer collects), alongside `store_key` (where the stock changed). Between `transfer_out` and `transfer_in` the units are in no store, so store totals correctly exclude stock in transit.
 
-The sign rules are enforced by the `ck_fact_signs` check constraint, and `ck_fact_order_context` requires `order_ref` and `pickup_store_key` together. `units` is always positive; for a shortfall it is the quantity that could not be supplied. Indexes: `(product_key, store_key)` for stock totals, `date_key`, `event_type`, and a partial index on `order_ref`.
+The sign rules are enforced by the `ck_fact_signs` check constraint, and `ck_fact_order_context` requires `order_ref` and `pickup_store_key` together. `units` is always positive; for `checkout_blocked` it is the quantity in the bag that could not be supplied, and `order_ref` holds `basket <id>`. Indexes: `(product_key, store_key)` for stock totals, `date_key`, `event_type`, and a partial index on `order_ref`.
 
 ### 6.3 Sync log
 
@@ -364,7 +366,7 @@ All in `dw`, as views, so they are always current:
 | 2 | `rpt_online_staleness` | How long since the last sync, how many events are waiting, how many website numbers are wrong now, how many source rows failed to load? |
 | 2 | `rpt_online_vs_actual` | For each product: website number vs real combined stock (overstated → oversell risk; understated → lost sales). |
 | 2 | `rpt_last_sync_changes` | What did the last sync change (before → after)? |
-| 3 | `rpt_shortfall_orders` | Which online order lines could not be supplied, which pickup store were they for, what did the website show versus what was really there, and why (stale number, or stock split across stores)? |
+| 3 | `rpt_checkout_blocked` | Which bag items did customers try to buy because the website showed them in stock, but checkout blocked before payment? For which pickup store, what did the website show versus what was really there, and why (stale number, or stock split across stores)? |
 | 4 | `rpt_daily_sales` | Units sold per day, store and category (roll-up through `dim_date`). |
 | 5 | `rpt_open_reservations` | Which click-and-collect order lines are still open, where are they coming from, are they waiting to be sent / in transit / ready, is the whole order ready, and which are overdue (> 3 days)? |
 | 6 | `rpt_reconciliation` + `etl.v_data_quality` | Does the warehouse agree with the store system, and which source records were rejected? |
@@ -380,8 +382,8 @@ Created by `db/seed/01_reference_data.sql` and `02_business_history.sql`, throug
 | Stores | Parramatta, Bondi Junction, Chatswood, Newtown, Penrith, each with codes in all three systems |
 | Products | 18 mapped products in 9 categories with valid EAN-13 barcodes; P019 (cat tunnel) catalogued but deliberately unmapped |
 | Postcodes | 20 Sydney postcodes with coordinates |
-| History (7 days) | 90 opening-stock delivery lines (in cartons), 5 restock deliveries, 36 till sale lines on 28 receipts, 8 online orders with 10 lines (9 held, 1 shortfall): one transferred and overdue for collection, one 3-item order with 2 lines in transit from Chatswood; 2 collections, 1 cancellation, 2 syncs |
-| Result | 157 staged source records → 148 fact rows + 9 skipped order lines; 0 rejected; 90/90 store/product pairs reconcile; nothing pending |
+| History (7 days) | 90 opening-stock delivery lines (in cartons), 5 restock deliveries, 36 till sale lines on 28 receipts, 8 bags: 7 paid orders with 9 items (one transferred and overdue for collection, one 3-item order with 2 items in transit from Chatswood) and 1 checkout blocked before payment by the stale website number; 2 collections, 1 cancellation, 2 syncs |
+| Result | 157 staged source records → 148 fact rows + 9 skipped checkout items; 0 rejected; 90/90 store/product pairs reconcile; nothing pending |
 
 Times are relative to the build day, so "time since sync" and "overdue" are always realistic.
 
@@ -397,7 +399,9 @@ Times are relative to the build day, so "time since sync" and "overdue" are alwa
 | Manual sync | The business problem is staleness. A manual trigger lets the demo build up a realistic stale state and show the correction on cue; a schedule would only change *when* it runs. |
 | Website deducts its own orders immediately | The website knows its own sales. Only changes it cannot see (other channels, deliveries, store-side cancellations) need the sync. |
 | One pickup store per order; missing lines transferred in from the nearest store that has them | Click-and-collect means one pickup location for the customer. Taking a missing line from the next-nearest store and transferring it keeps the order together instead of failing it, which is how multi-store retailers fulfil click-and-collect. |
-| Each line from one store; shortfall per line | Keeps transfers simple (one shipment per line) and lets the rest of the order go ahead. |
+| Check real stock at checkout, before payment | Taking payment and then cancelling is a poor customer experience and costs refunds. Checking and locking real stock inside checkout means a paid order can always be fulfilled; the stale website number now shows up as items blocked at checkout. |
+| Block the whole checkout and let the customer edit the bag | The customer decides whether to buy the rest; nothing is charged for something that cannot be supplied. |
+| Each item from one store | Keeps transfers simple (one shipment per item). |
 | Views for reports | Always current, no refresh job, easy to open in CloudBeaver. Volumes are small. |
 | PostgreSQL only | It is the lab's relational engine; the problem is relational and transactional. Neo4j and ClickHouse in the lab are not needed. |
 
@@ -409,7 +413,8 @@ Times are relative to the build day, so "time since sync" and "overdue" are alwa
 | ETL inside the source transaction | Zero lag and no divergence, but every till sale also pays for an ETL pass. Measured at about 5 ms per pass (under 10 ms for a whole till sale) at this volume. | Asynchronous micro-batches every few seconds from a change log. |
 | SCD type 1 dimensions | A price change rewrites history; `rpt_daily_sales` values sales at the current price. | SCD type 2 for product prices, or store the sale price on the fact. |
 | Reports as views over the full fact | Simple and always current; cost grows with history. | Periodic snapshot fact for daily stock, partitioning by `date_key`, materialised views. |
-| Each order line comes from one store | A line that only several stores together could supply (e.g. 2 beds, 1 at each of two stores) becomes a shortfall, reported with the reason "no single store had enough". | Split a line across several transfers. |
+| Each order item comes from one store | An item that only several stores together could supply (e.g. 2 beds, 1 at each of two stores) is blocked at checkout, reported with the reason "no single store had enough". | Split an item across several transfers. |
+| The website number is still stale on the product page | Customers can add items that turn out to be unavailable at checkout — a lost sale and a frustrated customer, though never a cancelled payment. | Check real stock when the item is added to the bag too, or sync more often. |
 | Pickup store is chosen for the customer | The closest store to the postcode, not a store the customer picks. | Let the customer choose the pickup store; use the same transfer logic. |
 | Transfers are instant to record | Dispatch and receive are explicit steps but have no courier, transit time or cost. | Transfer scheduling and transit-time estimates. |
 | Manual sync | Staleness depends on someone pressing the button. | Scheduled or event-driven sync plus the same staleness report as an alert. |
@@ -429,7 +434,7 @@ Times are relative to the build day, so "time since sync" and "overdue" are alwa
 | vi.b Integrated data warehouse (≥ 1) | `workspace/db/05_warehouse.sql` (+ `07_sync.sql`) |
 | vi.c SQL scripts: create, extract, transform, load, synthetic data | `01_schemas.sql`; `06_etl.sql` (extract → transform → validate → load); `seed/01_reference_data.sql`, `seed/02_business_history.sql` |
 | vi.d Reports (≥ 3) | `workspace/db/08_reports.sql` (6 reports) |
-| vi.e End-to-end testing | `workspace/tests/check_demo.py` (81 checks), `workspace/demo/cloudbeaver_demo.sql`, [demo_runbook.md](demo_runbook.md) |
+| vi.e End-to-end testing | `workspace/tests/check_demo.py` (82 checks), `workspace/demo/cloudbeaver_demo.sql`, [demo_runbook.md](demo_runbook.md) |
 
 ### File map
 
@@ -437,7 +442,7 @@ Times are relative to the build day, so "time since sync" and "overdue" are alwa
 workspace/db/01_schemas.sql             5 schemas
 workspace/db/02_store_ops.sql           Source 1 tables, sale trigger, store operations
 workspace/db/03_supply.sql              Source 2 tables, delivery trigger, record_delivery
-workspace/db/04_online.sql              Source 3 tables, distance_km, place_online_order
+workspace/db/04_online.sql              Source 3 tables, bag, checkout (stock check before payment), orders
 workspace/db/05_warehouse.sql           dimensions, fact, sync log, indexes
 workspace/db/06_etl.sql                 cross-reference, staging, CDC extract, v_transform, run_etl, data quality
 workspace/db/07_sync.sql                dw.run_sync
@@ -447,5 +452,5 @@ workspace/db/seed/02_business_history.sql  7 days of activity and 2 syncs
 workspace/scripts/build.py              rebuild pethaven_demo
 workspace/scripts/demo.py               demo commands
 workspace/demo/cloudbeaver_demo.sql     the same demo as SQL statements
-workspace/tests/check_demo.py           81 behaviour checks on pethaven_check
+workspace/tests/check_demo.py           82 behaviour checks on pethaven_check
 ```

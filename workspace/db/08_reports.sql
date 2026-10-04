@@ -8,7 +8,7 @@
 --   Report 2  dw.rpt_online_staleness         time since last sync, pending events
 --             dw.rpt_online_vs_actual         website number vs real total per product
 --             dw.rpt_last_sync_changes        before/after of the most recent sync
---   Report 3  dw.rpt_shortfall_orders         online orders no store could supply
+--   Report 3  dw.rpt_checkout_blocked         bag items blocked at checkout although the website showed them
 --   Report 4  dw.rpt_daily_sales              units sold per day, store and category
 --   Report 5  dw.rpt_open_reservations        click-and-collect order lines not yet collected (incl. transfers)
 --   Report 6  dw.rpt_reconciliation           warehouse vs live store system
@@ -98,7 +98,7 @@ SELECT ls.sync_id                                                        AS last
        (SELECT count(*) FROM pending
          WHERE event_type IN ('reservation', 'transfer_out', 'transfer_in', 'collection', 'cancellation'))
                                                                          AS pending_order_events,
-       (SELECT count(*) FROM pending WHERE event_type = 'shortfall')     AS pending_shortfalls,
+       (SELECT count(*) FROM pending WHERE event_type = 'checkout_blocked') AS pending_checkout_blocks,
        (SELECT count(*) FROM dw.rpt_online_vs_actual WHERE status <> 'in sync') AS products_out_of_date,
        (SELECT count(*) FROM etl.v_data_quality)                         AS source_rows_not_loaded
   FROM (SELECT 1) AS one
@@ -127,15 +127,15 @@ COMMENT ON VIEW dw.rpt_last_sync_changes IS
 'Report 2 (before/after). Every store and website number the most recent sync changed.';
 
 -- Report 3 ------------------------------------------------------------------
-CREATE VIEW dw.rpt_shortfall_orders AS
-SELECT f.order_ref                                 AS order_no,
-       f.event_ts                                  AS ordered_at,
+CREATE VIEW dw.rpt_checkout_blocked AS
+SELECT f.order_ref                                 AS basket,
+       f.event_ts                                  AS attempted_at,
        p.product_code,
        p.product_name,
-       f.units                                     AS quantity_ordered,
+       f.units                                     AS quantity_in_bag,
        s.store_name                                AS pickup_store,
-       shown.online_shown                          AS online_shown_at_order,
-       real_total.actual_in_store                  AS actual_combined_at_order,
+       shown.online_shown                          AS website_showed,
+       real_total.actual_in_store                  AS actual_combined_at_checkout,
        CASE
            WHEN real_total.actual_in_store < f.units
                THEN 'stock sold since last sync - online number was stale'
@@ -144,8 +144,8 @@ SELECT f.order_ref                                 AS order_no,
   FROM dw.fact_stock_event f
   JOIN dw.dim_product p ON p.product_key = f.product_key
   JOIN dw.dim_store s   ON s.store_key = f.store_key
-  -- Website number when the order was placed: latest sync before it, less
-  -- the website's own reservations between that sync and the order.
+  -- Website number at checkout: latest sync before it, less the website's
+  -- own reservations between that sync and the checkout.
   LEFT JOIN LATERAL (
       SELECT c.after_qty - coalesce((SELECT sum(e.units)
                                        FROM dw.fact_stock_event e
@@ -161,15 +161,15 @@ SELECT f.order_ref                                 AS order_no,
        ORDER BY r.sync_id DESC
        LIMIT 1
   ) shown ON true
-  -- Real combined in-store stock just before the order.
+  -- Real combined in-store stock at checkout.
   CROSS JOIN LATERAL (
       SELECT coalesce(sum(e.quantity_change), 0) AS actual_in_store
         FROM dw.fact_stock_event e
        WHERE e.product_key = f.product_key AND e.event_id < f.event_id
   ) real_total
- WHERE f.event_type = 'shortfall';
-COMMENT ON VIEW dw.rpt_shortfall_orders IS
-'Report 3. Online order lines accepted on the website number that no store could supply, the pickup store they were meant to be collected from, and why.';
+ WHERE f.event_type = 'checkout_blocked';
+COMMENT ON VIEW dw.rpt_checkout_blocked IS
+'Report 3. Items customers put in their bag because the website showed them in stock, but checkout blocked before payment because no single store could supply them: the pickup store, what the website showed versus what was really there, and why. Lost sales caused by stale data.';
 
 -- Report 4 ------------------------------------------------------------------
 CREATE VIEW dw.rpt_daily_sales AS

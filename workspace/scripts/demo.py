@@ -6,8 +6,11 @@ Usage (from the repository root; prefix every command with
   Business events (each goes to the source system that owns it)
     sale S01 P001 2 [P005 1 ...]     till sale at a store (one receipt, any number of items)
     delivery S03 P001 5              supplier delivery to a store, in CARTONS
-    order 2026 P003 2 [P013 2 ...]   online click-and-collect order (any number of lines);
+    order 2026 P003 2 [P013 2 ...]   online bag + checkout from a customer postcode; real stock is
+                                     checked BEFORE payment (blocked if any item is unavailable);
                                      collected at the store closest to the postcode
+    remove 9 P013                    remove an item from bag 9 (after a blocked checkout)
+    checkout 9                       check out bag 9 again
     dispatch 6                       stores holding lines of order 6 send them to its pickup store
     receive 6                        pickup store books in the lines of order 6 that were sent
     collect 6                        customer collects order 6 (all lines must be at the pickup store)
@@ -23,7 +26,7 @@ Usage (from the repository root; prefix every command with
     online                           website number vs real stock, per product
     report stock [S01]               1 current stock by store (in-store vs reserved)
     report staleness                 2 time since last sync, pending events, last sync changes
-    report shortfall                 3 online orders no store could supply
+    report blocked                   3 bag items blocked at checkout although the website showed them
     report sales                     4 units sold per day, store and category
     report reservations              5 click-and-collect order lines not yet collected (transfers too)
     report reconciliation            6 warehouse vs store system, plus rejected source rows
@@ -120,9 +123,9 @@ def cmd_delivery(conn, args) -> None:
 
 
 def show_order(conn, order_no: int) -> None:
-    show(conn, f"Online order {order_no} (Source 3)", """
-        SELECT o.order_no, o.customer_postcode, o.pickup_cp_code, o.status AS order_status,
-               l.line_no, l.web_sku, l.quantity, l.online_qty_shown, l.source_cp_code, l.line_status
+    show(conn, f"Online order {order_no} (Source 3, paid)", """
+        SELECT o.order_no, o.basket_id, o.customer_postcode, o.pickup_cp_code,
+               l.line_no, l.web_sku, l.quantity, l.website_qty_shown, l.source_cp_code
           FROM online.web_order o JOIN online.web_order_line l USING (order_no)
          WHERE o.order_no = %s ORDER BY l.line_no""", (order_no,))
     show(conn, f"Store system reservations for order {order_no} (Source 1)", """
@@ -131,19 +134,57 @@ def show_order(conn, order_no: int) -> None:
           FROM store_ops.reservation WHERE web_order_ref = %s ORDER BY web_line_no""", (str(order_no),))
 
 
+def show_checkout(conn, basket_id: int, order_no, before: int) -> None:
+    """Result of the latest checkout attempt for a bag."""
+    show(conn, f"Checkout of bag {basket_id}: real stock check before payment", """
+        SELECT a.attempt_no, a.outcome, a.pickup_cp_code, i.web_sku, i.quantity,
+               i.website_qty_shown, i.result, i.source_cp_code
+          FROM online.checkout_attempt a JOIN online.checkout_attempt_item i USING (attempt_no)
+         WHERE a.attempt_no = (SELECT max(attempt_no) FROM online.checkout_attempt WHERE basket_id = %s)
+         ORDER BY i.web_sku""", (basket_id,))
+    if order_no is None:
+        print(f"\nBLOCKED before payment: nothing charged, nothing held. Bag {basket_id} is still open.")
+        print(f"Remove the unavailable items, then check out again, e.g.:")
+        print(f"  demo.py remove {basket_id} <PRODUCT>   then   demo.py checkout {basket_id}")
+    else:
+        print(f"\nPAID: order {order_no} created.")
+        show_order(conn, order_no)
+    show_new_facts(conn, before)
+
+
 def cmd_order(conn, args) -> None:
     if len(args.items) % 2:
         raise SystemExit("Give items as pairs: PRODUCT QUANTITY [PRODUCT QUANTITY ...]")
     web_skus = [to_source(conn, "product", "ONLINE", p) for p in args.items[0::2]]
     quantities = [int(q) for q in args.items[1::2]]
     before = last_event_id(conn)
-    _, rows = db.query(conn, "SELECT online.place_online_order(%s, %s, %s)", (args.postcode, web_skus, quantities))
+    _, rows = db.query(conn, "SELECT online.create_basket(%s)", (args.postcode,))
+    basket_id = rows[0][0]
+    for sku, qty in zip(web_skus, quantities):
+        db.query(conn, "SELECT online.add_to_basket(%s, %s, %s), 1", (basket_id, sku, qty))
+    print(f"Bag {basket_id}: {len(web_skus)} item(s) added (the website showed them in stock).")
+    _, rows = db.query(conn, "SELECT online.checkout(%s)", (basket_id,))
     conn.commit()
-    show_order(conn, rows[0][0])
-    show_new_facts(conn, before)
-    show(conn, "Website numbers (Source 3, lowered at once for reserved lines)", """
+    show_checkout(conn, basket_id, rows[0][0], before)
+    show(conn, "Website numbers (Source 3, lowered at once only if paid)", """
         SELECT web_sku, available_quantity AS online_shown, last_synced_at
           FROM online.online_stock WHERE web_sku = ANY(%s) ORDER BY web_sku""", (web_skus,))
+
+
+def cmd_remove(conn, args) -> None:
+    sku = to_source(conn, "product", "ONLINE", args.product)
+    db.query(conn, "SELECT online.remove_from_basket(%s, %s), 1", (args.basket_id, sku))
+    conn.commit()
+    show(conn, f"Bag {args.basket_id}", """
+        SELECT web_sku, quantity, website_qty_at_add FROM online.basket_item
+         WHERE basket_id = %s ORDER BY web_sku""", (args.basket_id,))
+
+
+def cmd_checkout(conn, args) -> None:
+    before = last_event_id(conn)
+    _, rows = db.query(conn, "SELECT online.checkout(%s)", (args.basket_id,))
+    conn.commit()
+    show_checkout(conn, args.basket_id, rows[0][0], before)
 
 
 def _store_step(conn, order_no: int, function: str, *extra) -> None:
@@ -223,10 +264,10 @@ REPORTS = {
          WHERE %(store)s IS NULL OR store_code = %(store)s
          ORDER BY store_code, product_code"""),
     "staleness": ("Report 2: online staleness", "SELECT * FROM dw.rpt_online_staleness"),
-    "shortfall": ("Report 3: shortfall online orders", """
-        SELECT order_no, ordered_at, product_code, product_name, quantity_ordered, pickup_store,
-               online_shown_at_order, actual_combined_at_order, reason
-          FROM dw.rpt_shortfall_orders ORDER BY ordered_at"""),
+    "blocked": ("Report 3: items blocked at checkout (before payment)", """
+        SELECT basket, attempted_at, product_code, product_name, quantity_in_bag, pickup_store,
+               website_showed, actual_combined_at_checkout, reason
+          FROM dw.rpt_checkout_blocked ORDER BY attempted_at"""),
     "sales": ("Report 4: daily in-store sales", """
         SELECT full_date, day_name, store_name, category, units_sold, sales_value_at_current_price
           FROM dw.rpt_daily_sales ORDER BY full_date, store_name, category"""),
@@ -265,9 +306,17 @@ def main() -> int:
     p.add_argument("--supplier", default="Demo Supplier")
     p.set_defaults(func=cmd_delivery)
 
-    p = sub.add_parser("order", help="online click-and-collect order")
+    p = sub.add_parser("order", help="online bag + checkout")
     p.add_argument("postcode"); p.add_argument("items", nargs="+", help="PRODUCT QUANTITY pairs")
     p.set_defaults(func=cmd_order)
+
+    p = sub.add_parser("remove", help="remove an item from an open bag")
+    p.add_argument("basket_id", type=int); p.add_argument("product")
+    p.set_defaults(func=cmd_remove)
+
+    p = sub.add_parser("checkout", help="check out an open bag again")
+    p.add_argument("basket_id", type=int)
+    p.set_defaults(func=cmd_checkout)
 
     for name, func, text in (("dispatch", cmd_dispatch, "send an order's lines to its pickup store"),
                              ("receive", cmd_receive, "pickup store books in sent lines"),

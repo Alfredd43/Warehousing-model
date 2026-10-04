@@ -9,11 +9,11 @@
 --   7 days ago 07:00  opening stock: one delivery docket per store and supplier
 --   7 days ago 08:00  sync #1 - the website gets its first real numbers
 --   6..1 days ago     till sales (some multi-item receipts), restock deliveries,
---                     8 online orders (one sourced from another store and
---                     transferred, one 3-item order with 2 lines coming from
---                     another store and still in transit, one shortfall caused
---                     by the stale website number), 2 collections,
---                     1 cancellation, 1 overdue collection
+--                     7 paid online orders (one sourced from another store
+--                     and transferred, one 3-item order with 2 lines coming
+--                     from another store and still in transit), 1 checkout
+--                     blocked before payment because the website number was
+--                     stale, 2 collections, 1 cancellation, 1 overdue collection
 --   now               sync #2 - the "initial" sync for the demo; the website is
 --                     correct and nothing is pending
 -- The helper functions below translate the warehouse codes used in this file
@@ -170,8 +170,9 @@ SELECT online.place_online_order('2026', pg_temp.web('P012'), 1, pg_temp.ts(3, '
 -- ---------------------------------------------------------------------------
 -- 2 days ago
 -- ---------------------------------------------------------------------------
--- #5 Bondi customer orders 3 aquarium kits. The website (stale) says 7, but
--- only 2 are left in total -> shortfall at the nearest store (Bondi).
+-- A Bondi customer puts 3 aquarium kits in the bag: the website (stale) says
+-- 7, but only 2 are left in total. Checkout is BLOCKED before payment, nothing
+-- is charged or held, and the customer leaves the bag (no order is created).
 SELECT online.place_online_order('2026', pg_temp.web('P018'), 3, pg_temp.ts(2, '09:15'));
 
 SELECT store_ops.record_sale('101', pg_temp.bc('{P002}'),           '{2}',   pg_temp.ts(2, '10:30'));
@@ -191,18 +192,18 @@ SELECT supply.record_delivery('NSW-PENRI', 'VetCare Distributors', pg_temp.sku('
 SELECT store_ops.record_sale('101', pg_temp.bc('{P001,P006}'),      '{1,1}', pg_temp.ts(1, '09:35'));
 SELECT store_ops.cancel_order('4', 'Customer cancelled', pg_temp.ts(1, '10:00'));         -- #4 cancelled
 
--- #6 Bondi customer orders 3 different items, collected at
+-- #5 Bondi customer orders 3 different items, collected at
 -- Bondi Junction: the cat food is at Bondi; the dog beds and the scratching
 -- posts are not, so both come from Chatswood. They were sent this afternoon
 -- and are still in transit, so the order is not ready yet.
 SELECT online.place_online_order('2026', ARRAY[pg_temp.web('P003'), pg_temp.web('P013'), pg_temp.web('P017')],
                                  ARRAY[2, 2, 4], pg_temp.ts(1, '11:05'));
-SELECT store_ops.dispatch_order_transfers('6', pg_temp.ts(1, '15:30'));
+SELECT store_ops.dispatch_order_transfers('5', pg_temp.ts(1, '15:30'));
 SELECT store_ops.record_sale('103', pg_temp.bc('{P010}'),           '{2}',   pg_temp.ts(1, '12:15'));
 SELECT store_ops.record_sale('104', pg_temp.bc('{P007}'),           '{1}',   pg_temp.ts(1, '14:05'));
 
-SELECT online.place_online_order('2067', pg_temp.web('P004'), 2, pg_temp.ts(1, '19:45'));  -- #7 Chatswood
-SELECT online.place_online_order('2170', pg_temp.web('P008'), 1, pg_temp.ts(1, '21:10'));  -- #8 Liverpool -> Parramatta
+SELECT online.place_online_order('2067', pg_temp.web('P004'), 2, pg_temp.ts(1, '19:45'));  -- #6 Chatswood
+SELECT online.place_online_order('2170', pg_temp.web('P008'), 1, pg_temp.ts(1, '21:10'));  -- #7 Liverpool -> Parramatta
 
 
 -- ---------------------------------------------------------------------------

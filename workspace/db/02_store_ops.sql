@@ -15,6 +15,8 @@
 --            receive_order_transfers()  pickup store books those lines in
 --            collect_order()            customer collects the whole order at the pickup store
 --            cancel_order()             order cancelled, held stock back on a shelf
+--            cancel_overdue_orders()    housekeeping: cancel orders not collected in time
+--            stores_with_stock()        which stores could supply a line (called by Source 3)
 -- =============================================================================
 
 -- EAN-13 check digit: weights 1,3,1,3... over the first 12 digits.
@@ -201,6 +203,18 @@ LANGUAGE sql AS $$
     ON CONFLICT (store_no, barcode) DO UPDATE
        SET in_store_quantity = store_ops.store_stock.in_store_quantity + EXCLUDED.in_store_quantity,
            updated_at        = EXCLUDED.updated_at;
+$$;
+
+
+-- -----------------------------------------------------------------------------
+-- Interface used by Source 3 to offer pickup stores: which stores have the
+-- whole quantity on the shelf right now? Read-only, no locks.
+-- -----------------------------------------------------------------------------
+CREATE FUNCTION store_ops.stores_with_stock(p_barcode text, p_quantity integer)
+RETURNS SETOF text
+LANGUAGE sql STABLE AS $$
+    SELECT store_no FROM store_ops.store_stock
+     WHERE barcode = p_barcode AND in_store_quantity >= p_quantity;
 $$;
 
 
@@ -411,6 +425,39 @@ BEGIN
     IF v_count = 0 THEN
         RAISE EXCEPTION 'Order % has nothing to cancel', p_web_order_ref;
     END IF;
+    RETURN v_count;
+END;
+$$;
+
+
+-- -----------------------------------------------------------------------------
+-- Housekeeping: cancel click-and-collect orders not collected within
+-- p_days of being placed. Every held item goes back on the shelf where it
+-- is now (cancel_order). Orders with an item still in transit are left for
+-- the next run, since they cannot be cancelled until it arrives.
+-- Returns the number of orders cancelled.
+-- Example: SELECT store_ops.cancel_overdue_orders();
+-- -----------------------------------------------------------------------------
+CREATE FUNCTION store_ops.cancel_overdue_orders(
+    p_days integer DEFAULT 3, p_at timestamptz DEFAULT now()
+) RETURNS integer
+LANGUAGE plpgsql AS $$
+DECLARE
+    v_order  text;
+    v_count  integer := 0;
+BEGIN
+    FOR v_order IN
+        SELECT web_order_ref
+          FROM store_ops.reservation
+         WHERE status IN ('held', 'in_transit', 'arrived')
+         GROUP BY web_order_ref
+        HAVING min(reserved_at) < p_at - make_interval(days => p_days)
+           AND bool_and(status <> 'in_transit')
+         ORDER BY min(reserved_at)
+    LOOP
+        PERFORM store_ops.cancel_order(v_order, format('Not collected within %s days', p_days), p_at);
+        v_count := v_count + 1;
+    END LOOP;
     RETURN v_count;
 END;
 $$;

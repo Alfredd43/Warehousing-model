@@ -6,11 +6,14 @@ Usage (from the repository root; prefix every command with
   Business events (each goes to the source system that owns it)
     sale S01 P001 2 [P005 1 ...]     till sale at a store (one receipt, any number of items)
     delivery S03 P001 5              supplier delivery to a store, in CARTONS
-    order 2026 P003 2 [P013 2 ...]   online bag + checkout from a customer postcode; real stock is
-                                     checked BEFORE payment (blocked if any item is unavailable);
-                                     collected at the store closest to the postcode
+    order 2026 P003 2 [P013 2 ...]   online bag from a customer postcode: shows the pickup options,
+          [--pickup S03]             then checks out at the chosen store (default: best option).
+                                     Real stock is checked BEFORE payment; blocked if any item is
+                                     unavailable in every store
+    options 9                        pickup options for bag 9 (stores holding at least one item)
     remove 9 P013                    remove an item from bag 9 (after a blocked checkout)
-    checkout 9                       check out bag 9 again
+    checkout 9 [--pickup S02]        check out bag 9 again
+    cancel-overdue [--days 3]        cancel click-and-collect orders not collected in time
     dispatch 6                       stores holding lines of order 6 send them to its pickup store
     receive 6                        pickup store books in the lines of order 6 that were sent
     collect 6                        customer collects order 6 (all lines must be at the pickup store)
@@ -163,7 +166,9 @@ def cmd_order(conn, args) -> None:
     for sku, qty in zip(web_skus, quantities):
         db.query(conn, "SELECT online.add_to_basket(%s, %s, %s), 1", (basket_id, sku, qty))
     print(f"Bag {basket_id}: {len(web_skus)} item(s) added (the website showed them in stock).")
-    _, rows = db.query(conn, "SELECT online.checkout(%s)", (basket_id,))
+    show_options(conn, basket_id)
+    pickup = to_source(conn, "store", "ONLINE", args.pickup) if args.pickup else None
+    _, rows = db.query(conn, "SELECT online.checkout(%s, %s)", (basket_id, pickup))
     conn.commit()
     show_checkout(conn, basket_id, rows[0][0], before)
     show(conn, "Website numbers (Source 3, lowered at once only if paid)", """
@@ -180,11 +185,29 @@ def cmd_remove(conn, args) -> None:
          WHERE basket_id = %s ORDER BY web_sku""", (args.basket_id,))
 
 
+def show_options(conn, basket_id: int) -> None:
+    show(conn, f"Pickup options for bag {basket_id} (stores holding at least one item)", """
+        SELECT * FROM online.pickup_options(%s)""", (basket_id,))
+
+
+def cmd_options(conn, args) -> None:
+    show_options(conn, args.basket_id)
+
+
 def cmd_checkout(conn, args) -> None:
     before = last_event_id(conn)
-    _, rows = db.query(conn, "SELECT online.checkout(%s)", (args.basket_id,))
+    pickup = to_source(conn, "store", "ONLINE", args.pickup) if args.pickup else None
+    _, rows = db.query(conn, "SELECT online.checkout(%s, %s)", (args.basket_id, pickup))
     conn.commit()
     show_checkout(conn, args.basket_id, rows[0][0], before)
+
+
+def cmd_cancel_overdue(conn, args) -> None:
+    before = last_event_id(conn)
+    _, rows = db.query(conn, "SELECT store_ops.cancel_overdue_orders(%s)", (args.days,))
+    conn.commit()
+    print(f"Cancelled {rows[0][0]} order(s) not collected within {args.days} days; stock back on the shelf.")
+    show_new_facts(conn, before)
 
 
 def _store_step(conn, order_no: int, function: str, *extra) -> None:
@@ -269,8 +292,8 @@ REPORTS = {
                website_showed, actual_combined_at_checkout, reason
           FROM dw.rpt_checkout_blocked ORDER BY attempted_at"""),
     "sales": ("Report 4: daily in-store sales", """
-        SELECT full_date, day_name, store_name, category, units_sold, sales_value_at_current_price
-          FROM dw.rpt_daily_sales ORDER BY full_date, store_name, category"""),
+        SELECT full_date, day_name, store_name, channel, category, units_sold, sales_value_at_current_price
+          FROM dw.rpt_daily_sales ORDER BY full_date, store_name, channel, category"""),
     "reservations": ("Report 5: click-and-collect order lines not yet collected", """
         SELECT * FROM dw.rpt_open_reservations ORDER BY reserved_at, order_no, product_code"""),
     "reconciliation": ("Report 6: warehouse vs store system (anything not matching)", """
@@ -308,7 +331,16 @@ def main() -> int:
 
     p = sub.add_parser("order", help="online bag + checkout")
     p.add_argument("postcode"); p.add_argument("items", nargs="+", help="PRODUCT QUANTITY pairs")
+    p.add_argument("--pickup", help="pickup store, e.g. S03 (default: best option)")
     p.set_defaults(func=cmd_order)
+
+    p = sub.add_parser("options", help="pickup options for a bag")
+    p.add_argument("basket_id", type=int)
+    p.set_defaults(func=cmd_options)
+
+    p = sub.add_parser("cancel-overdue", help="cancel orders not collected in time")
+    p.add_argument("--days", type=int, default=3)
+    p.set_defaults(func=cmd_cancel_overdue)
 
     p = sub.add_parser("remove", help="remove an item from an open bag")
     p.add_argument("basket_id", type=int); p.add_argument("product")
@@ -316,6 +348,7 @@ def main() -> int:
 
     p = sub.add_parser("checkout", help="check out an open bag again")
     p.add_argument("basket_id", type=int)
+    p.add_argument("--pickup", help="pickup store, e.g. S02 (default: best option)")
     p.set_defaults(func=cmd_checkout)
 
     for name, func, text in (("dispatch", cmd_dispatch, "send an order's lines to its pickup store"),

@@ -13,7 +13,7 @@ Assignment 2 prototype (32113 Advanced Database). PetHaven has five Sydney store
 How it behaves:
 
 - **In-store sale / delivery / collection / cancellation**: the store's stock changes immediately; the website number waits for the next sync.
-- **Online shopping**: items go into a **bag** up to the (possibly stale) website number. At **checkout, before payment**, real store stock is checked: the store **closest** to the customer first, then the next-nearest. If any item can't be supplied by a single store, checkout is **blocked** — nothing charged, nothing held — and the customer removes it and tries again. Otherwise the order is **paid**, each item is held where it was found, items from other stores are **transferred** to the closest store (dispatch → in transit → receive), and the website number drops at once.
+- **Online shopping**: items go into a **bag** up to the (possibly stale) website number; nothing is held and bags never expire. The customer is offered every store that holds at least one bag item (fewest transfers first) and **chooses** where to collect. At **checkout, before payment**, real store stock is checked and locked, so whoever checks out first gets it. If any item can't be supplied by a single store, checkout is **blocked**: nothing charged, nothing held, and the customer removes it and tries again. Otherwise the order is **paid**, each item is held where it was found, items from other stores are **transferred** to the chosen store (dispatch → in transit → receive), and the website number drops at once. Orders not collected within 3 days are cancelled by the overdue job.
 - **ETL**: every source record is captured into staging in its source format, mapped to warehouse codes through approved cross-references, converted (cartons → units, UTC → Sydney date), validated and loaded into `dw.fact_stock_event` in the same transaction. Records with unmapped codes are rejected with a reason and load once the mapping is approved.
 - **Sync** (`SELECT dw.run_sync();`): processes all events since the last sync, recalculates store totals and website numbers, publishes them, logs before/after and reconciles the warehouse with the stores.
 
@@ -86,7 +86,7 @@ The first time PostgreSQL starts, it needs about 20–30 seconds to initialise. 
 docker compose exec python python /workspace/scripts/build.py
 ```
 
-This recreates the database `pethaven_demo`, creates the five schemas, loads the reference data and a week of sample trading through the source systems (so it all passes through the ETL), and runs two syncs, the last at build time. It ends with a summary: 157 source records staged, 148 stock events loaded, 0 rejected, 0 pending, 0 not reconciled.
+This recreates the database `pethaven_demo`, creates the five schemas, loads the reference data and a week of sample trading through the source systems (so it all passes through the ETL), and runs two syncs, the last at build time. It ends with a summary: 155 source records staged, 146 stock events loaded, 0 rejected, 0 pending, 0 not reconciled.
 
 Safe to rerun at any time. Only `pethaven_demo` and `pethaven_check` are ever dropped; the lab's own `lab` database is never touched.
 
@@ -100,8 +100,10 @@ Safe to rerun at any time. Only `pethaven_demo` and `pethaven_check` are ever dr
 | --- | --- |
 | `sale S01 P003 2 P005 1` | Till sale (one receipt, any number of items) |
 | `delivery S03 P001 5` | Supplier delivery, in cartons |
-| `order 2026 P009 1 P018 1 P013 2` | New bag from a customer postcode + checkout (real stock checked before payment) |
-| `remove 10 P013` / `checkout 10` | After a blocked checkout: remove an item from bag 10 / check out again |
+| `order 2026 P009 1 P018 1 [--pickup S02]` | New bag from a customer postcode: shows pickup options, then checks out (real stock checked before payment) |
+| `options 10` | Pickup options for bag 10 |
+| `remove 10 P013` / `checkout 10 [--pickup S02]` | After a blocked checkout: remove an item from bag 10 / check out again |
+| `cancel-overdue` | Cancel click-and-collect orders not collected within 3 days |
 | `dispatch 6` / `receive 6` | Send order 6's lines held at other stores to its pickup store / book them in there |
 | `collect 6` / `cancel 6` | Customer collects / cancels online order 6 |
 | `online` | Website number vs real stock per product |
@@ -119,7 +121,7 @@ The full 10-minute demonstration, with what to say at each step, is in [docs/dem
 docker compose exec python python /workspace/tests/check_demo.py
 ```
 
-Builds a separate database, `pethaven_check`, runs scripted business events and checks every rule in [docs/traceability.md](docs/traceability.md): immediate store updates, website staleness, bag and checkout with the stock check before payment, transfers to the closest store, blocked checkouts, carton/UTC conversion, rejection and approval of unmapped codes, lineage, sync before/after and reconciliation. It ends with `TOTAL: 82 checks - PASS 82, FAIL 0`.
+Builds a separate database, `pethaven_check`, runs scripted business events and checks every rule in [docs/traceability.md](docs/traceability.md): immediate store updates, website staleness, bag, pickup options and checkout with the stock check before payment, first-to-checkout wins, transfers to the chosen store, blocked checkouts, overdue cancellation, online sales in the sales report, carton/UTC conversion, rejection and approval of unmapped codes, lineage, sync before/after and reconciliation. It ends with `TOTAL: 93 checks - PASS 93, FAIL 0`.
 
 ### Step 7: Stop the lab
 
@@ -159,7 +161,7 @@ workspace/
   scripts/build.py                     rebuild pethaven_demo
   scripts/demo.py                      demo commands
   demo/cloudbeaver_demo.sql            the demonstration as SQL statements
-  tests/check_demo.py                  82 behaviour checks
+  tests/check_demo.py                  93 behaviour checks
 docs/                                  design, traceability, demo runbook, implementation notes
 00_req_feedback/                       brief, Spec, tutor feedback, subject notes
 data/                                  lab database files created by Docker (not in Git)

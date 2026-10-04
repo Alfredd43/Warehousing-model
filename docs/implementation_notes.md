@@ -15,9 +15,9 @@ docker exec -i student-postgres psql -U student -d pethaven_demo < workspace/dem
 | Measure | Result |
 | --- | --- |
 | Build (`build.py`) | All 10 SQL files applied without error |
-| Behaviour checks (`check_demo.py`) | 82 / 82 PASS, exit code 0 |
+| Behaviour checks (`check_demo.py`) | 93 / 93 PASS, exit code 0 |
 | Demo script (`cloudbeaver_demo.sql`) | Runs top to bottom; the only error is the deliberate one in step 3c (collecting before a transfer arrives is refused) |
-| Seed result | 157 source records staged → 148 fact rows loaded, 9 skipped, 0 rejected; 7 paid orders, 1 checkout blocked before payment; 2 syncs; 0 events pending |
+| Seed result | 155 source records staged → 146 fact rows loaded, 9 skipped, 0 rejected; 7 paid orders, 1 checkout blocked before payment; 2 syncs; 0 events pending |
 | Reconciliation after seed and after every sync | 90 / 90 store-product pairs match; `store_mismatches = 0` |
 | ETL pass duration (CDC, one till sale) | about 5 ms average, under 10 ms for a whole sale |
 
@@ -25,11 +25,11 @@ docker exec -i student-postgres psql -U student -d pethaven_demo < workspace/dem
 
 | Component | Objects |
 | --- | --- |
-| 3 source systems | `store_ops` (6 tables, 9 functions incl. checkout stock check and transfers, EAN-13 validation), `supply` (4 tables, 1 function), `online` (10 tables incl. bag and checkout attempts, 7 functions) |
+| 3 source systems | `store_ops` (6 tables, 11 functions incl. checkout stock check, transfers and overdue cancellation, EAN-13 validation), `supply` (4 tables, 1 function), `online` (10 tables incl. bag and checkout attempts, 8 functions incl. pickup options) |
 | ETL | `etl` cross-references (2), staging (4), run log, CDC extract triggers (5), `v_transform`, `run_etl`, `load_dimensions`, `approve_product_mapping`, `v_staging`, `v_data_quality`, code look-ups |
 | Data warehouse | `dim_product`, `dim_store`, `dim_date`, `fact_stock_event` (+4 indexes), `sync_run`, `sync_change`, `run_sync` |
-| Reports | 8 views: stock by store, staleness, online vs actual, last sync changes, items blocked at checkout, daily sales, open reservations, reconciliation |
-| Tooling | `build.py`, `demo.py` (15 commands), `cloudbeaver_demo.sql`, `check_demo.py` |
+| Reports | 8 views: stock by store, staleness, online vs actual, last sync changes, items blocked at checkout, daily sales (both channels), open reservations, reconciliation |
+| Tooling | `build.py`, `demo.py` (17 commands), `cloudbeaver_demo.sql`, `check_demo.py` |
 
 ## Not implemented (out of scope)
 
@@ -39,7 +39,8 @@ docker exec -i student-postgres psql -U student -d pethaven_demo < workspace/dem
 | Splitting one item across stores | Each item comes from one store (Spec 2.2) | An item only several stores together could supply is blocked at checkout (reason "no single store had enough"); the customer can remove it and buy the rest |
 | Real stock check when adding to the bag | The bag uses the website number on purpose: that is where staleness shows | Customers can add items that are then blocked at checkout (Report 3) |
 | Payment processing | Out of scope | "Paid" means the checkout succeeded; no card handling is modelled |
-| Customer-chosen pickup store | Pickup store = closest to the postcode (Spec 4.3) | The customer cannot pick a different store |
+| Pickup at a store holding none of the items | Only stores holding at least one item are offered (Spec 4.3) | Everything would have to be transferred; not offered |
+| Scheduled overdue cancellation | `cancel_overdue_orders` is run on demand, like the sync | Overdue orders stay held until someone runs it |
 | Transit time and courier | Dispatch and receive are recorded steps only | No delivery estimate for transferred lines |
 | Scheduled sync | Manual by design for the demonstration (Spec 6) | Staleness grows until someone runs the sync; the staleness report shows by how much |
 | Online order status after placement | The store system owns the transfer/collection/cancellation lifecycle | `web_order.status` stays the outcome at placement; current state is in `store_ops.reservation` and `dw.rpt_open_reservations` |

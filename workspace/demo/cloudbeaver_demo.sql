@@ -69,10 +69,12 @@ SELECT event_type, units, event_ts, date_key, source_ref
 
 
 -- -----------------------------------------------------------------------------
--- 3. Online shopping (Source 3): bag -> checkout. Checkout checks REAL store
---    stock BEFORE payment; if any item is unavailable, nothing is charged.
---    Items are collected at the store closest to the customer; items that
---    store lacks come from the next-nearest store and are transferred.
+-- 3. Online shopping (Source 3): bag -> pickup options -> checkout.
+--    Adding to the bag changes nothing. The customer is offered every store
+--    that holds at least one bag item (fewest transfers first) and picks one;
+--    items that store lacks come from the next-nearest store and are
+--    transferred. Checkout checks REAL store stock BEFORE payment; if any
+--    item is unavailable, nothing is charged and the bag stays open.
 -- -----------------------------------------------------------------------------
 -- 3a. One item: Bondi customer (2026) buys 2 x WEB-10001 -> paid, held at Bondi.
 SELECT online.place_online_order('2026', 'WEB-10001', 2);                 -- bag 9 -> order 8
@@ -95,9 +97,11 @@ SELECT a.attempt_no, a.outcome, a.pickup_cp_code, i.web_sku, i.quantity, i.websi
  WHERE a.basket_id = 10 ORDER BY a.attempt_no, i.web_sku;               -- beds unavailable; nothing held
 SELECT * FROM dw.rpt_checkout_blocked WHERE basket = 'basket 10';         -- reason: split across stores
 
--- The customer removes the beds and checks out again -> paid.
+-- The customer removes the beds and looks at the pickup options:
+-- Newtown has both items (no transfer); Bondi has the duck (kit transferred).
 SELECT online.remove_from_basket(10, 'WEB-10013');
-SELECT online.checkout(10);                                               -- order 9
+SELECT * FROM online.pickup_options(10);
+SELECT online.checkout(10, 'CP-BONDI-JUNCTION');                         -- chooses Bondi -> order 9
 SELECT * FROM online.web_order_line WHERE order_no = 9;                   -- duck from Bondi, kit from Newtown
 SELECT * FROM store_ops.reservation WHERE web_order_ref = '9';
 
@@ -140,12 +144,14 @@ SELECT * FROM dw.rpt_checkout_blocked ORDER BY attempted_at;             -- reas
 
 
 -- -----------------------------------------------------------------------------
--- 6. Click and collect: finish the seed's 3-item order 5, cancel overdue order 3
+-- 6. Click and collect: finish the seed's 3-item order 5; the overdue job
+--    cancels order 3 (not collected within 3 days)
 -- -----------------------------------------------------------------------------
 SELECT * FROM dw.rpt_open_reservations ORDER BY order_no, product_code;  -- order 5 in transit, order 3 overdue
 SELECT store_ops.receive_order_transfers('5');
 SELECT store_ops.collect_order('5');
-SELECT store_ops.cancel_order('3', 'Not collected within 3 days');       -- beds back on Penrith's shelf
+SELECT store_ops.cancel_overdue_orders();                                 -- 1: beds back on Parramatta's shelf
+SELECT web_order_ref, status, cancel_reason FROM store_ops.reservation WHERE web_order_ref = '3';
 SELECT store_ops.collect_order('9');
 SELECT * FROM dw.rpt_open_reservations ORDER BY order_no, product_code;
 
@@ -173,7 +179,7 @@ SELECT * FROM etl.etl_run ORDER BY etl_run_id DESC LIMIT 5;
 SELECT * FROM dw.rpt_current_stock_by_store WHERE store_code = 'S01' ORDER BY product_code;  -- Report 1
 SELECT * FROM dw.rpt_online_staleness;                                                    -- Report 2
 SELECT * FROM dw.rpt_checkout_blocked ORDER BY attempted_at;                              -- Report 3
-SELECT * FROM dw.rpt_daily_sales ORDER BY full_date, store_name, category;                -- Report 4
+SELECT * FROM dw.rpt_daily_sales ORDER BY full_date, store_name, channel, category;       -- Report 4
 SELECT * FROM dw.rpt_open_reservations ORDER BY reserved_at;                              -- Report 5
 SELECT * FROM dw.rpt_reconciliation WHERE status <> 'match';                              -- Report 6
 

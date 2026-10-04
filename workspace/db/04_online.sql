@@ -10,7 +10,8 @@
 --          collection_point, postcode_location, basket + basket_item,
 --          checkout_attempt + checkout_attempt_item, web_order +
 --          web_order_line, and create_basket(), add_to_basket(),
---          remove_from_basket(), checkout(), place_online_order() (shortcut).
+--          remove_from_basket(), pickup_options(), checkout(),
+--          place_online_order() (shortcut).
 -- =============================================================================
 
 CREATE TABLE online.product (
@@ -234,27 +235,82 @@ END;
 $$;
 
 -- -----------------------------------------------------------------------------
+-- Pickup options for a bag: every store that has at least one bag item (the
+-- whole quantity) on its shelf right now. Ranked by fewest transfers, then
+-- distance from the customer. A store with none of the items is not offered.
+-- items_unavailable > 0 means some item is in no single store, so checkout
+-- would be blocked whichever store is chosen.
+-- Example: SELECT * FROM online.pickup_options(9);
+-- -----------------------------------------------------------------------------
+CREATE FUNCTION online.pickup_options(p_basket_id bigint)
+RETURNS TABLE (
+    option_rank        integer,
+    cp_code            text,
+    cp_name            text,
+    distance_km        numeric,
+    items_here         integer,
+    items_transferred  integer,
+    items_unavailable  integer
+)
+LANGUAGE sql STABLE AS $$
+    WITH customer AS (
+        SELECT pl.latitude, pl.longitude
+          FROM online.basket b JOIN online.postcode_location pl ON pl.postcode = b.customer_postcode
+         WHERE b.basket_id = p_basket_id
+    ), item_store AS (
+        -- For each bag item: the stores that have the whole quantity.
+        SELECT i.web_sku, s.store_no
+          FROM online.basket_item i
+          JOIN online.product p ON p.web_sku = i.web_sku
+          CROSS JOIN LATERAL store_ops.stores_with_stock(p.pos_barcode, i.quantity) AS s (store_no)
+         WHERE i.basket_id = p_basket_id
+    ), totals AS (
+        SELECT count(*)::integer AS n_items,
+               count(*) FILTER (WHERE NOT EXISTS (SELECT 1 FROM item_store x WHERE x.web_sku = i.web_sku))::integer AS n_unavailable
+          FROM online.basket_item i WHERE i.basket_id = p_basket_id
+    ), per_cp AS (
+        SELECT cp.cp_code, cp.cp_name,
+               online.distance_km(c.latitude, c.longitude, cp.latitude, cp.longitude) AS distance_km,
+               (SELECT count(*) FROM item_store x WHERE x.store_no = cp.store_no)::integer AS items_here
+          FROM online.collection_point cp CROSS JOIN customer c
+    )
+    SELECT (row_number() OVER (ORDER BY pc.items_here DESC, pc.distance_km, pc.cp_code))::integer,
+           pc.cp_code, pc.cp_name, pc.distance_km, pc.items_here,
+           t.n_items - t.n_unavailable - pc.items_here,
+           t.n_unavailable
+      FROM per_cp pc CROSS JOIN totals t
+     WHERE pc.items_here > 0
+     ORDER BY pc.items_here DESC, pc.distance_km, pc.cp_code;
+$$;
+
+-- -----------------------------------------------------------------------------
 -- Checkout: the real stock check BEFORE payment.
---   1. Pickup store = the collection point closest to the customer's postcode.
+--   1. Pickup store = the one the customer chose from pickup_options(); if
+--      none is given, the top option (fewest transfers, then nearest). A store
+--      that is not offered (it has none of the items) cannot be chosen.
 --   2. For every item, ask the store system which store can supply the whole
 --      quantity from REAL shelf stock - the pickup store first, then the
---      other stores by distance (store_ops.find_stock locks those rows).
+--      other stores by distance from the pickup store (store_ops.find_stock
+--      locks those rows, so whoever checks out first gets the stock).
 --   3. Any item no single store can supply -> checkout BLOCKED: nothing is
---      charged or held; the attempt lists the unavailable items; the bag
---      stays open for the customer to edit and try again.
+--      charged or held; the attempt lists the unavailable items; the bag stays
+--      open (bags never expire) for the customer to edit and try again.
 --   4. Otherwise -> payment taken, order created, every item held at its
---      supplying store (store_ops.reserve_stock; lines from another store are
---      later transferred to the pickup store), website number lowered.
+--      supplying store (store_ops.reserve_stock; items from another store are
+--      later transferred to the pickup store), website number lowered. The
+--      website number changes only here, never when items go into a bag.
 -- Returns the order number, or NULL when blocked.
--- Example: SELECT online.checkout(1);
+-- Examples: SELECT online.checkout(9);                       -- top option
+--           SELECT online.checkout(9, 'CP-CHATSWOOD');       -- customer's choice
 -- -----------------------------------------------------------------------------
-CREATE FUNCTION online.checkout(p_basket_id bigint, p_at timestamptz DEFAULT now())
-RETURNS bigint
+CREATE FUNCTION online.checkout(
+    p_basket_id       bigint,
+    p_pickup_cp_code  text DEFAULT NULL,
+    p_at              timestamptz DEFAULT now()
+) RETURNS bigint
 LANGUAGE plpgsql AS $$
 DECLARE
     b               online.basket;
-    v_lat           numeric;
-    v_lon           numeric;
     v_pickup_cp     text;
     v_pickup_store  text;
     v_store_order   text[];
@@ -274,18 +330,34 @@ BEGIN
         RAISE EXCEPTION 'Basket % is empty', p_basket_id;
     END IF;
 
-    SELECT latitude, longitude INTO v_lat, v_lon
-      FROM online.postcode_location WHERE postcode = b.customer_postcode;
+    -- 1. Pickup store.
+    IF p_pickup_cp_code IS NULL THEN
+        SELECT cp_code INTO v_pickup_cp FROM online.pickup_options(p_basket_id) WHERE option_rank = 1;
+        IF v_pickup_cp IS NULL THEN
+            -- No store has any item: checkout will be blocked; record the closest store.
+            SELECT cp.cp_code INTO v_pickup_cp
+              FROM online.collection_point cp
+              JOIN online.postcode_location pl ON pl.postcode = b.customer_postcode
+             ORDER BY online.distance_km(pl.latitude, pl.longitude, cp.latitude, cp.longitude), cp.cp_code
+             LIMIT 1;
+        END IF;
+    ELSE
+        IF NOT EXISTS (SELECT 1 FROM online.pickup_options(p_basket_id) WHERE cp_code = p_pickup_cp_code) THEN
+            RAISE EXCEPTION 'Pickup store % is not offered for basket % (it has none of the items); choose from online.pickup_options(%)',
+                p_pickup_cp_code, p_basket_id, p_basket_id;
+        END IF;
+        v_pickup_cp := p_pickup_cp_code;
+    END IF;
 
-    -- 1. Pickup store, and the order in which stores are asked.
-    SELECT cp_code, store_no INTO v_pickup_cp, v_pickup_store
-      FROM online.collection_point
-     ORDER BY online.distance_km(v_lat, v_lon, latitude, longitude), cp_code
-     LIMIT 1;
-    SELECT array_agg(store_no ORDER BY cp_code <> v_pickup_cp,
-                                       online.distance_km(v_lat, v_lon, latitude, longitude), cp_code)
-      INTO v_store_order
-      FROM online.collection_point;
+    -- Stores to ask, in order: the pickup store, then the others by distance from it.
+    SELECT pk.store_no,
+           array_agg(cp.store_no ORDER BY cp.cp_code <> pk.cp_code,
+                     online.distance_km(pk.latitude, pk.longitude, cp.latitude, cp.longitude), cp.cp_code)
+      INTO v_pickup_store, v_store_order
+      FROM online.collection_point pk
+     CROSS JOIN online.collection_point cp
+     WHERE pk.cp_code = v_pickup_cp
+     GROUP BY pk.store_no;
 
     PERFORM 1 FROM online.online_stock s
       JOIN online.basket_item i ON i.web_sku = s.web_sku AND i.basket_id = p_basket_id
@@ -360,16 +432,18 @@ END;
 $$;
 
 -- -----------------------------------------------------------------------------
--- Shortcut used by scripts and tests: new bag + add items + checkout.
+-- Shortcut used by scripts and tests: new bag + add items + checkout (at the
+-- chosen pickup store, or the top option if none is given).
 -- Returns the order number, or NULL if checkout was blocked (the bag is left
 -- open; see online.checkout_attempt for which items were unavailable).
 -- Example: SELECT online.place_online_order('2026', ARRAY['WEB-10003','WEB-10013'], ARRAY[2,2]);
 -- -----------------------------------------------------------------------------
 CREATE FUNCTION online.place_online_order(
-    p_postcode    text,
-    p_web_skus    text[],
-    p_quantities  integer[],
-    p_ordered_at  timestamptz DEFAULT now()
+    p_postcode        text,
+    p_web_skus        text[],
+    p_quantities      integer[],
+    p_ordered_at      timestamptz DEFAULT now(),
+    p_pickup_cp_code  text DEFAULT NULL
 ) RETURNS bigint
 LANGUAGE plpgsql AS $$
 DECLARE
@@ -384,7 +458,7 @@ BEGIN
     FOR v_item IN SELECT * FROM unnest(p_web_skus, p_quantities) AS i (web_sku, quantity) LOOP
         PERFORM online.add_to_basket(v_basket_id, v_item.web_sku, v_item.quantity, p_ordered_at);
     END LOOP;
-    RETURN online.checkout(v_basket_id, p_ordered_at);
+    RETURN online.checkout(v_basket_id, p_pickup_cp_code, p_ordered_at);
 END;
 $$;
 

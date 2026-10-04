@@ -9,7 +9,7 @@
 --             dw.rpt_online_vs_actual         website number vs real total per product
 --             dw.rpt_last_sync_changes        before/after of the most recent sync
 --   Report 3  dw.rpt_checkout_blocked         bag items blocked at checkout although the website showed them
---   Report 4  dw.rpt_daily_sales              units sold per day, store and category
+--   Report 4  dw.rpt_daily_sales              units sold per day, store, channel (in store / online) and category
 --   Report 5  dw.rpt_open_reservations        click-and-collect order lines not yet collected (incl. transfers)
 --   Report 6  dw.rpt_reconciliation           warehouse vs live store system
 --             etl.v_data_quality              source records rejected by the ETL (06_etl.sql)
@@ -43,43 +43,30 @@ COMMENT ON VIEW dw.rpt_current_stock_by_store IS
 -- What the website shows now = latest synced value minus the website's own
 -- reservations since that sync (it deducts those immediately).
 CREATE VIEW dw.rpt_online_vs_actual AS
-WITH last_synced AS (
-    SELECT DISTINCT ON (c.product_key)
-           c.product_key, c.after_qty, r.to_event_id, r.run_at
-      FROM dw.sync_change c
-      JOIN dw.sync_run r ON r.sync_id = c.sync_id
-     WHERE c.measure = 'online_available'
-     ORDER BY c.product_key, c.sync_id DESC
-), shown AS (
-    SELECT ls.product_key,
-           ls.after_qty - coalesce((SELECT sum(f.units)
-                                      FROM dw.fact_stock_event f
-                                     WHERE f.product_key = ls.product_key
-                                       AND f.event_type = 'reservation'
-                                       AND f.event_id > ls.to_event_id), 0) AS online_shown,
-           ls.run_at AS synced_at
-      FROM last_synced ls
-), actual AS (
+-- What the website shows right now (Source 3, through the web SKU mapping)
+-- next to the real combined in-store stock from the warehouse.
+WITH actual AS (
     SELECT product_key, sum(quantity_change) AS actual_in_store
       FROM dw.fact_stock_event
      GROUP BY product_key
 )
 SELECT p.product_code,
        p.product_name,
-       sh.online_shown,
-       coalesce(a.actual_in_store, 0)                    AS actual_in_store,
-       sh.online_shown - coalesce(a.actual_in_store, 0)  AS overstated_by,
+       os.available_quantity                                   AS online_shown,
+       coalesce(a.actual_in_store, 0)                          AS actual_in_store,
+       os.available_quantity - coalesce(a.actual_in_store, 0)  AS overstated_by,
        CASE
-           WHEN sh.online_shown > coalesce(a.actual_in_store, 0) THEN 'overstated - oversell risk'
-           WHEN sh.online_shown < coalesce(a.actual_in_store, 0) THEN 'understated - lost sales risk'
+           WHEN os.available_quantity > coalesce(a.actual_in_store, 0) THEN 'overstated - oversell risk'
+           WHEN os.available_quantity < coalesce(a.actual_in_store, 0) THEN 'understated - lost sales risk'
            ELSE 'in sync'
-       END                                               AS status,
-       sh.synced_at
-  FROM shown sh
-  JOIN dw.dim_product p ON p.product_key = sh.product_key
-  LEFT JOIN actual a    ON a.product_key = sh.product_key;
+       END                                                     AS status,
+       os.last_synced_at                                       AS synced_at
+  FROM dw.dim_product p
+  JOIN etl.product_xref x     ON x.product_code = p.product_code AND x.source_system = 'ONLINE'
+  JOIN online.online_stock os ON os.web_sku = x.source_code
+  LEFT JOIN actual a          ON a.product_key = p.product_key;
 COMMENT ON VIEW dw.rpt_online_vs_actual IS
-'Report 2 (detail). Website number next to the real combined in-store stock now, per product sold online. Shows what a sync would correct.';
+'Report 2 (detail). The number the website shows right now next to the real combined in-store stock from the warehouse, per product sold online. Shows what a sync would correct.';
 
 CREATE VIEW dw.rpt_online_staleness AS
 WITH last_sync AS (
@@ -173,22 +160,34 @@ COMMENT ON VIEW dw.rpt_checkout_blocked IS
 
 -- Report 4 ------------------------------------------------------------------
 CREATE VIEW dw.rpt_daily_sales AS
+-- In store: till sale lines, at the store that sold them.
+-- Online:   paid order items (reservation) minus cancelled ones, at the
+--           store where the customer collects (pickup store).
+WITH sales AS (
+    SELECT f.date_key, f.store_key, f.product_key, 'in store'::text AS channel, f.units
+      FROM dw.fact_stock_event f
+     WHERE f.event_type = 'store_sale'
+    UNION ALL
+    SELECT f.date_key, f.pickup_store_key, f.product_key, 'online',
+           CASE f.event_type WHEN 'reservation' THEN f.units ELSE -f.units END
+      FROM dw.fact_stock_event f
+     WHERE f.event_type IN ('reservation', 'cancellation')
+)
 SELECT d.full_date,
        d.day_name,
        d.is_weekend,
        s.store_name,
+       x.channel,
        p.category,
-       sum(f.units)                     AS units_sold,
-       count(*)                         AS sale_lines,
-       sum(f.units * p.unit_price)      AS sales_value_at_current_price
-  FROM dw.fact_stock_event f
-  JOIN dw.dim_date d    ON d.date_key = f.date_key
-  JOIN dw.dim_store s   ON s.store_key = f.store_key
-  JOIN dw.dim_product p ON p.product_key = f.product_key
- WHERE f.event_type = 'store_sale'
- GROUP BY d.full_date, d.day_name, d.is_weekend, s.store_name, p.category;
+       sum(x.units)                     AS units_sold,
+       sum(x.units * p.unit_price)      AS sales_value_at_current_price
+  FROM sales x
+  JOIN dw.dim_date d    ON d.date_key = x.date_key
+  JOIN dw.dim_store s   ON s.store_key = x.store_key
+  JOIN dw.dim_product p ON p.product_key = x.product_key
+ GROUP BY d.full_date, d.day_name, d.is_weekend, s.store_name, x.channel, p.category;
 COMMENT ON VIEW dw.rpt_daily_sales IS
-'Report 4. In-store units sold per day, store and category (star-schema roll-up through dim_date). Value uses the current shelf price (dim_product is SCD type 1).';
+'Report 4. Units sold per day, store, channel and category (star-schema roll-up through dim_date). In store = till sales; online = paid click-and-collect items less cancellations, credited to the pickup store. Value uses the current shelf price (dim_product is SCD type 1).';
 
 -- Report 5 ------------------------------------------------------------------
 CREATE VIEW dw.rpt_open_reservations AS

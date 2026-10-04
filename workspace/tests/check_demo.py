@@ -97,9 +97,18 @@ def sell_all(store: str, product: str) -> None:
         sale(store, {product: qty})
 
 
-def checkout(basket_id: int) -> tuple[int | None, str, dict]:
-    """Check out a bag; return (order_no or None if blocked, pickup store, {product: (result, source store)})."""
-    order_no = run("SELECT online.checkout(%s)", (basket_id,))
+def cp(store: str) -> str:
+    return code("store", "ONLINE", store)
+
+
+def store_of_cp(cp_code: str) -> str:
+    return one("SELECT store_code FROM etl.store_xref WHERE source_system='ONLINE' AND source_code=%s", (cp_code,))
+
+
+def checkout(basket_id: int, pickup: str | None = None) -> tuple[int | None, str, dict]:
+    """Check out a bag (optionally at a chosen pickup store);
+    return (order_no or None if blocked, pickup store, {product: (result, source store)})."""
+    order_no = run("SELECT online.checkout(%s, %s)", (basket_id, cp(pickup) if pickup else None))
     pickup = db.query(conn, """
         SELECT x.store_code FROM online.checkout_attempt a
           JOIN etl.store_xref x ON x.source_system='ONLINE' AND x.source_code=a.pickup_cp_code
@@ -122,10 +131,17 @@ def bag(postcode: str, items: dict[str, int]) -> int:
     return basket_id
 
 
-def order(postcode: str, items: dict[str, int]) -> tuple[int, int | None, str, dict]:
+def order(postcode: str, items: dict[str, int], pickup: str | None = None) -> tuple[int, int | None, str, dict]:
     """New bag + checkout; return (basket_id, order_no or None, pickup store, item results)."""
     basket_id = bag(postcode, items)
-    return (basket_id, *checkout(basket_id))
+    return (basket_id, *checkout(basket_id, pickup))
+
+
+def options(basket_id: int) -> list[tuple]:
+    """Pickup options in rank order: [(store, items_here, items_transferred), ...]."""
+    _, rows = db.query(conn, "SELECT cp_code, items_here, items_transferred FROM online.pickup_options(%s) "
+                             "ORDER BY option_rank", (basket_id,))
+    return [(store_of_cp(c), h, tr) for c, h, tr in rows]
 
 
 def store_step(function: str, order_no: int, *extra):
@@ -161,7 +177,7 @@ def main() -> int:
     check("R16 seed: blocked bag created no order and held nothing", (0, "open"),
           (one("SELECT count(*)::int FROM online.web_order WHERE basket_id=5"),
            one("SELECT status FROM online.basket WHERE basket_id=5")))
-    check("R8 seed dog-bed order: collected at Penrith, taken from Parramatta", ("S05", "S01"),
+    check("R8 seed dog-bed order: Penrith lacks 2 beds, so collected at and taken from Parramatta", ("S01", "S01"),
           tuple(db.query(conn, """
               SELECT pk.store_code, src.store_code FROM store_ops.reservation r
                 JOIN etl.store_xref pk ON pk.source_system='STORE' AND pk.source_code=r.pickup_store_no
@@ -223,7 +239,9 @@ def main() -> int:
     sale("S03", {"P006": in_store("S03", "P006") - 10})
     run("SELECT dw.run_sync()")
     check("R17 website shows 10 after sync", 10, online("P006"))
-    _, order_no, _, lines = order("2067", {"P006": 7})
+    bag_a = bag("2067", {"P006": 7})                     # customer A: 7 in the bag, does not check out yet
+    check("R6 adding to a bag does not change the website number", 10, online("P006"))
+    _, order_no, _, lines = order("2067", {"P006": 7})   # customer B checks out first
     check("R6 order of 7 paid, held at Chatswood", (True, ("available", "S03")), (order_no is not None, lines["P006"]))
     check("R6 website shows 3 before the next sync", 3, online("P006"))
     check("R6 not counted as out of date", "in sync",
@@ -231,57 +249,75 @@ def main() -> int:
     basket_id = run("SELECT online.create_basket('2067')")
     check("R7 cannot add 7 to the bag (website shows 3)", "refused",
           _refused("SELECT online.add_to_basket(%s, %s, 7)", (basket_id, web("P006"))))
+    a_order, _, a_lines = checkout(bag_a)
+    check("R25 first to check out wins: A is blocked, item stays in A's bag",
+          (None, ("unavailable", None), "open", 1, 3),
+          (a_order, a_lines["P006"], one("SELECT status FROM online.basket WHERE basket_id=%s", (bag_a,)),
+           one("SELECT count(*)::int FROM online.basket_item WHERE basket_id=%s", (bag_a,)), online("P006")))
 
-    print("\n-- Closest store lacks stock -> taken from next-nearest and transferred")
-    sell_all("S05", "P016")
-    held_s01 = reserved("S01", "P016")
-    _, order_no, pickup, lines = order("2750", {"P016": 1})
-    check("R8 pickup Penrith, taken from Parramatta", ("S05", ("available", "S01")), (pickup, lines["P016"]))
-    check("R8 held at the source store until sent", held_s01 + 1, reserved("S01", "P016"))
-    check("R21 cannot collect before the item arrives", "refused",
+    print("\n-- Pickup options: only stores holding an item; the customer chooses")
+    basket_id = bag("2026", {"P018": 1, "P013": 1})
+    opts = options(basket_id)
+    check("R24 best option: Newtown has both items, no transfers", ("S04", 2, 0), opts[0])
+    check("R24 Bondi (has the bed) offered with 1 transfer", True, ("S02", 1, 1) in opts)
+    check("R24 Parramatta (has neither) not offered", False, "S01" in [o[0] for o in opts])
+    check("R24 choosing a store that is not offered is refused", "refused",
+          _refused("SELECT online.checkout(%s, %s)", (basket_id, cp("S01"))))
+    held_s04 = reserved("S04", "P018")
+    order_no, pickup, lines = checkout(basket_id, "S02")
+    check("R24 customer chose Bondi: bed held there, kit taken from Newtown",
+          (True, "S02", ("available", "S02"), ("available", "S04")),
+          (order_no is not None, pickup, lines["P013"], lines["P018"]))
+    check("R8 kit held at Newtown until sent", held_s04 + 1, reserved("S04", "P018"))
+    check("R21 cannot collect before the kit arrives", "refused",
           _refused("SELECT store_ops.collect_order(%s)", (str(order_no),)))
     store_step("dispatch_order_transfers", order_no)
-    check("R21 dispatch: leaves the source store, in transit", (held_s01, ("transfer_out", "S01", 0, -1)),
-          (reserved("S01", "P016"), last_event()))
+    check("R21 dispatch: leaves Newtown, in transit", (held_s04, ("transfer_out", "S04", 0, -1)),
+          (reserved("S04", "P018"), last_event()))
     check("R21 cannot cancel while in transit", "refused",
           _refused("SELECT store_ops.cancel_order(%s, 'x')", (str(order_no),)))
-    check("R21 open order shows the line in transit", "in transit",
-          one("SELECT line_status FROM dw.rpt_open_reservations WHERE order_no=%s", (str(order_no),)))
+    check("R21 open order shows the kit in transit", "in transit",
+          one("SELECT line_status FROM dw.rpt_open_reservations WHERE order_no=%s AND product_code='P018'", (str(order_no),)))
     store_step("receive_order_transfers", order_no)
-    check("R21 receive: arrives held at the pickup store", (1, ("transfer_in", "S05", 0, 1)),
-          (reserved("S05", "P016"), last_event()))
+    check("R21 receive: kit held at Bondi", (1, ("transfer_in", "S02", 0, 1)),
+          (reserved("S02", "P018"), last_event()))
     store_step("collect_order", order_no)
-    check("R5 collected at the pickup store", (0, ("collection", "S05", 0, -1)),
-          (reserved("S05", "P016"), last_event()))
+    check("R5 whole order collected at Bondi", (0, 0, ("collection", "S02", 0, -1)),
+          (reserved("S02", "P018"), reserved("S02", "P013"), last_event()))
 
-    print("\n-- Three items in the bag, one not available in any single store")
+    print("\n-- Cancelling after a transfer arrived")
+    basket_id = bag("2026", {"P018": 1, "P009": 1})
+    order_no, pickup, lines = checkout(basket_id, "S02")
+    check("R24 kit taken from Penrith (the only store left with one)", ("S02", ("available", "S05")),
+          (pickup, lines["P018"]))
+    store_step("dispatch_order_transfers", order_no)
+    store_step("receive_order_transfers", order_no)
+    shelf_s02 = in_store("S02", "P018")
+    store_step("cancel_order", order_no, "Customer cancelled")
+    check("R5 cancel after arrival: kit goes on Bondi's shelf", (shelf_s02 + 1, 0),
+          (in_store("S02", "P018"), reserved("S02", "P018")))
+
+    print("\n-- Two items in the bag, one not available in any single store")
     p13_total = actual_total("P013")
-    shown = {p: online(p) for p in ("P009", "P018", "P013")}
-    held_before = {s: reserved(s, "P009") for s in ("S02",)}
-    basket_id, order_no, pickup, lines = order("2026", {"P009": 1, "P018": 1, "P013": 2})
-    check("R23 checkout blocked before payment: no order", (None, "S02"), (order_no, pickup))
-    check("R23 the check found duck at Bondi, kit at Newtown, beds nowhere",
-          (("available", "S02"), ("available", "S04"), ("unavailable", None)),
-          (lines["P009"], lines["P018"], lines["P013"]))
+    shown = {p: online(p) for p in ("P009", "P013")}
+    held_before = reserved("S02", "P009")
+    basket_id, order_no, pickup, lines = order("2026", {"P009": 1, "P013": 2})
+    check("R23 checkout blocked before payment: no order", None, order_no)
+    check("R23 the check found the duck at Bondi, 2 beds in no single store",
+          (("available", "S02"), ("unavailable", None)), (lines["P009"], lines["P013"]))
     check("R23 nothing held, website unchanged, bag still open",
-          (held_before["S02"], (shown["P009"], shown["P018"], shown["P013"]), "open"),
-          (reserved("S02", "P009"), (online("P009"), online("P018"), online("P013")),
+          (held_before, (shown["P009"], shown["P013"]), "open"),
+          (reserved("S02", "P009"), (online("P009"), online("P013")),
            one("SELECT status FROM online.basket WHERE basket_id=%s", (basket_id,))))
     check("R16 blocked item recorded with reason: split across stores",
           (True, "enough stock in total but no single store had enough"),
           (p13_total >= 2, one("SELECT reason FROM dw.rpt_checkout_blocked WHERE basket=%s", (f"basket {basket_id}",))))
     run("SELECT online.remove_from_basket(%s, %s), 1", (basket_id, web("P013")))
     order_no, pickup, lines = checkout(basket_id)
-    check("R22 after removing the beds: paid; duck local, kit transferred from Newtown",
-          (True, ("available", "S02"), ("available", "S04")), (order_no is not None, lines["P009"], lines["P018"]))
-    check("R6 website lowered only once paid, for the paid items", (shown["P009"] - 1, shown["P018"] - 1, shown["P013"]),
-          (online("P009"), online("P018"), online("P013")))
-    store_step("dispatch_order_transfers", order_no)
-    store_step("receive_order_transfers", order_no)
-    shelf_s02 = in_store("S02", "P018")
-    store_step("cancel_order", order_no, "Customer cancelled")
-    check("R5 cancel after arrival: kit goes on the pickup store's shelf", (shelf_s02 + 1, 0),
-          (in_store("S02", "P018"), reserved("S02", "P018")))
+    check("R22 after removing the beds: paid, duck collected at Bondi", (True, "S02", ("available", "S02")),
+          (order_no is not None, pickup, lines["P009"]))
+    check("R6 website lowered only once paid, for the paid item", (shown["P009"] - 1, shown["P013"]),
+          (online("P009"), online("P013")))
 
     print("\n-- Collection and cancellation (local)")
     _, order_no, _, _ = order("2042", {"P009": 2})
@@ -337,6 +373,17 @@ def main() -> int:
           (one("SELECT count(*)::int FROM etl.v_data_quality"), events()))
     check("R12 P019 added to dim_product", 19, one("SELECT count(*)::int FROM dw.dim_product"))
 
+    print("\n-- Overdue click-and-collect orders are cancelled")
+    shelf, held = in_store("S01", "P013"), reserved("S01", "P013")
+    cancelled = run("SELECT store_ops.cancel_overdue_orders()")
+    check("R26 overdue order 3 cancelled, beds back on Parramatta's shelf", (1, shelf + 2, held - 2),
+          (cancelled, in_store("S01", "P013"), reserved("S01", "P013")))
+    check("R26 reason recorded", "Not collected within 3 days",
+          one("SELECT DISTINCT cancel_reason FROM store_ops.reservation WHERE web_order_ref='3'"))
+    check("R26 no overdue orders left; in-transit order 5 untouched", (0, 2),
+          (one("SELECT count(*)::int FROM dw.rpt_open_reservations WHERE overdue"),
+           one("SELECT count(*)::int FROM store_ops.reservation WHERE web_order_ref='5' AND status='in_transit'")))
+
     print("\n-- Run sync")
     pending = one("SELECT pending_events::int FROM dw.rpt_online_staleness")
     sync_id = run("SELECT dw.run_sync()")
@@ -355,6 +402,8 @@ def main() -> int:
           one("SELECT count(*)::int FROM etl.v_staging WHERE load_status='loaded'"))
     check("R18 daily sales report uses dim_date", True,
           one("SELECT count(*) > 0 FROM dw.rpt_daily_sales WHERE full_date = current_date"))
+    check("R18 daily sales include both channels", ["in store", "online"],
+          [r[0] for r in db.query(conn, "SELECT DISTINCT channel FROM dw.rpt_daily_sales ORDER BY 1")[1]])
 
     conn.close()
     passed = sum(results)

@@ -9,9 +9,9 @@
 --   7 days ago 07:00  opening stock: one delivery docket per store and supplier
 --   7 days ago 08:00  sync #1 - the website gets its first real numbers
 --   6..1 days ago     till sales (some multi-item receipts), restock deliveries,
---                     7 paid online orders (one sourced from another store
---                     and transferred, one 3-item order with 2 lines coming
---                     from another store and still in transit), 1 checkout
+--                     7 paid online orders (one 3-item order collected at
+--                     the customer's chosen store with 2 items coming from
+--                     another store and still in transit), 1 checkout
 --                     blocked before payment because the website number was
 --                     stale, 2 collections, 1 cancellation, 1 overdue collection
 --   now               sync #2 - the "initial" sync for the demo; the website is
@@ -148,13 +148,11 @@ SELECT store_ops.record_sale('105', pg_temp.bc('{P001,P006}'),      '{2,2}', pg_
 
 SELECT store_ops.collect_order('1', pg_temp.ts(4, '18:00'));                               -- #1 collected
 
--- #3 Penrith customer wants 2 dog beds: Penrith (the pickup store) has 1, so
--- the beds are taken from the next-nearest store with 2 (Parramatta) and
--- transferred to Penrith. They arrive, but are never collected, so the order
--- shows as overdue in the open reservations report.
+-- #3 Penrith customer wants 2 dog beds: Penrith has only 1, so it is not
+-- offered as a pickup store; the best option is Parramatta (has both, nearest)
+-- and the customer collects there. They never collect, so the order becomes
+-- overdue (cancelled by store_ops.cancel_overdue_orders when it is run).
 SELECT online.place_online_order('2750', pg_temp.web('P013'), 2, pg_temp.ts(4, '19:05'));
-SELECT store_ops.dispatch_order_transfers('3', pg_temp.ts(3, '08:30'));
-SELECT store_ops.receive_order_transfers('3', pg_temp.ts(3, '11:45'));
 
 -- ---------------------------------------------------------------------------
 -- 3 days ago: the aquarium kit sells out at three stores (website still says 7)
@@ -192,15 +190,16 @@ SELECT supply.record_delivery('NSW-PENRI', 'VetCare Distributors', pg_temp.sku('
 SELECT store_ops.record_sale('101', pg_temp.bc('{P001,P006}'),      '{1,1}', pg_temp.ts(1, '09:35'));
 SELECT store_ops.cancel_order('4', 'Customer cancelled', pg_temp.ts(1, '10:00'));         -- #4 cancelled
 
--- #5 Bondi customer orders 3 different items, collected at
--- Bondi Junction: the cat food is at Bondi; the dog beds and the scratching
--- posts are not, so both come from Chatswood. They were sent this afternoon
--- and are still in transit, so the order is not ready yet.
+-- #5 Bondi customer orders 3 different items. Pickup options: Chatswood has
+-- all three (no transfers), Bondi has only the cat food. The customer chooses
+-- Bondi Junction, so the dog beds and scratching posts are taken from
+-- Chatswood and sent to Bondi. They are still in transit, so the order is not
+-- ready yet.
 SELECT online.place_online_order('2026', ARRAY[pg_temp.web('P003'), pg_temp.web('P013'), pg_temp.web('P017')],
-                                 ARRAY[2, 2, 4], pg_temp.ts(1, '11:05'));
-SELECT store_ops.dispatch_order_transfers('5', pg_temp.ts(1, '15:30'));
+                                 ARRAY[2, 2, 4], pg_temp.ts(1, '11:05'), 'CP-BONDI-JUNCTION');
 SELECT store_ops.record_sale('103', pg_temp.bc('{P010}'),           '{2}',   pg_temp.ts(1, '12:15'));
 SELECT store_ops.record_sale('104', pg_temp.bc('{P007}'),           '{1}',   pg_temp.ts(1, '14:05'));
+SELECT store_ops.dispatch_order_transfers('5', pg_temp.ts(1, '15:30'));
 
 SELECT online.place_online_order('2067', pg_temp.web('P004'), 2, pg_temp.ts(1, '19:45'));  -- #6 Chatswood
 SELECT online.place_online_order('2170', pg_temp.web('P008'), 1, pg_temp.ts(1, '21:10'));  -- #7 Liverpool -> Parramatta

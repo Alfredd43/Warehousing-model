@@ -16,7 +16,7 @@ PetHaven is fictional. Its size, operating arrangements and update rules below a
 | Products | Pet food, treats, toys, accessories, bedding, hygiene, health and aquatics. The prototype uses 18 products (plus one new line, P019). |
 | Stores | Five: Parramatta, Bondi Junction, Chatswood, Newtown and Penrith. Each has a shop floor and a click-and-collect counter. |
 | Sales channels | **In store**, through POS tills; **online**, through the website. |
-| Click & Collect (C&C) | An online order collected at one **pickup store** (the store closest to the customer's postcode). Items that store does not have are taken from another store and transferred to it. The only online fulfilment in scope. |
+| Click & Collect (C&C) | An online order collected at one **pickup store**, chosen by the customer from the stores holding at least one of the items. Items that store does not have are taken from another store and transferred to it. The only online fulfilment in scope. |
 | Supply | Suppliers deliver directly to each store, in cartons. |
 
 Use these words consistently:
@@ -40,7 +40,7 @@ The cause investigated is **the delay between a stock change in one system and i
 
 The unit of analysis is **one product at one store**, and the combined number for one product across all stores.
 
-In scope: in-store sales, supplier deliveries, online C&C orders with several lines (hold, transfer to the pickup store, collect, cancel), the manual sync, and code matching between systems. Out of scope: customer accounts and membership, grooming, home delivery, returns after collection, stock adjustments and counts, splitting one order line across several stores, the customer choosing a pickup store, pricing and promotions.
+In scope: in-store sales, supplier deliveries, online C&C orders with several lines (hold, transfer to the pickup store, collect, cancel), the manual sync, and code matching between systems. Out of scope: customer accounts and membership, grooming, home delivery, returns after collection, stock adjustments and counts, splitting one order line across several stores, pricing and promotions.
 
 ## 3. The three source systems
 
@@ -79,6 +79,7 @@ All changes to a store's stock happen **immediately** when the action is recorde
 | Held line sent to the pickup store | `reservation` → `in_transit` | supplying store: reserved − qty (in transit, in no store) | unchanged (already deducted) |
 | Transferred line arrives | `reservation` → `arrived` | pickup store: reserved + qty | unchanged |
 | Customer collects a C&C order (only when every line is at the pickup store) | each `reservation` → `collected` | pickup store: reserved − qty (goods leave) | unchanged (already deducted) |
+| C&C order not collected within 3 days | the overdue job (`cancel_overdue_orders`) cancels it like the row below | as below | unchanged until sync |
 | C&C order cancelled before collection (not while a line is in transit) | each `reservation` → `cancelled`, with reason | where the units are: reserved − qty, shelf + qty | unchanged until sync |
 
 ### 4.2 Delivery system
@@ -91,8 +92,9 @@ All changes to a store's stock happen **immediately** when the action is recorde
 
 | Action | Recorded as | Effect |
 | --- | --- | --- |
-| Customer adds items to the bag | `basket` + `basket_item` | Allowed only up to the website number (which may be stale). Nothing is held. |
-| Customer checks out (before payment) | `checkout_attempt` + items | 1. **Pickup store** = the store closest to the postcode. 2. For each item, find a store whose **real** shelf stock covers the whole quantity: the pickup store first, then the others by distance. 3. If **any** item is unavailable → checkout **blocked**: nothing charged, nothing held, the customer sees which items to remove and can check out again. 4. Otherwise → **paid**: `web_order` + `web_order_line` created; each item held at its supplying store (shelf − qty, reserved + qty), to be **transferred** to the pickup store if it is another store; the website number drops by each item at once. |
+| Customer adds items to the bag | `basket` + `basket_item` | Allowed only up to the website number (which may be stale). Nothing is held and the website number does not change. Bags never expire. |
+| Customer sees pickup options | `pickup_options()` | Every store holding at least one bag item, ranked by fewest transfers, then distance. A store with none of the items is not offered. |
+| Customer checks out (before payment) | `checkout_attempt` + items | 1. **Pickup store** = the customer's choice from the options (default: the top option). 2. For each item, find a store whose **real** shelf stock covers the whole quantity: the pickup store first, then the others by distance; whoever checks out first gets the stock. 3. If **any** item is unavailable → checkout **blocked**: nothing charged, nothing held, the customer sees which items to remove and can check out again. 4. Otherwise → **paid**: `web_order` + `web_order_line` created; each item held at its supplying store (shelf − qty, reserved + qty), to be **transferred** to the pickup store if it is another store; the website number drops by each item at once. |
 
 ## 5. Stock definitions and rules
 
@@ -150,15 +152,15 @@ Business action → source system (stock changes immediately) → ETL extracts t
 | 2 | Online staleness | Time since last sync, events pending, products whose website number is wrong, and before/after of the last sync |
 | 3 | Items blocked at checkout | Which bag items the website showed in stock but checkout blocked, for which pickup store, and why |
 
-Additional reports: daily sales by store and category; open C&C order lines (source store, transfer status, order ready, overdue); warehouse vs store reconciliation and rejected source records.
+Additional reports: daily sales by store, channel (in store / online) and category; open C&C order lines (source store, transfer status, order ready, overdue); warehouse vs store reconciliation and rejected source records.
 
 ### 7.3 Demonstration cases (in the sample data)
 
 **Case 1: stale number blocks a checkout.** The website was synced when 7 aquarium kits were in stock. Five then sold in store at three stores. A Bondi customer put 3 in the bag: the website still showed 7, so it let them in, but only 2 were left (1 each at Newtown and Penrith). Checkout was blocked before payment; the customer left without buying. Report 3 records it against Bondi with the reason "stale website number".
 
-**Case 2: pickup store cannot supply, so stock is transferred.** A Penrith customer ordered 2 orthopaedic beds. Penrith (the pickup store) had 1, so the beds were taken from Parramatta, the next-nearest store with 2, and transferred to Penrith. They arrived but were never collected, so the order is overdue.
+**Case 2: the nearest store can't supply, so it isn't offered.** A Penrith customer ordered 2 orthopaedic beds. Penrith had only 1, so it was not offered for pickup; the best option was Parramatta, which had both. The customer never collected, so the order became overdue and the overdue job cancels it, putting the beds back on Parramatta's shelf.
 
-**Case 2b: three items, not all at the pickup store.** A Bondi customer ordered cat food, 2 dog beds and 4 scratching posts. Bondi held the cat food; the beds and posts were taken from Chatswood and are in transit, so the order is not ready to collect yet.
+**Case 2b: the customer picks a store that has only some items.** A Bondi customer ordered cat food, 2 dog beds and 4 scratching posts. Chatswood had all three, but the customer chose Bondi, which had only the cat food. The beds and posts were taken from Chatswood and are in transit, so the order is not ready to collect yet.
 
 **Case 3: the sync corrects the website.** After sales and deliveries, the website shows numbers that are too high or too low. Running the sync shows each product's old and new number and each store total that moved.
 

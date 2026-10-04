@@ -9,6 +9,7 @@
 --          store system's operations:
 --            record_sale()              till sale of one or more items
 --            receive_goods()            goods put on the shelf (called by Source 2)
+--            find_stock()               checkout: which store can supply a line (called by Source 3)
 --            reserve_stock()            hold stock for one online order line (called by Source 3)
 --            dispatch_order_transfers() send an order's lines held elsewhere to its pickup store
 --            receive_order_transfers()  pickup store books those lines in
@@ -200,6 +201,36 @@ LANGUAGE sql AS $$
     ON CONFLICT (store_no, barcode) DO UPDATE
        SET in_store_quantity = store_ops.store_stock.in_store_quantity + EXCLUDED.in_store_quantity,
            updated_at        = EXCLUDED.updated_at;
+$$;
+
+
+-- -----------------------------------------------------------------------------
+-- Interface used by Source 3 at checkout: which store can supply the whole
+-- quantity? Tries the stores in the order given (pickup store first, then by
+-- distance) and returns the first with enough on the shelf, or NULL. The
+-- product's stock rows are locked until the caller's transaction ends, so
+-- the answer stays true while the website takes payment and holds the stock.
+-- -----------------------------------------------------------------------------
+CREATE FUNCTION store_ops.find_stock(
+    p_barcode text, p_quantity integer, p_store_nos text[]
+) RETURNS text
+LANGUAGE plpgsql AS $$
+DECLARE
+    v_store_no text;
+BEGIN
+    PERFORM 1 FROM store_ops.store_stock
+     WHERE barcode = p_barcode AND store_no = ANY (p_store_nos)
+     ORDER BY store_no
+       FOR UPDATE;
+
+    SELECT s.store_no INTO v_store_no
+      FROM unnest(p_store_nos) WITH ORDINALITY AS u (store_no, n)
+      JOIN store_ops.store_stock s ON s.store_no = u.store_no AND s.barcode = p_barcode
+     WHERE s.in_store_quantity >= p_quantity
+     ORDER BY u.n
+     LIMIT 1;
+    RETURN v_store_no;
+END;
 $$;
 
 

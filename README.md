@@ -1,6 +1,6 @@
 # PetHaven Data Solution
 
-Assignment 2 prototype (32113 Advanced Database). PetHaven has five Sydney stores and an online store. The website shows one combined stock number per product, refreshed only when a sync runs, so between syncs it can accept click-and-collect orders that no store can supply. The prototype integrates **three source systems** into **one data warehouse** through an ETL layer, recalculates the website number from the warehouse on demand, and reports staleness, sync corrections and shortfalls.
+Assignment 2 prototype (32113 Advanced Database). PetHaven has five Sydney stores and an online store. The website shows one combined stock number per product, refreshed only when a sync runs, so between syncs customers can put items in their bag that no store can supply. Checkout checks real store stock before payment, so those items are blocked instead of being charged and cancelled. The prototype integrates **three source systems** into **one data warehouse** through an ETL layer, recalculates the website number from the warehouse on demand, and reports staleness, sync corrections and items blocked at checkout.
 
 | Schema | Role | Own codes | Main objects |
 | --- | --- | --- | --- |
@@ -13,7 +13,7 @@ Assignment 2 prototype (32113 Advanced Database). PetHaven has five Sydney store
 How it behaves:
 
 - **In-store sale / delivery / collection / cancellation**: the store's stock changes immediately; the website number waits for the next sync.
-- **Online order** (one or more lines): collected at the store **closest** to the customer's postcode. Each line is held there if that store really has it; otherwise it is taken from the next-nearest store that has it and **transferred** (dispatch → in transit → receive). The website number drops at once for every held line. A line no single store can supply is a **shortfall**; if the website number doesn't cover every line, the whole order is rejected.
+- **Online shopping**: items go into a **bag** up to the (possibly stale) website number. At **checkout, before payment**, real store stock is checked: the store **closest** to the customer first, then the next-nearest. If any item can't be supplied by a single store, checkout is **blocked** — nothing charged, nothing held — and the customer removes it and tries again. Otherwise the order is **paid**, each item is held where it was found, items from other stores are **transferred** to the closest store (dispatch → in transit → receive), and the website number drops at once.
 - **ETL**: every source record is captured into staging in its source format, mapped to warehouse codes through approved cross-references, converted (cartons → units, UTC → Sydney date), validated and loaded into `dw.fact_stock_event` in the same transaction. Records with unmapped codes are rejected with a reason and load once the mapping is approved.
 - **Sync** (`SELECT dw.run_sync();`): processes all events since the last sync, recalculates store totals and website numbers, publishes them, logs before/after and reconciles the warehouse with the stores.
 
@@ -100,7 +100,8 @@ Safe to rerun at any time. Only `pethaven_demo` and `pethaven_check` are ever dr
 | --- | --- |
 | `sale S01 P003 2 P005 1` | Till sale (one receipt, any number of items) |
 | `delivery S03 P001 5` | Supplier delivery, in cartons |
-| `order 2026 P009 1 P018 1 P013 2` | Online click-and-collect order (any number of lines) from a customer postcode |
+| `order 2026 P009 1 P018 1 P013 2` | New bag from a customer postcode + checkout (real stock checked before payment) |
+| `remove 10 P013` / `checkout 10` | After a blocked checkout: remove an item from bag 10 / check out again |
 | `dispatch 6` / `receive 6` | Send order 6's lines held at other stores to its pickup store / book them in there |
 | `collect 6` / `cancel 6` | Customer collects / cancels online order 6 |
 | `online` | Website number vs real stock per product |
@@ -108,7 +109,7 @@ Safe to rerun at any time. Only `pethaven_demo` and `pethaven_check` are ever dr
 | `etl` | Run one ETL pass by hand; show the latest ETL runs |
 | `approve STORE 9300601001194 P019` | Approve a code mapping (data steward) |
 | `codes` | Each store/product's code in every system |
-| `report stock [S01]` / `staleness` / `shortfall` / `sales` / `reservations` / `reconciliation` / `all` | Reports 1–6 |
+| `report stock [S01]` / `staleness` / `blocked` / `sales` / `reservations` / `reconciliation` / `all` | Reports 1–6 |
 
 The full 10-minute demonstration, with what to say at each step, is in [docs/demo_runbook.md](docs/demo_runbook.md).
 
@@ -118,7 +119,7 @@ The full 10-minute demonstration, with what to say at each step, is in [docs/dem
 docker compose exec python python /workspace/tests/check_demo.py
 ```
 
-Builds a separate database, `pethaven_check`, runs scripted business events and checks every rule in [docs/traceability.md](docs/traceability.md): immediate store updates, website staleness, multi-line orders with transfers to the closest store, shortfalls, carton/UTC conversion, rejection and approval of unmapped codes, lineage, sync before/after and reconciliation. It ends with `TOTAL: 81 checks - PASS 81, FAIL 0`.
+Builds a separate database, `pethaven_check`, runs scripted business events and checks every rule in [docs/traceability.md](docs/traceability.md): immediate store updates, website staleness, bag and checkout with the stock check before payment, transfers to the closest store, blocked checkouts, carton/UTC conversion, rejection and approval of unmapped codes, lineage, sync before/after and reconciliation. It ends with `TOTAL: 82 checks - PASS 82, FAIL 0`.
 
 ### Step 7: Stop the lab
 
@@ -158,7 +159,7 @@ workspace/
   scripts/build.py                     rebuild pethaven_demo
   scripts/demo.py                      demo commands
   demo/cloudbeaver_demo.sql            the demonstration as SQL statements
-  tests/check_demo.py                  81 behaviour checks
+  tests/check_demo.py                  82 behaviour checks
 docs/                                  design, traceability, demo runbook, implementation notes
 00_req_feedback/                       brief, Spec, tutor feedback, subject notes
 data/                                  lab database files created by Docker (not in Git)

@@ -97,21 +97,35 @@ def sell_all(store: str, product: str) -> None:
         sale(store, {product: qty})
 
 
-def order(postcode: str, items: dict[str, int]) -> tuple[int, str, str, dict]:
-    """Place an order; return (order_no, order status, pickup store, {product: (line status, source store)})."""
-    order_no = run("SELECT online.place_online_order(%s,%s,%s)",
-                   (postcode, [web(p) for p in items], list(items.values())))
-    status, pickup = db.query(conn, """
-        SELECT o.status, x.store_code FROM online.web_order o
-          JOIN etl.store_xref x ON x.source_system='ONLINE' AND x.source_code=o.pickup_cp_code
-         WHERE o.order_no=%s""", (order_no,))[1][0]
+def checkout(basket_id: int) -> tuple[int | None, str, dict]:
+    """Check out a bag; return (order_no or None if blocked, pickup store, {product: (result, source store)})."""
+    order_no = run("SELECT online.checkout(%s)", (basket_id,))
+    pickup = db.query(conn, """
+        SELECT x.store_code FROM online.checkout_attempt a
+          JOIN etl.store_xref x ON x.source_system='ONLINE' AND x.source_code=a.pickup_cp_code
+         WHERE a.attempt_no=(SELECT max(attempt_no) FROM online.checkout_attempt WHERE basket_id=%s)""",
+                      (basket_id,))[1][0][0]
     _, rows = db.query(conn, """
-        SELECT px.product_code, l.line_status, sx.store_code
-          FROM online.web_order_line l
-          JOIN etl.product_xref px ON px.source_system='ONLINE' AND px.source_code=l.web_sku
-          LEFT JOIN etl.store_xref sx ON sx.source_system='ONLINE' AND sx.source_code=l.source_cp_code
-         WHERE l.order_no=%s""", (order_no,))
-    return order_no, status, pickup, {p: (s, src) for p, s, src in rows}
+        SELECT px.product_code, i.result, sx.store_code
+          FROM online.checkout_attempt_item i
+          JOIN etl.product_xref px ON px.source_system='ONLINE' AND px.source_code=i.web_sku
+          LEFT JOIN etl.store_xref sx ON sx.source_system='ONLINE' AND sx.source_code=i.source_cp_code
+         WHERE i.attempt_no=(SELECT max(attempt_no) FROM online.checkout_attempt WHERE basket_id=%s)""",
+                       (basket_id,))
+    return order_no, pickup, {p: (r, src) for p, r, src in rows}
+
+
+def bag(postcode: str, items: dict[str, int]) -> int:
+    basket_id = run("SELECT online.create_basket(%s)", (postcode,))
+    for product, qty in items.items():
+        run("SELECT online.add_to_basket(%s, %s, %s), 1", (basket_id, web(product), qty))
+    return basket_id
+
+
+def order(postcode: str, items: dict[str, int]) -> tuple[int, int | None, str, dict]:
+    """New bag + checkout; return (basket_id, order_no or None, pickup store, item results)."""
+    basket_id = bag(postcode, items)
+    return (basket_id, *checkout(basket_id))
 
 
 def store_step(function: str, order_no: int, *extra):
@@ -137,12 +151,16 @@ def main() -> int:
         "INSERT INTO store_ops.product VALUES ('9300601001010','Bad barcode','Toys',1)"))
     check("R12 dim_store = 5 stores + online", 6, one("SELECT count(*)::int FROM dw.dim_store"))
     check("R12 dim_product excludes unmapped P019", 18, one("SELECT count(*)::int FROM dw.dim_product"))
-    check("R11 seed: reserved order lines are skipped with a reason", 9,
-          one("SELECT count(*)::int FROM etl.stg_web_order_line WHERE load_status='skipped' AND note IS NOT NULL"))
+    check("R11 seed: items available at checkout are skipped with a reason", 9,
+          one("SELECT count(*)::int FROM etl.stg_checkout_item WHERE load_status='skipped' AND note IS NOT NULL"))
     check("R13 seed: every fact traces to one loaded staging row", events(),
           one("SELECT count(*)::int FROM etl.v_staging WHERE load_status='loaded'"))
-    check("R16 seed shortfall: pickup store Bondi", "PetHaven Bondi",
-          one("SELECT pickup_store FROM dw.rpt_shortfall_orders"))
+    check("R16 seed: stale aquarium-kit bag blocked at checkout, Bondi", ("PetHaven Bondi", 7, 2),
+          tuple(db.query(conn, "SELECT pickup_store, website_showed, actual_combined_at_checkout "
+                               "FROM dw.rpt_checkout_blocked")[1][0]))
+    check("R16 seed: blocked bag created no order and held nothing", (0, "open"),
+          (one("SELECT count(*)::int FROM online.web_order WHERE basket_id=5"),
+           one("SELECT status FROM online.basket WHERE basket_id=5")))
     check("R8 seed dog-bed order: collected at Penrith, taken from Parramatta", ("S05", "S01"),
           tuple(db.query(conn, """
               SELECT pk.store_code, src.store_code FROM store_ops.reservation r
@@ -152,9 +170,9 @@ def main() -> int:
     check("R20 seed: 4 open orders, 1 overdue", (4, 1),
           (one("SELECT count(DISTINCT order_no)::int FROM dw.rpt_open_reservations"),
            one("SELECT count(DISTINCT order_no)::int FROM dw.rpt_open_reservations WHERE overdue")))
-    check("R21 seed: 3-item order 6 has 2 lines in transit and is not ready", (2, False),
-          (one("SELECT count(*)::int FROM dw.rpt_open_reservations WHERE order_no='6' AND line_status='in transit'"),
-           one("SELECT bool_and(order_ready) FROM dw.rpt_open_reservations WHERE order_no='6'")))
+    check("R21 seed: 3-item order 5 has 2 lines in transit and is not ready", (2, False),
+          (one("SELECT count(*)::int FROM dw.rpt_open_reservations WHERE order_no='5' AND line_status='in transit'"),
+           one("SELECT bool_and(order_ready) FROM dw.rpt_open_reservations WHERE order_no='5'")))
     check("R17 nothing pending after initial sync", 0, one("SELECT pending_events::int FROM dw.rpt_online_staleness"))
     check("R17 website equals real total (P001)", actual_total("P001"), online("P001"))
     check("R19 warehouse reconciles with store system", 0, not_matching())
@@ -192,9 +210,9 @@ def main() -> int:
 
     print("\n-- Online order held at the closest store")
     shown = online("P001")
-    _, status, pickup, lines = order("2150", {"P001": 2})
-    check("R8 pickup = closest store, held there", ("reserved", "S01", ("reserved", "S01")),
-          (status, pickup, lines["P001"]))
+    _, order_no, pickup, lines = order("2150", {"P001": 2})
+    check("R8 pickup = closest store, paid and held there", (True, "S01", ("available", "S01")),
+          (order_no is not None, pickup, lines["P001"]))
     check("R6 website number lowered immediately", shown - 2, online("P001"))
     check("R6 report shows the same website number", online("P001"),
           one("SELECT online_shown FROM dw.rpt_online_vs_actual WHERE product_code='P001'"))
@@ -205,20 +223,20 @@ def main() -> int:
     sale("S03", {"P006": in_store("S03", "P006") - 10})
     run("SELECT dw.run_sync()")
     check("R17 website shows 10 after sync", 10, online("P006"))
-    _, status, _, lines = order("2067", {"P006": 7})
-    check("R6 order of 7 held at Chatswood", ("reserved", ("reserved", "S03")), (status, lines["P006"]))
+    _, order_no, _, lines = order("2067", {"P006": 7})
+    check("R6 order of 7 paid, held at Chatswood", (True, ("available", "S03")), (order_no is not None, lines["P006"]))
     check("R6 website shows 3 before the next sync", 3, online("P006"))
     check("R6 not counted as out of date", "in sync",
           one("SELECT status FROM dw.rpt_online_vs_actual WHERE product_code='P006'"))
-    _, status, _, _ = order("2067", {"P006": 7})
-    check("R7 second order of 7 rejected (website shows 3)", "rejected", status)
+    basket_id = run("SELECT online.create_basket('2067')")
+    check("R7 cannot add 7 to the bag (website shows 3)", "refused",
+          _refused("SELECT online.add_to_basket(%s, %s, 7)", (basket_id, web("P006"))))
 
     print("\n-- Closest store lacks stock -> taken from next-nearest and transferred")
     sell_all("S05", "P016")
     held_s01 = reserved("S01", "P016")
-    order_no, status, pickup, lines = order("2750", {"P016": 1})
-    check("R8 pickup Penrith, taken from Parramatta", ("reserved", "S05", ("reserved", "S01")),
-          (status, pickup, lines["P016"]))
+    _, order_no, pickup, lines = order("2750", {"P016": 1})
+    check("R8 pickup Penrith, taken from Parramatta", ("S05", ("available", "S01")), (pickup, lines["P016"]))
     check("R8 held at the source store until sent", held_s01 + 1, reserved("S01", "P016"))
     check("R21 cannot collect before the item arrives", "refused",
           _refused("SELECT store_ops.collect_order(%s)", (str(order_no),)))
@@ -236,17 +254,27 @@ def main() -> int:
     check("R5 collected at the pickup store", (0, ("collection", "S05", 0, -1)),
           (reserved("S05", "P016"), last_event()))
 
-    print("\n-- Three items, not all at the closest store")
+    print("\n-- Three items in the bag, one not available in any single store")
     p13_total = actual_total("P013")
     shown = {p: online(p) for p in ("P009", "P018", "P013")}
-    order_no, status, pickup, lines = order("2026", {"P009": 1, "P018": 1, "P013": 2})
-    check("R22 pickup Bondi; order partly short", ("partial_shortfall", "S02"), (status, pickup))
-    check("R22 duck held at Bondi (local)", ("reserved", "S02"), lines["P009"])
-    check("R22 aquarium kit taken from Newtown (transfer)", ("reserved", "S04"), lines["P018"])
-    check("R22 2 dog beds: no single store has 2 -> line shortfall", ("shortfall", None), lines["P013"])
-    check("R16 shortfall reason: split across stores", (True, "enough stock in total but no single store had enough"),
-          (p13_total >= 2, one("SELECT reason FROM dw.rpt_shortfall_orders WHERE order_no=%s", (str(order_no),))))
-    check("R6 website lowered only for the held lines", (shown["P009"] - 1, shown["P018"] - 1, shown["P013"]),
+    held_before = {s: reserved(s, "P009") for s in ("S02",)}
+    basket_id, order_no, pickup, lines = order("2026", {"P009": 1, "P018": 1, "P013": 2})
+    check("R23 checkout blocked before payment: no order", (None, "S02"), (order_no, pickup))
+    check("R23 the check found duck at Bondi, kit at Newtown, beds nowhere",
+          (("available", "S02"), ("available", "S04"), ("unavailable", None)),
+          (lines["P009"], lines["P018"], lines["P013"]))
+    check("R23 nothing held, website unchanged, bag still open",
+          (held_before["S02"], (shown["P009"], shown["P018"], shown["P013"]), "open"),
+          (reserved("S02", "P009"), (online("P009"), online("P018"), online("P013")),
+           one("SELECT status FROM online.basket WHERE basket_id=%s", (basket_id,))))
+    check("R16 blocked item recorded with reason: split across stores",
+          (True, "enough stock in total but no single store had enough"),
+          (p13_total >= 2, one("SELECT reason FROM dw.rpt_checkout_blocked WHERE basket=%s", (f"basket {basket_id}",))))
+    run("SELECT online.remove_from_basket(%s, %s), 1", (basket_id, web("P013")))
+    order_no, pickup, lines = checkout(basket_id)
+    check("R22 after removing the beds: paid; duck local, kit transferred from Newtown",
+          (True, ("available", "S02"), ("available", "S04")), (order_no is not None, lines["P009"], lines["P018"]))
+    check("R6 website lowered only once paid, for the paid items", (shown["P009"] - 1, shown["P018"] - 1, shown["P013"]),
           (online("P009"), online("P018"), online("P013")))
     store_step("dispatch_order_transfers", order_no)
     store_step("receive_order_transfers", order_no)
@@ -256,38 +284,37 @@ def main() -> int:
           (in_store("S02", "P018"), reserved("S02", "P018")))
 
     print("\n-- Collection and cancellation (local)")
-    order_no, _, _, _ = order("2042", {"P009": 2})
+    _, order_no, _, _ = order("2042", {"P009": 2})
     held = reserved("S04", "P009")
     store_step("collect_order", order_no)
     check("R5 collection: reserved down, shelf unchanged", held - 2, reserved("S04", "P009"))
     check("R5 collection fact", ("collection", "S04", 0, -2), last_event())
-    order_no, _, _, _ = order("2042", {"P009": 1})
+    _, order_no, _, _ = order("2042", {"P009": 1})
     shelf, shown = in_store("S04", "P009"), online("P009")
     store_step("cancel_order", order_no, "Check cancel")
     check("R5 cancellation: back on the shelf", shelf + 1, in_store("S04", "P009"))
     check("R5 website not told until sync (understated)", (shown, "understated - lost sales risk"),
           (online("P009"), one("SELECT status FROM dw.rpt_online_vs_actual WHERE product_code='P009'")))
 
-    print("\n-- Stale website number -> shortfall")
+    print("\n-- Stale website number -> blocked at checkout, before payment")
     for store in ("S01", "S02", "S03", "S04", "S05"):
         sell_all(store, "P017")
     shown = online("P017")
-    order_no, status, _, _ = order("2067", {"P017": 1})
-    check("R16 website still showed stock", True, shown >= 1)
-    check("R16 order status shortfall", "shortfall", status)
-    check("R16 shortfall fact at the pickup store (Chatswood)", "S03",
+    basket_id, order_no, _, _ = order("2067", {"P017": 1})
+    check("R16 website still showed stock, so the item went in the bag", True, shown >= 1)
+    check("R23 checkout blocked: no order, no payment", None, order_no)
+    check("R16 checkout_blocked fact at the pickup store (Chatswood)", "S03",
           one("SELECT s.store_code FROM dw.fact_stock_event f JOIN dw.dim_store s USING (store_key) "
-              "WHERE f.order_ref=%s AND f.event_type='shortfall'", (str(order_no),)))
-    check("R16 shortfall report reason", "stock sold since last sync - online number was stale",
-          one("SELECT reason FROM dw.rpt_shortfall_orders WHERE order_no=%s", (str(order_no),)))
+              "WHERE f.order_ref=%s AND f.event_type='checkout_blocked'", (f"basket {basket_id}",)))
+    check("R16 report reason", "stock sold since last sync - online number was stale",
+          one("SELECT reason FROM dw.rpt_checkout_blocked WHERE basket=%s", (f"basket {basket_id}",)))
 
-    print("\n-- Rejected order moves nothing")
+    print("\n-- More than the website shows cannot go in the bag")
     n = events()
-    _, status, _, lines = order("2000", {"P001": 1, "P018": online("P018") + 1})
-    check("R7 whole order rejected if one line is not covered", ("rejected", "rejected", "rejected"),
-          (status, lines["P001"][0], lines["P018"][0]))
-    check("R11 no fact written (staged and skipped)", (n, "skipped"),
-          (events(), one("SELECT load_status FROM etl.stg_web_order_line ORDER BY stg_id DESC LIMIT 1")))
+    basket_id = bag("2000", {"P001": 1})
+    check("R7 adding more than the website shows is refused", "refused",
+          _refused("SELECT online.add_to_basket(%s, %s, %s)", (basket_id, web("P018"), online("P018") + 1)))
+    check("R11 adding to a bag writes no stock event", n, events())
 
     print("\n-- Data quality: unmapped new product")
     tunnel = "9300601001194"

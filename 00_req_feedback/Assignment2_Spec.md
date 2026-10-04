@@ -30,7 +30,7 @@ Use these words consistently:
 
 ### 2.1 Problem statement
 
-> PetHaven's website shows one combined "available" number per product for all five stores, but that number is only refreshed when a sync is run. In-store sales, supplier deliveries and store-side cancellations change the real stock immediately, yet the website does not see them until the next sync. Between syncs the website can accept a Click & Collect order that no store can supply, or show too little stock and lose sales.
+> PetHaven's website shows one combined "available" number per product for all five stores, but that number is only refreshed when a sync is run. In-store sales, supplier deliveries and store-side cancellations change the real stock immediately, yet the website does not see them until the next sync. Between syncs customers can put items in their bag that the website says are in stock but no store can supply; they only find out at checkout. The website can also show too little stock and lose sales.
 
 The customer whose order cannot be supplied is let down; store staff spend time checking shelves and contacting customers; PetHaven loses sales and trust in its stock information.
 
@@ -91,7 +91,8 @@ All changes to a store's stock happen **immediately** when the action is recorde
 
 | Action | Recorded as | Effect |
 | --- | --- | --- |
-| Customer places a C&C order with one or more lines, from their postcode | `web_order` + `web_order_line` | 1. **Pickup store** = the store closest to the postcode. 2. If the website number is below the quantity on **any** line → the whole order is **rejected**, nothing moves. 3. Otherwise, for each line, the pickup store holds it if its **real** shelf stock covers the whole line; if not, the next-nearest store that can holds it and will **transfer** it to the pickup store (shelf − qty, reserved + qty at the supplying store). The website number drops by each held line at once. 4. A line no single store can supply is a **shortfall**, recorded against the pickup store; the other lines go ahead. |
+| Customer adds items to the bag | `basket` + `basket_item` | Allowed only up to the website number (which may be stale). Nothing is held. |
+| Customer checks out (before payment) | `checkout_attempt` + items | 1. **Pickup store** = the store closest to the postcode. 2. For each item, find a store whose **real** shelf stock covers the whole quantity: the pickup store first, then the others by distance. 3. If **any** item is unavailable → checkout **blocked**: nothing charged, nothing held, the customer sees which items to remove and can check out again. 4. Otherwise → **paid**: `web_order` + `web_order_line` created; each item held at its supplying store (shelf − qty, reserved + qty), to be **transferred** to the pickup store if it is another store; the website number drops by each item at once. |
 
 ## 5. Stock definitions and rules
 
@@ -103,9 +104,9 @@ All changes to a store's stock happen **immediately** when the action is recorde
 | Reserved | Units at one store held for C&C orders: waiting for collection there, or waiting to be sent to another pickup store. Units in transit between stores are in no store. |
 | On hand | In store + reserved. |
 | Real combined available | Sum of in store over the five stores. Reserved units are not available. |
-| Website number | The one number per product the website uses to accept orders. |
+| Website number | The one number per product the website shows, and uses to let items into the bag. |
 | Stale | Website number ≠ real combined available. |
-| Shortfall | An order line the website accepted that no single store could supply. |
+| Blocked at checkout | A bag item the website showed as in stock that no single store could supply at checkout. Found before payment, so nothing is charged. |
 
 ### 5.2 How the website number changes
 
@@ -113,11 +114,11 @@ All changes to a store's stock happen **immediately** when the action is recorde
 2. Between syncs it drops by each **held** online order line (the website knows its own sales).
 3. Nothing else changes it: in-store sales, deliveries and cancellations wait for the next sync; transfers and collections do not change it (the units were already deducted).
 
-Overstated website number → risk of shortfalls (oversell). Understated → hidden stock and lost online sales. C&C orders waiting more than 3 days are overdue.
+Overstated website number → items blocked at checkout (lost sales, frustrated customers). Understated → hidden stock and lost online sales. C&C orders waiting more than 3 days are overdue.
 
-### 5.3 Shortfalls
+### 5.3 Items blocked at checkout
 
-A shortfall happens when the website accepted an order line but no single store had the whole quantity. Two causes are distinguished: **stale number** (the real combined stock was already below the order) and **stock split across stores** (enough in total, but not at any one store).
+Checkout always checks real store stock before payment, so a paid order can always be fulfilled. An item is blocked when the website let it into the bag but no single store had the whole quantity at checkout. Two causes are distinguished: **stale number** (the real combined stock was already below the order) and **stock split across stores** (enough in total, but not at any one store).
 
 ### 5.4 Matching codes between systems
 
@@ -147,13 +148,13 @@ Business action → source system (stock changes immediately) → ETL extracts t
 | --- | --- | --- |
 | 1 | Current stock by store | In-store vs reserved per store and product |
 | 2 | Online staleness | Time since last sync, events pending, products whose website number is wrong, and before/after of the last sync |
-| 3 | Shortfall / at-risk orders | Which order lines could not be supplied, which pickup store they were for, and why |
+| 3 | Items blocked at checkout | Which bag items the website showed in stock but checkout blocked, for which pickup store, and why |
 
 Additional reports: daily sales by store and category; open C&C order lines (source store, transfer status, order ready, overdue); warehouse vs store reconciliation and rejected source records.
 
 ### 7.3 Demonstration cases (in the sample data)
 
-**Case 1: stale number causes a shortfall.** The website was synced when 7 aquarium kits were in stock. Five then sold in store at three stores. A Bondi customer ordered 3: the website still showed 7, so it accepted the order, but only 2 were left (1 each at Newtown and Penrith). The line is a shortfall against Bondi, the pickup store.
+**Case 1: stale number blocks a checkout.** The website was synced when 7 aquarium kits were in stock. Five then sold in store at three stores. A Bondi customer put 3 in the bag: the website still showed 7, so it let them in, but only 2 were left (1 each at Newtown and Penrith). Checkout was blocked before payment; the customer left without buying. Report 3 records it against Bondi with the reason "stale website number".
 
 **Case 2: pickup store cannot supply, so stock is transferred.** A Penrith customer ordered 2 orthopaedic beds. Penrith (the pickup store) had 1, so the beds were taken from Parramatta, the next-nearest store with 2, and transferred to Penrith. They arrived but were never collected, so the order is overdue.
 

@@ -169,15 +169,15 @@ CREATE TABLE etl.stg_reservation_change (
 COMMENT ON TABLE etl.stg_reservation_change IS
 'Extract of each store_ops.reservation status change (held, in_transit, arrived, collected, cancelled). store_no = the store where this step changed stock; pickup_store_no = where the customer collects.';
 
-CREATE TABLE etl.stg_web_order_line (
+CREATE TABLE etl.stg_checkout_item (
     stg_id           bigint      GENERATED ALWAYS AS IDENTITY,
-    order_no         bigint      NOT NULL,
-    line_no          integer     NOT NULL,
+    attempt_no       bigint      NOT NULL,
+    basket_id        bigint      NOT NULL,
     web_sku          text,
     quantity         integer,
     pickup_cp_code   text,
-    line_status      text,
-    ordered_at       timestamptz,
+    result           text,
+    attempted_at     timestamptz,
     source_ref       text        NOT NULL,
     load_status      text        NOT NULL DEFAULT 'pending',
     note             text,
@@ -185,12 +185,12 @@ CREATE TABLE etl.stg_web_order_line (
     event_id         bigint,
     captured_at      timestamptz NOT NULL DEFAULT clock_timestamp(),
     processed_at     timestamptz,
-    CONSTRAINT pk_stg_web_order_line PRIMARY KEY (stg_id),
-    CONSTRAINT uq_stg_web_order_line_ref UNIQUE (source_ref),
-    CONSTRAINT ck_stg_web_order_line_status CHECK (load_status IN ('pending', 'loaded', 'rejected', 'skipped'))
+    CONSTRAINT pk_stg_checkout_item PRIMARY KEY (stg_id),
+    CONSTRAINT uq_stg_checkout_item_ref UNIQUE (source_ref),
+    CONSTRAINT ck_stg_checkout_item_status CHECK (load_status IN ('pending', 'loaded', 'rejected', 'skipped'))
 );
-COMMENT ON TABLE etl.stg_web_order_line IS
-'Extract of online.web_order_line joined to its order header, in online-store codes. Only shortfall lines become facts; reserved lines are loaded from the store reservation, rejected lines moved no stock.';
+COMMENT ON TABLE etl.stg_checkout_item IS
+'Extract of online.checkout_attempt_item joined to its attempt, in online-store codes. Unavailable items become checkout_blocked facts; available items are skipped (if paid, their stock movement is loaded from the store reservation).';
 
 
 -- -----------------------------------------------------------------------------
@@ -262,20 +262,20 @@ AFTER UPDATE OF status ON store_ops.reservation
 FOR EACH ROW WHEN (OLD.status IS DISTINCT FROM NEW.status)
 EXECUTE FUNCTION etl.capture_reservation();
 
-CREATE FUNCTION etl.capture_web_order_line() RETURNS trigger
+CREATE FUNCTION etl.capture_checkout_item() RETURNS trigger
 LANGUAGE plpgsql AS $$
 BEGIN
-    INSERT INTO etl.stg_web_order_line
-        (order_no, line_no, web_sku, quantity, pickup_cp_code, line_status, ordered_at, source_ref)
-    SELECT NEW.order_no, NEW.line_no, NEW.web_sku, NEW.quantity, o.pickup_cp_code, NEW.line_status, o.ordered_at,
-           format('ONLINE:order %s line %s', NEW.order_no, NEW.line_no)
-      FROM online.web_order o WHERE o.order_no = NEW.order_no;
+    INSERT INTO etl.stg_checkout_item
+        (attempt_no, basket_id, web_sku, quantity, pickup_cp_code, result, attempted_at, source_ref)
+    SELECT NEW.attempt_no, a.basket_id, NEW.web_sku, NEW.quantity, a.pickup_cp_code, NEW.result, a.attempted_at,
+           format('ONLINE:checkout %s %s', NEW.attempt_no, NEW.web_sku)
+      FROM online.checkout_attempt a WHERE a.attempt_no = NEW.attempt_no;
     RETURN NULL;
 END;
 $$;
-CREATE TRIGGER trg_web_order_line_extract
-AFTER INSERT ON online.web_order_line
-FOR EACH ROW EXECUTE FUNCTION etl.capture_web_order_line();
+CREATE TRIGGER trg_checkout_item_extract
+AFTER INSERT ON online.checkout_attempt_item
+FOR EACH ROW EXECUTE FUNCTION etl.capture_checkout_item();
 
 
 -- -----------------------------------------------------------------------------
@@ -347,15 +347,14 @@ WITH staged AS (
       FROM etl.stg_reservation_change r
      WHERE r.load_status IN ('pending', 'rejected')
     UNION ALL
-    -- Online order lines: only a shortfall is a stock event (at the pickup store).
-    SELECT 'stg_web_order_line', w.stg_id, 'ONLINE', w.source_ref,
-           CASE WHEN w.line_status = 'shortfall' THEN 'shortfall' END,
-           CASE w.line_status
-               WHEN 'reserved' THEN 'Reserved line: its stock movements are loaded from the store reservation'
-               WHEN 'rejected' THEN 'Rejected order: no stock was touched'
-           END,
-           w.pickup_cp_code, w.web_sku, w.quantity, w.ordered_at, w.order_no::text, w.pickup_cp_code
-      FROM etl.stg_web_order_line w
+    -- Checkout items: an unavailable item is a checkout_blocked event (at the
+    -- pickup store). Available items moved no stock here.
+    SELECT 'stg_checkout_item', w.stg_id, 'ONLINE', w.source_ref,
+           CASE WHEN w.result = 'unavailable' THEN 'checkout_blocked' END,
+           CASE WHEN w.result = 'available'
+                THEN 'Available at checkout: if paid, its stock movement is loaded from the store reservation' END,
+           w.pickup_cp_code, w.web_sku, w.quantity, w.attempted_at, 'basket ' || w.basket_id, w.pickup_cp_code
+      FROM etl.stg_checkout_item w
      WHERE w.load_status IN ('pending', 'rejected')
 )
 SELECT st.stg_table,
@@ -449,7 +448,7 @@ BEGIN
 
     -- Record the outcome on every staged row this pass handled.
     FOREACH v_table IN ARRAY ARRAY['stg_store_sale_line', 'stg_delivery_line',
-                                   'stg_reservation_change', 'stg_web_order_line']
+                                   'stg_reservation_change', 'stg_checkout_item']
     LOOP
         EXECUTE format(
             'UPDATE etl.%I s
@@ -501,9 +500,9 @@ SELECT 'stg_reservation_change', stg_id, 'STORE', source_ref,
        load_status, note, etl_run_id, event_id, captured_at, processed_at
   FROM etl.stg_reservation_change
 UNION ALL
-SELECT 'stg_web_order_line', stg_id, 'ONLINE', source_ref,
+SELECT 'stg_checkout_item', stg_id, 'ONLINE', source_ref,
        load_status, note, etl_run_id, event_id, captured_at, processed_at
-  FROM etl.stg_web_order_line;
+  FROM etl.stg_checkout_item;
 COMMENT ON VIEW etl.v_staging IS 'Every extracted source record and what the ETL did with it (loaded -> event_id, rejected/skipped -> note).';
 
 CREATE VIEW etl.v_data_quality AS
@@ -531,7 +530,7 @@ CREATE TRIGGER trg_delivery_line_load AFTER INSERT ON supply.delivery_line
 FOR EACH STATEMENT EXECUTE FUNCTION etl.cdc_run_etl();
 CREATE TRIGGER trg_reservation_load AFTER INSERT OR UPDATE ON store_ops.reservation
 FOR EACH STATEMENT EXECUTE FUNCTION etl.cdc_run_etl();
-CREATE TRIGGER trg_web_order_line_load AFTER INSERT ON online.web_order_line
+CREATE TRIGGER trg_checkout_item_load AFTER INSERT ON online.checkout_attempt_item
 FOR EACH STATEMENT EXECUTE FUNCTION etl.cdc_run_etl();
 
 

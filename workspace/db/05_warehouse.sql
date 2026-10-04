@@ -101,17 +101,17 @@ CREATE TABLE dw.fact_stock_event (
         OR (event_type = 'transfer_in'  AND quantity_change = 0      AND reserved_change =  units AND order_ref IS NOT NULL)
         OR (event_type = 'collection'   AND quantity_change = 0      AND reserved_change = -units AND order_ref IS NOT NULL)
         OR (event_type = 'cancellation' AND quantity_change =  units AND reserved_change = -units AND order_ref IS NOT NULL)
-        OR (event_type = 'shortfall'    AND quantity_change = 0      AND reserved_change = 0      AND order_ref IS NOT NULL)
+        OR (event_type = 'checkout_blocked' AND quantity_change = 0  AND reserved_change = 0      AND order_ref IS NOT NULL)
     )
 );
 COMMENT ON TABLE dw.fact_stock_event IS
 'Grain: one stock-changing event for one product at one physical store. Transaction fact table and the single history that every report and the sync read from. Summing quantity_change / reserved_change per store and product gives that store''s in-store / reserved stock.';
-COMMENT ON COLUMN dw.fact_stock_event.event_type IS 'store_sale, delivery, reservation, transfer_out, transfer_in, collection, cancellation or shortfall.';
+COMMENT ON COLUMN dw.fact_stock_event.event_type IS 'store_sale, delivery, reservation, transfer_out, transfer_in, collection, cancellation or checkout_blocked.';
 COMMENT ON COLUMN dw.fact_stock_event.quantity_change IS 'Signed change to in-store (shelf) stock.';
 COMMENT ON COLUMN dw.fact_stock_event.reserved_change IS 'Signed change to reserved stock (held for an online order, at the pickup store or waiting to be sent there). Units in transit between stores are in no store.';
-COMMENT ON COLUMN dw.fact_stock_event.units IS 'Units involved, always positive. For a shortfall: units ordered that no store could supply.';
-COMMENT ON COLUMN dw.fact_stock_event.order_ref IS 'Degenerate dimension: online order number for every online order event (reservation, transfer_out, transfer_in, collection, cancellation, shortfall).';
-COMMENT ON COLUMN dw.fact_stock_event.store_key IS 'Store where the stock changed. For a shortfall: the pickup store the order was meant to be collected from.';
+COMMENT ON COLUMN dw.fact_stock_event.units IS 'Units involved, always positive. For checkout_blocked: units in the bag that no single store could supply.';
+COMMENT ON COLUMN dw.fact_stock_event.order_ref IS 'Degenerate dimension: online order number for order events (reservation, transfer_out, transfer_in, collection, cancellation); "basket <id>" for checkout_blocked.';
+COMMENT ON COLUMN dw.fact_stock_event.store_key IS 'Store where the stock changed. For checkout_blocked: the pickup store the customer would have collected from.';
 COMMENT ON COLUMN dw.fact_stock_event.pickup_store_key IS 'Role-playing store dimension: the store where the customer collects the order. Differs from store_key when the stock comes from another store and is transferred.';
 COMMENT ON COLUMN dw.fact_stock_event.source_ref IS 'Lineage: source system and record, e.g. STORE:sale 12 line 1. Unique, so a source record is never loaded twice.';
 COMMENT ON COLUMN dw.fact_stock_event.etl_run_id IS 'ETL run that loaded this row (etl.etl_run).';

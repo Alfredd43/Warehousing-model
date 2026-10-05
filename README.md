@@ -23,6 +23,7 @@ Documentation:
 - Solution design (architecture, conceptual/logical models, ETL, rationale, trade-offs): [docs/Architecture_and_Data_Model.md](docs/Architecture_and_Data_Model.md)
 - Rule → SQL → check mapping: [docs/traceability.md](docs/traceability.md)
 - Demonstration script and Q&A: [docs/demo_runbook.md](docs/demo_runbook.md)
+- Dashboard (start, demonstrate, verify): [docs/dashboard_runbook.md](docs/dashboard_runbook.md); its brief: [docs/Dashboard_Implementation_Spec.md](docs/Dashboard_Implementation_Spec.md)
 - Verification results and limitations: [docs/implementation_notes.md](docs/implementation_notes.md)
 
 ## Runs in the provided Lab Environment
@@ -115,6 +116,14 @@ Safe to rerun at any time. Only `pethaven_demo` and `pethaven_check` are ever dr
 
 The full 10-minute demonstration, with what to say at each step, is in [docs/demo_runbook.md](docs/demo_runbook.md).
 
+**In the dashboard** (web app over the same database):
+
+```bash
+docker compose -f docker-compose.yml -f workspace/dashboard/compose.dashboard.yml up -d dashboard
+```
+
+Open <http://localhost:8080>. It has the three required reports (Website & Sync, Store Inventory, Checkout & Fulfilment), an Integration & Quality page with a source-to-warehouse trace, and a **Business demo** panel that records sales, deliveries, bags, checkouts, syncs and mapping approvals through the source systems. The overlay adds a `dashboard` service and leaves the lab files unchanged. The dashboard demonstration is in [docs/dashboard_runbook.md](docs/dashboard_runbook.md).
+
 ### Step 6: Run the checks
 
 ```bash
@@ -122,6 +131,12 @@ docker compose exec python python /workspace/tests/check_demo.py
 ```
 
 Builds a separate database, `pethaven_check`, runs scripted business events and checks every rule in [docs/traceability.md](docs/traceability.md): immediate store updates, website staleness, bag, pickup options and checkout with the stock check before payment, first-to-checkout wins, transfers to the chosen store, blocked checkouts, overdue cancellation, online sales in the sales report, carton/UTC conversion, rejection and approval of unmapped codes, lineage, sync before/after and reconciliation. It ends with `TOTAL: 95 checks - PASS 95, FAIL 0`.
+
+The dashboard's API has its own checks, also on `pethaven_check`. The run ends with `TOTAL: 53 checks - PASS 53, FAIL 0`:
+
+```bash
+docker compose exec python python /workspace/tests/check_dashboard.py
+```
 
 ### Step 7: Stop the lab
 
@@ -140,6 +155,7 @@ Your data is kept. Avoid `docker compose down -v` and do not delete `data/`; if 
 | `Connection refused` from `build.py` or `demo.py` | PostgreSQL is still starting. Wait 20–30 seconds and run the command again. |
 | `can't open file '/workspace/C:/Program Files/Git/...'` | Git Bash rewrote the `/workspace` path. Use PowerShell, or put `MSYS_NO_PATHCONV=1` in front of the command, for example `MSYS_NO_PATHCONV=1 docker compose exec python python /workspace/scripts/build.py`. |
 | `the input device is not a TTY` | Add `-T` after `exec` (`docker compose exec -T python python ...`). |
+| Dashboard says "Database or server unavailable" | The lab was started from another folder, so its network is different. See [docs/dashboard_runbook.md](docs/dashboard_runbook.md), section 1. |
 | `port is already allocated` (5432, 8978, ...) | Another program uses that port, often a locally installed PostgreSQL. Stop that program, then repeat Step 3. |
 
 
@@ -162,6 +178,11 @@ workspace/
   scripts/demo.py                      demo commands
   demo/cloudbeaver_demo.sql            the demonstration as SQL statements
   tests/check_demo.py                  95 behaviour checks
+  tests/check_dashboard.py             53 dashboard API checks
+  dashboard/server.py                  dashboard: local HTTP server and API routes
+  dashboard/queries.py, actions.py     read queries over the report views / demo actions calling source functions
+  dashboard/static/                    dashboard pages (HTML, CSS, JavaScript modules)
+  dashboard/compose.dashboard.yml      optional Compose overlay that runs the dashboard on port 8080
 docs/                                  design, traceability, demo runbook, implementation notes
 00_req_feedback/                       brief, Spec, tutor feedback, subject notes
 data/                                  lab database files created by Docker (not in Git)

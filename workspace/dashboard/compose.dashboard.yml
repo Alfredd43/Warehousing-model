@@ -1,0 +1,26 @@
+# Optional overlay: runs the PetHaven dashboard next to the supplied lab stack.
+# The root docker-compose.yml is unchanged; this adds one service that reuses
+# the lab's Python image and /workspace mount, and publishes the app on this
+# computer only (127.0.0.1).
+#
+# From the repository root, with the lab already running:
+#   docker compose -f docker-compose.yml -f workspace/dashboard/compose.dashboard.yml up -d dashboard
+# Then open http://localhost:8080
+#
+# A separate service (not the lab's 'python' container) keeps that container
+# free for build.py, demo.py and the checks. It has no depends_on, so starting
+# it never recreates the database containers; if PostgreSQL is not up yet the
+# dashboard shows "database unavailable" until it is.
+services:
+  dashboard:
+    build: ./python
+    container_name: student-dashboard
+    working_dir: /workspace
+    volumes:
+      - ./workspace:/workspace
+    environment:
+      DASHBOARD_DB: pethaven_demo
+    command: ["python", "/workspace/dashboard/server.py", "--host", "0.0.0.0", "--port", "8080"]
+    ports:
+      - "127.0.0.1:8080:8080"
+    restart: unless-stopped

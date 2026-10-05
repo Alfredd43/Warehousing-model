@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en-AU">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PetHaven inventory dashboard</title>
+  <meta name="description" content="PetHaven inventory data solution: website stock, store inventory, checkout and integration reports over the lab warehouse.">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <a class="sr-only" href="#main">Skip to report</a>
+  <div class="shell" id="shell">
+    <nav class="sidebar" id="sidebar" aria-label="Reports">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">P</div>
+        <div>
+          <div class="brand-name">PetHaven</div>
+          <div class="brand-sub">Inventory data solution</div>
+        </div>
+      </div>
+      <div>
+        <div class="nav-label">Reports</div>
+        <ul class="nav" id="nav"></ul>
+      </div>
+      <div class="sidebar-foot">
+        Synthetic data · Lab prototype<br>
+        Times in Sydney (AEST/AEDT)
+      </div>
+    </nav>
+    <div class="scrim" id="scrim" hidden></div>
+
+    <div class="main-col">
+      <header class="topbar">
+        <button class="btn btn-small menu-btn" id="menu-btn" type="button" aria-controls="sidebar" aria-expanded="false">Menu</button>
+        <div class="crumb" id="crumb">PetHaven</div>
+        <span class="chip">Synthetic data · Lab prototype</span>
+        <div class="topbar-spacer"></div>
+        <span class="read-at" id="read-at"></span>
+        <button class="btn btn-small" id="refresh-btn" type="button" title="Read the reports again. Does not run a sync or the ETL.">
+          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg>
+          <span>Refresh reports</span>
+        </button>
+        <button class="btn btn-small btn-primary" id="demo-btn" type="button" aria-controls="demo" aria-expanded="false">
+          <span>Business demo</span>
+        </button>
+      </header>
+      <main id="main" tabindex="-1">
+        <div id="global-banner"></div>
+        <div id="page"></div>
+      </main>
+    </div>
+
+    <aside class="demo" id="demo" hidden aria-labelledby="demo-title"></aside>
+  </div>
+  <div class="sr-only" id="announcer" aria-live="polite" aria-atomic="true"></div>
+  <script type="module" src="app.js"></script>
+</body>
+</html>

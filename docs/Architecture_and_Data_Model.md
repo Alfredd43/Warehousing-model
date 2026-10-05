@@ -9,7 +9,7 @@ This document is the solution design behind the prototype in `workspace/`. It co
 
 ## 1. Problem in one paragraph
 
-PetHaven has five Sydney stores and an online store. The website shows **one combined available quantity per product** for all five stores, but that number is only refreshed when a **sync** is run. Between syncs, in-store sales, supplier deliveries and store-side cancellations change the real stock without the website knowing. Customers therefore put items in their bag that the website says are in stock but no store can supply; checkout checks real stock **before payment** and blocks them, so the stale number costs a sale and the customer's trust instead of a cancelled paid order. It can also hide stock that is really there. The prototype integrates the three operational systems into one data warehouse, uses the warehouse's single history of stock events to recalculate and publish the website number on demand, and reports how stale the website is, what each sync corrected, and which online orders were affected.
+PetHaven has five Sydney stores and an online store. The website shows **one combined available quantity per product** for all five stores, but that number is only refreshed when a **sync** is run. Between syncs, in-store sales, supplier deliveries and store-side cancellations change the real stock without the website knowing. Customers therefore put items in their bag that the website says are in stock but no store can supply; checkout checks real stock **before payment** and blocks them, so the stale number costs a sale and the customer's trust instead of a cancelled paid order. It can also hide stock that is really there. The prototype integrates the three operational systems into one data warehouse, refreshes the website number on demand straight from the store system, and uses the warehouse to report how stale the website was, what each sync corrected, and which customers were affected. Operational systems talk to each other directly; the warehouse only records and analyses.
 
 ## 2. Solution architecture
 
@@ -36,7 +36,7 @@ flowchart LR
     subgraph DW["dw · Integrated data warehouse"]
         dims[dim_product · dim_store · dim_date]
         fact[(fact_stock_event)]
-        sync[run_sync + sync_run / sync_change]
+        sync[sync_run / sync_change<br/>sync record]
         rpt[report views]
     end
 
@@ -53,7 +53,8 @@ flowchart LR
     xref --> tr
     tr --> run --> fact
     S1 -- master data --> dims
-    fact --> sync -- publish website number --> ostock
+    stock -- sync_website_stock: shelf totals --> ostock
+    ostock -. sync log via ETL .-> sync
     fact --> rpt
 ```
 
@@ -88,7 +89,7 @@ erDiagram
     STORE ||--o{ STOCK_EVENT : "happens at"
     PRODUCT ||--o{ STOCK_EVENT : changes
     SYNC ||--o{ STOCK_EVENT : processes
-    SYNC ||--o{ WEBSITE_NUMBER : publishes
+    SYNC ||--o{ WEBSITE_NUMBER : "refreshes from shelf totals"
     PRODUCT ||--|| WEBSITE_NUMBER : "shown online as"
 ```
 
@@ -102,13 +103,13 @@ erDiagram
 | Online order / order line | A click-and-collect order from a customer postcode, with one line per product. Collected at the **pickup store** the customer chose from the stores holding at least one of the items. |
 | Reservation | Stock held for one order line, taken from one store. If that store is not the pickup store, the units are **transferred**: held → in transit → arrived → collected (or cancelled). |
 | Stock event | Any change to a stock position, from any system. The single history. |
-| Sync | One manual run that recalculates and publishes the website numbers. |
+| Sync | One manual run that refreshes the website numbers from the store system's shelf totals. The warehouse keeps a record of each one. |
 | Website number | One combined available quantity per product, shown online. |
 
 Definitions used everywhere:
 
 - **Real combined available** for a product = sum of `in_store` over the five stores. Reserved units are not available.
-- **Website number** = value published by the last sync, minus the website's own reservations since then.
+- **Website number** = the shelf total at the last sync, minus the website's own paid orders since then.
 - **Stale** = website number ≠ real combined available.
 - **Blocked at checkout** = a bag item the website showed as in stock that no single store could supply when the customer checked out (before payment).
 
@@ -342,20 +343,27 @@ The sign rules are enforced by the `ck_fact_signs` check constraint, and `ck_fac
 
 ### 6.3 Sync log
 
-`sync_run` records each sync and the event window it processed. `sync_change` records the before/after of every number it recalculated: store `in_store`/`reserved` totals touched in the window, and the `online_available` number for every online product (so the latest row is what the website was given).
+`sync_run` is the warehouse's record of each website sync (linked to the online store's own log by `source_sync_no`) and the window of stock events since the previous one. `sync_change` records before/after: the `online_available` website number for every online product (from the sync log), and the store `in_store`/`reserved` totals changed in the window (from the fact history).
 
-## 7. The sync (`dw.run_sync`)
+## 7. The sync (`online.sync_website_stock`) and its warehouse record
 
-Run on demand only (`SELECT dw.run_sync();` or `demo.py sync`), so a presenter can make several changes first and then show the stale "before" and corrected "after" side by side. In one transaction it:
+**Operations and analytics are kept apart.** The website number is an operational value, so it comes straight from the operational system that owns it; the data warehouse never sets it.
 
-1. Runs an ETL pass (loads anything staged, including newly approved rejects).
-2. Locks the fact table against new inserts and takes the window `(last synced event_id, current max event_id]`.
-3. Recalculates each touched store/product running total from the full fact history and logs before/after.
-4. Recalculates each product's combined available (Σ in-store over the five stores), logs the website's current number as "before".
-5. Publishes to `online.online_stock`, translating `product_code` back to `web_sku` through the cross-reference.
-6. Reconciles every store/product against the live store system and stores the mismatch count (expected 0).
+**The sync (operational, in the online store).** Run on demand only (`SELECT online.sync_website_stock();` or `demo.py sync`), so a presenter can make several changes first and then show the stale "before" and corrected "after" side by side. It:
 
-Between syncs the website changes only through its own reserved order lines (it knows those immediately). In-store sales, deliveries and store-side cancellations wait for the next sync, which is exactly the staleness the prototype demonstrates. Transfers do not change the website number: the units were already taken off it when the line was held.
+1. Locks the website numbers so no checkout uses them mid-sync.
+2. Asks the store system for the real shelf totals per product across the five stores (`store_ops.shelf_totals()`; reserved units are not available, so not counted), matched by the store barcode the online catalogue already holds.
+3. Replaces each website number with that total and logs before/after in `online.stock_sync` / `stock_sync_line`.
+
+**The warehouse record (analytical, via the ETL).** When the sync finishes, `dw.load_website_sync` (07_sync.sql) extracts its log into `etl.stg_website_sync_line`, maps web SKUs to warehouse products, and records in `dw.sync_run` / `dw.sync_change`:
+
+- the website number before and after, per product;
+- the stock events since the previous sync (the window `(previous to_event_id, current max event_id]`) and the store totals they changed, from the fact history;
+- a reconciliation of the warehouse against the store system (`store_mismatches`, expected 0).
+
+Reports 2 and 3 use this record to show how stale the website was and what each sync corrected. If the warehouse were down or a product's codes were not yet approved, the website number would still be right; only the reports would lag.
+
+Between syncs the website changes only through its own paid orders (it knows those immediately). In-store sales, deliveries and store-side cancellations wait for the next sync, which is exactly the staleness the prototype demonstrates. Transfers do not change the website number: the units were already taken off it when the order was paid.
 
 ## 8. Reports
 
@@ -397,6 +405,7 @@ Times are relative to the build day, so "time since sync" and "overdue" are alwa
 | Reject-and-retry instead of guessing or failing | A guessed mapping corrupts stock silently; failing the business transaction would stop a till. Rejecting into staging keeps the source working, keeps the warehouse correct, and makes the gap visible until a person fixes it. |
 | CDC + micro-batch ETL in the same transaction | The user requirement is that every sale, delivery and order is in the warehouse immediately, so the sync and reports never miss an event. Running the full extract-transform-load inside the source transaction guarantees source and warehouse cannot diverge, with no scheduler to run in the lab. |
 | Staging in source format | Keeps the extracted evidence unchanged (cartons, UTC, source codes), so every transformation is visible and re-runnable. |
+| Website number comes from the store system, not the warehouse | A data warehouse is for analysis. The number the website shows is operational and the store system already holds it, so the online store reads it there directly — as checkout does. The warehouse records each sync and reports on it, so analytics never sits in the path of trading. |
 | Manual sync | The business problem is staleness. A manual trigger lets the demo build up a realistic stale state and show the correction on cue; a schedule would only change *when* it runs. |
 | Website deducts its own orders immediately | The website knows its own sales. Only changes it cannot see (other channels, deliveries, store-side cancellations) need the sync. |
 | One pickup store per order; missing lines transferred in from the nearest store that has them | Click-and-collect means one pickup location for the customer. Taking a missing line from the next-nearest store and transferring it keeps the order together instead of failing it, which is how multi-store retailers fulfil click-and-collect. |
@@ -436,7 +445,7 @@ Times are relative to the build day, so "time since sync" and "overdue" are alwa
 | vi.b Integrated data warehouse (≥ 1) | `workspace/db/05_warehouse.sql` (+ `07_sync.sql`) |
 | vi.c SQL scripts: create, extract, transform, load, synthetic data | `01_schemas.sql`; `06_etl.sql` (extract → transform → validate → load); `seed/01_reference_data.sql`, `seed/02_business_history.sql` |
 | vi.d Reports (≥ 3) | `workspace/db/08_reports.sql` (6 reports) |
-| vi.e End-to-end testing | `workspace/tests/check_demo.py` (93 checks), `workspace/demo/cloudbeaver_demo.sql`, [demo_runbook.md](demo_runbook.md) |
+| vi.e End-to-end testing | `workspace/tests/check_demo.py` (95 checks), `workspace/demo/cloudbeaver_demo.sql`, [demo_runbook.md](demo_runbook.md) |
 
 ### File map
 
@@ -447,12 +456,12 @@ workspace/db/03_supply.sql              Source 2 tables, delivery trigger, recor
 workspace/db/04_online.sql              Source 3 tables, bag, checkout (stock check before payment), orders
 workspace/db/05_warehouse.sql           dimensions, fact, sync log, indexes
 workspace/db/06_etl.sql                 cross-reference, staging, CDC extract, v_transform, run_etl, data quality
-workspace/db/07_sync.sql                dw.run_sync
+workspace/db/07_sync.sql                load each website sync into the warehouse (dw.load_website_sync)
 workspace/db/08_reports.sql             report views 1-6
 workspace/db/seed/01_reference_data.sql master data and approved mappings
 workspace/db/seed/02_business_history.sql  7 days of activity and 2 syncs
 workspace/scripts/build.py              rebuild pethaven_demo
 workspace/scripts/demo.py               demo commands
 workspace/demo/cloudbeaver_demo.sql     the same demo as SQL statements
-workspace/tests/check_demo.py           93 behaviour checks on pethaven_check
+workspace/tests/check_demo.py           95 behaviour checks on pethaven_check
 ```

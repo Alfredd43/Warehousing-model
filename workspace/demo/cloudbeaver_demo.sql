@@ -124,7 +124,7 @@ SELECT f.event_type, s.store_code, pk.store_code AS pickup, f.quantity_change, f
 SELECT * FROM dw.rpt_online_staleness;
 SELECT * FROM dw.rpt_online_vs_actual WHERE status <> 'in sync';
 
-SELECT dw.run_sync();
+SELECT online.sync_website_stock();
 
 SELECT * FROM dw.sync_run ORDER BY sync_id DESC LIMIT 1;
 SELECT * FROM dw.rpt_last_sync_changes ORDER BY measure, product_code, store_or_channel;
@@ -184,5 +184,5 @@ SELECT * FROM dw.rpt_open_reservations ORDER BY reserved_at;                    
 SELECT * FROM dw.rpt_reconciliation WHERE status <> 'match';                              -- Report 6
 
 -- Finish with a sync so the website is correct again.
-SELECT dw.run_sync();
+SELECT online.sync_website_stock();
 SELECT * FROM dw.rpt_last_sync_changes ORDER BY measure, product_code, store_or_channel;

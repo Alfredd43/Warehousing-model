@@ -1,6 +1,6 @@
 # PetHaven Data Solution
 
-Assignment 2 prototype (32113 Advanced Database). PetHaven has five Sydney stores and an online store. The website shows one combined stock number per product, refreshed only when a sync runs, so between syncs customers can put items in their bag that no store can supply. Checkout checks real store stock before payment, so those items are blocked instead of being charged and cancelled. The prototype integrates **three source systems** into **one data warehouse** through an ETL layer, recalculates the website number from the warehouse on demand, and reports staleness, sync corrections and items blocked at checkout.
+Assignment 2 prototype (32113 Advanced Database). PetHaven has five Sydney stores and an online store. The website shows one combined stock number per product, refreshed only when a sync runs, so between syncs customers can put items in their bag that no store can supply. Checkout checks real store stock before payment, so those items are blocked instead of being charged and cancelled. The prototype integrates **three source systems** into **one data warehouse** through an ETL layer, refreshes the website number on demand straight from the store system, and uses the warehouse to report staleness, sync corrections and items blocked at checkout.
 
 | Schema | Role | Own codes | Main objects |
 | --- | --- | --- | --- |
@@ -8,14 +8,14 @@ Assignment 2 prototype (32113 Advanced Database). PetHaven has five Sydney store
 | `supply` | Source 2: delivery system | location `NSW-PARRA`, SKU `PF-DOG-ADT-3K`, **cartons**, **UTC** | `location`, `item`, `delivery`/`delivery_line` |
 | `online` | Source 3: online store | collection point `CP-PARRAMATTA`, `WEB-10001` | `product`, `online_stock` (website number), `collection_point`, `web_order` |
 | `etl` | ETL layer | – | staging tables, `product_xref`/`store_xref` (approved code mappings), `v_transform`, `run_etl`, `etl_run`, `v_data_quality` |
-| `dw` | Integrated data warehouse | `S01`, `P001` | `dim_product`, `dim_store`, `dim_date`, `fact_stock_event`, `run_sync`, `sync_run`/`sync_change`, 8 report views |
+| `dw` | Integrated data warehouse | `S01`, `P001` | `dim_product`, `dim_store`, `dim_date`, `fact_stock_event`, `sync_run`/`sync_change` (record of each sync), 8 report views |
 
 How it behaves:
 
 - **In-store sale / delivery / collection / cancellation**: the store's stock changes immediately; the website number waits for the next sync.
 - **Online shopping**: items go into a **bag** up to the (possibly stale) website number; nothing is held and bags never expire. The customer is offered every store that holds at least one bag item (fewest transfers first) and **chooses** where to collect. At **checkout, before payment**, real store stock is checked and locked, so whoever checks out first gets it. If any item can't be supplied by a single store, checkout is **blocked**: nothing charged, nothing held, and the customer removes it and tries again. Otherwise the order is **paid**, each item is held where it was found, items from other stores are **transferred** to the chosen store (dispatch → in transit → receive), and the website number drops at once. Orders not collected within 3 days are cancelled by the overdue job.
 - **ETL**: every source record is captured into staging in its source format, mapped to warehouse codes through approved cross-references, converted (cartons → units, UTC → Sydney date), validated and loaded into `dw.fact_stock_event` in the same transaction. Records with unmapped codes are rejected with a reason and load once the mapping is approved.
-- **Sync** (`SELECT dw.run_sync();`): processes all events since the last sync, recalculates store totals and website numbers, publishes them, logs before/after and reconciles the warehouse with the stores.
+- **Sync** (`SELECT online.sync_website_stock();`): the online store takes the real shelf totals from the store system and updates the website. The warehouse is not involved in setting the number; through the ETL it records each sync (website before/after, store changes since the last sync, reconciliation) for the reports.
 
 Documentation:
 
@@ -121,7 +121,7 @@ The full 10-minute demonstration, with what to say at each step, is in [docs/dem
 docker compose exec python python /workspace/tests/check_demo.py
 ```
 
-Builds a separate database, `pethaven_check`, runs scripted business events and checks every rule in [docs/traceability.md](docs/traceability.md): immediate store updates, website staleness, bag, pickup options and checkout with the stock check before payment, first-to-checkout wins, transfers to the chosen store, blocked checkouts, overdue cancellation, online sales in the sales report, carton/UTC conversion, rejection and approval of unmapped codes, lineage, sync before/after and reconciliation. It ends with `TOTAL: 93 checks - PASS 93, FAIL 0`.
+Builds a separate database, `pethaven_check`, runs scripted business events and checks every rule in [docs/traceability.md](docs/traceability.md): immediate store updates, website staleness, bag, pickup options and checkout with the stock check before payment, first-to-checkout wins, transfers to the chosen store, blocked checkouts, overdue cancellation, online sales in the sales report, carton/UTC conversion, rejection and approval of unmapped codes, lineage, sync before/after and reconciliation. It ends with `TOTAL: 95 checks - PASS 95, FAIL 0`.
 
 ### Step 7: Stop the lab
 
@@ -154,14 +154,14 @@ workspace/
   db/04_online.sql                     Source 3: online store
   db/05_warehouse.sql                  star schema + sync log
   db/06_etl.sql                        extract -> transform -> validate -> load
-  db/07_sync.sql                       dw.run_sync(), the manual "run sync now" job
+  db/07_sync.sql                       load each website sync into the warehouse (for reporting)
   db/08_reports.sql                    report views
   db/seed/01_reference_data.sql        stores, products, codes per system, approved mappings
   db/seed/02_business_history.sql      a week of trading and two syncs
   scripts/build.py                     rebuild pethaven_demo
   scripts/demo.py                      demo commands
   demo/cloudbeaver_demo.sql            the demonstration as SQL statements
-  tests/check_demo.py                  93 behaviour checks
+  tests/check_demo.py                  95 behaviour checks
 docs/                                  design, traceability, demo runbook, implementation notes
 00_req_feedback/                       brief, Spec, tutor feedback, subject notes
 data/                                  lab database files created by Docker (not in Git)

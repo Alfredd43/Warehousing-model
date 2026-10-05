@@ -11,7 +11,8 @@
 --          checkout_attempt + checkout_attempt_item, web_order +
 --          web_order_line, and create_basket(), add_to_basket(),
 --          remove_from_basket(), pickup_options(), checkout(),
---          place_online_order() (shortcut).
+--          place_online_order() (shortcut), stock_sync + stock_sync_line
+--          and sync_website_stock() ("run sync now").
 -- =============================================================================
 
 CREATE TABLE online.product (
@@ -35,7 +36,7 @@ CREATE TABLE online.online_stock (
     CONSTRAINT ck_online_stock_available CHECK (available_quantity >= 0)
 );
 COMMENT ON TABLE online.online_stock IS
-'What the website shows: one combined quantity per product for all five stores. Lowered immediately by the website''s own reserved orders; otherwise only dw.run_sync() changes it, so in-store sales, deliveries and store-side cancellations leave it stale until the next sync.';
+'What the website shows: one combined quantity per product for all five stores. Lowered immediately by the website''s own paid orders; otherwise only online.sync_website_stock() changes it (from the store system''s shelf totals), so in-store sales, deliveries and store-side cancellations leave it stale until the next sync.';
 
 CREATE TABLE online.collection_point (
     cp_code     text         NOT NULL,
@@ -471,4 +472,69 @@ CREATE FUNCTION online.place_online_order(
 ) RETURNS bigint
 LANGUAGE sql AS $$
     SELECT online.place_online_order(p_postcode, ARRAY[p_web_sku], ARRAY[p_quantity], p_ordered_at);
+$$;
+
+
+-- -----------------------------------------------------------------------------
+-- Website stock sync (operational, run on demand: "run sync now").
+-- The website asks the store system for the real shelf totals and replaces
+-- its own numbers with them. The data warehouse is NOT involved in setting
+-- the number; it only receives a copy of the sync log for reporting.
+-- -----------------------------------------------------------------------------
+CREATE TABLE online.stock_sync (
+    sync_no           bigint      GENERATED ALWAYS AS IDENTITY,
+    run_at            timestamptz NOT NULL,
+    status            text        NOT NULL DEFAULT 'running',
+    products_changed  integer,
+    CONSTRAINT pk_stock_sync PRIMARY KEY (sync_no),
+    CONSTRAINT ck_stock_sync_status CHECK (status IN ('running', 'done'))
+);
+COMMENT ON TABLE online.stock_sync IS 'One run of the website stock sync (the online store''s own log).';
+
+CREATE TABLE online.stock_sync_line (
+    sync_no     bigint  NOT NULL,
+    web_sku     text    NOT NULL,
+    before_qty  integer NOT NULL,
+    after_qty   integer NOT NULL,
+    CONSTRAINT pk_stock_sync_line PRIMARY KEY (sync_no, web_sku),
+    CONSTRAINT fk_stock_sync_line_sync FOREIGN KEY (sync_no) REFERENCES online.stock_sync (sync_no),
+    CONSTRAINT fk_stock_sync_line_product FOREIGN KEY (web_sku) REFERENCES online.product (web_sku)
+);
+COMMENT ON TABLE online.stock_sync_line IS 'Website number for one product before and after a sync.';
+
+-- Example: SELECT online.sync_website_stock();
+-- p_at lets the seed script record a sync in the past.
+CREATE FUNCTION online.sync_website_stock(p_at timestamptz DEFAULT now())
+RETURNS bigint
+LANGUAGE plpgsql AS $$
+DECLARE
+    v_sync_no bigint;
+BEGIN
+    -- Hold checkouts on these numbers until the sync is done.
+    PERFORM 1 FROM online.online_stock ORDER BY web_sku FOR UPDATE;
+
+    INSERT INTO online.stock_sync (run_at) VALUES (p_at) RETURNING sync_no INTO v_sync_no;
+
+    -- Real shelf totals from the store system, matched by the store barcode.
+    INSERT INTO online.stock_sync_line (sync_no, web_sku, before_qty, after_qty)
+    SELECT v_sync_no, p.web_sku, s.available_quantity, coalesce(t.in_store_total, 0)
+      FROM online.product p
+      JOIN online.online_stock s ON s.web_sku = p.web_sku
+      LEFT JOIN store_ops.shelf_totals() t ON t.barcode = p.pos_barcode;
+
+    UPDATE online.online_stock s
+       SET available_quantity = l.after_qty,
+           last_synced_at     = p_at
+      FROM online.stock_sync_line l
+     WHERE l.sync_no = v_sync_no AND l.web_sku = s.web_sku;
+
+    -- Marking the run done hands the log to the ETL (07_sync.sql).
+    UPDATE online.stock_sync
+       SET status = 'done',
+           products_changed = (SELECT count(*) FROM online.stock_sync_line
+                                WHERE sync_no = v_sync_no AND before_qty <> after_qty)
+     WHERE sync_no = v_sync_no;
+
+    RETURN v_sync_no;
+END;
 $$;

@@ -20,7 +20,8 @@ Usage (from the repository root; prefix every command with
     cancel 6 [--reason "..."]        order 6 cancelled, held stock back on a shelf
 
   Integration
-    sync                             RUN SYNC NOW: before/after of every changed number
+    sync                             RUN SYNC NOW: website takes the shelf totals from the store
+                                     system; the warehouse logs before/after of every change
     etl                              run one ETL pass by hand and show the latest runs
     approve STORE 9300601001194 P019 data steward approves a code mapping (then run etl)
     codes                            each store/product's code in every system
@@ -268,12 +269,15 @@ def cmd_sync(conn, args) -> None:
     show(conn, "BEFORE sync: products whose website number is wrong", """
         SELECT product_code, product_name, online_shown, actual_in_store, status
           FROM dw.rpt_online_vs_actual WHERE status <> 'in sync' ORDER BY product_code""")
-    _, rows = db.query(conn, "SELECT dw.run_sync()")
+    _, rows = db.query(conn, "SELECT online.sync_website_stock()")
     conn.commit()
-    sync_id = rows[0][0]
-    show(conn, f"Sync #{sync_id} log", """
-        SELECT sync_id, run_at, events_processed, numbers_changed, store_mismatches
-          FROM dw.sync_run WHERE sync_id = %s""", (sync_id,))
+    sync_no = rows[0][0]
+    show(conn, f"Online store: sync {sync_no} took the shelf totals from the store system", """
+        SELECT sync_no, run_at, products_changed FROM online.stock_sync WHERE sync_no = %s""", (sync_no,))
+    show(conn, "Warehouse record of this sync (for reporting)", """
+        SELECT sync_id, source_sync_no, run_at, events_processed AS events_since_last_sync,
+               numbers_changed, store_mismatches
+          FROM dw.sync_run WHERE source_sync_no = %s""", (sync_no,))
     show(conn, "AFTER sync: every number that changed (before -> after)", """
         SELECT store_or_channel, product_code, product_name, measure, before_qty, after_qty, difference
           FROM dw.rpt_last_sync_changes

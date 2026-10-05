@@ -237,7 +237,7 @@ def main() -> int:
     for store in ("S01", "S02", "S04", "S05"):
         sell_all(store, "P006")
     sale("S03", {"P006": in_store("S03", "P006") - 10})
-    run("SELECT dw.run_sync()")
+    run("SELECT online.sync_website_stock()")
     check("R17 website shows 10 after sync", 10, online("P006"))
     bag_a = bag("2067", {"P006": 7})                     # customer A: 7 in the bag, does not check out yet
     check("R6 adding to a bag does not change the website number", 10, online("P006"))
@@ -386,7 +386,13 @@ def main() -> int:
 
     print("\n-- Run sync")
     pending = one("SELECT pending_events::int FROM dw.rpt_online_staleness")
-    sync_id = run("SELECT dw.run_sync()")
+    sync_no = run("SELECT online.sync_website_stock()")
+    sync_id = one("SELECT sync_id FROM dw.sync_run WHERE source_sync_no=%s", (sync_no,))
+    check("R17 the sync set the website from the store system's shelf totals", 0,
+          one("""SELECT count(*)::int FROM online.online_stock s JOIN online.product p USING (web_sku)
+                  LEFT JOIN store_ops.shelf_totals() t ON t.barcode = p.pos_barcode
+                 WHERE s.available_quantity <> coalesce(t.in_store_total, 0)"""))
+    check("R17 the warehouse recorded the sync (lineage to the online sync log)", True, sync_id is not None)
     check("R17 events processed = events pending", pending,
           one("SELECT events_processed FROM dw.sync_run WHERE sync_id=%s", (sync_id,)))
     check("R17 nothing pending after sync", 0, one("SELECT pending_events::int FROM dw.rpt_online_staleness"))

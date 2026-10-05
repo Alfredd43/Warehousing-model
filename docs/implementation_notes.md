@@ -15,7 +15,7 @@ docker exec -i student-postgres psql -U student -d pethaven_demo < workspace/dem
 | Measure | Result |
 | --- | --- |
 | Build (`build.py`) | All 10 SQL files applied without error |
-| Behaviour checks (`check_demo.py`) | 93 / 93 PASS, exit code 0 |
+| Behaviour checks (`check_demo.py`) | 95 / 95 PASS, exit code 0 |
 | Demo script (`cloudbeaver_demo.sql`) | Runs top to bottom; the only error is the deliberate one in step 3c (collecting before a transfer arrives is refused) |
 | Seed result | 155 source records staged → 146 fact rows loaded, 9 skipped, 0 rejected; 7 paid orders, 1 checkout blocked before payment; 2 syncs; 0 events pending |
 | Reconciliation after seed and after every sync | 90 / 90 store-product pairs match; `store_mismatches = 0` |
@@ -25,9 +25,9 @@ docker exec -i student-postgres psql -U student -d pethaven_demo < workspace/dem
 
 | Component | Objects |
 | --- | --- |
-| 3 source systems | `store_ops` (6 tables, 11 functions incl. checkout stock check, transfers and overdue cancellation, EAN-13 validation), `supply` (4 tables, 1 function), `online` (10 tables incl. bag and checkout attempts, 8 functions incl. pickup options) |
+| 3 source systems | `store_ops` (6 tables, 12 functions incl. checkout stock check, transfers and overdue cancellation, EAN-13 validation), `supply` (4 tables, 1 function), `online` (12 tables incl. bag, checkout attempts and sync log, 9 functions incl. pickup options and the website sync) |
 | ETL | `etl` cross-references (2), staging (4), run log, CDC extract triggers (5), `v_transform`, `run_etl`, `load_dimensions`, `approve_product_mapping`, `v_staging`, `v_data_quality`, code look-ups |
-| Data warehouse | `dim_product`, `dim_store`, `dim_date`, `fact_stock_event` (+4 indexes), `sync_run`, `sync_change`, `run_sync` |
+| Data warehouse | `dim_product`, `dim_store`, `dim_date`, `fact_stock_event` (+4 indexes), `sync_run`, `sync_change`, `load_website_sync` (records each website sync; the warehouse does not set the website number) |
 | Reports | 8 views: stock by store, staleness, online vs actual, last sync changes, items blocked at checkout, daily sales (both channels), open reservations, reconciliation |
 | Tooling | `build.py`, `demo.py` (17 commands), `cloudbeaver_demo.sql`, `check_demo.py` |
 

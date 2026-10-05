@@ -123,6 +123,7 @@ CREATE INDEX ix_fact_order_ref ON dw.fact_stock_event (order_ref) WHERE order_re
 
 CREATE TABLE dw.sync_run (
     sync_id           integer     GENERATED ALWAYS AS IDENTITY,
+    source_sync_no    bigint      NOT NULL,
     run_at            timestamptz NOT NULL,
     from_event_id     bigint      NOT NULL,
     to_event_id       bigint      NOT NULL,
@@ -130,10 +131,12 @@ CREATE TABLE dw.sync_run (
     numbers_changed   integer     NOT NULL,
     store_mismatches  integer     NOT NULL,
     CONSTRAINT pk_sync_run PRIMARY KEY (sync_id),
+    CONSTRAINT uq_sync_run_source UNIQUE (source_sync_no),
     CONSTRAINT ck_sync_run_window CHECK (to_event_id >= from_event_id)
 );
 COMMENT ON TABLE dw.sync_run IS
-'One row per manual sync. It processed fact events with from_event_id < event_id <= to_event_id.';
+'Warehouse record of one website stock sync (run by the online store, online.sync_website_stock). The stock events between this sync and the previous one are from_event_id < event_id <= to_event_id. Analytical only: the warehouse does not set the website number.';
+COMMENT ON COLUMN dw.sync_run.source_sync_no IS 'Lineage: online.stock_sync.sync_no.';
 COMMENT ON COLUMN dw.sync_run.numbers_changed IS 'Store and online numbers this sync changed (rows in sync_change with changed = true).';
 COMMENT ON COLUMN dw.sync_run.store_mismatches IS 'Reconciliation: store/product pairs where the warehouse differs from the live store system (see dw.rpt_reconciliation). Expected 0.';
 
@@ -152,4 +155,4 @@ CREATE TABLE dw.sync_change (
     CONSTRAINT ck_sync_change_measure CHECK (measure IN ('in_store', 'reserved', 'online_available'))
 );
 COMMENT ON TABLE dw.sync_change IS
-'Before/after of each number a sync recalculated. Store measures are logged when the sync window touched them; online_available is logged for every online product on every sync.';
+'Before/after of each number around a sync. online_available = the website number before and after (from the online store''s sync log); in_store / reserved = store totals that changed since the previous sync, from the warehouse history.';

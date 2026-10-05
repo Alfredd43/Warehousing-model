@@ -109,7 +109,7 @@ $$;
 DROP TABLE opening_cartons;
 
 -- 7 days ago 08:00: first sync, so the website starts with real numbers.
-SELECT dw.run_sync(pg_temp.ts(7, '08:00'));
+SELECT online.sync_website_stock(pg_temp.ts(7, '08:00'));
 
 
 -- ---------------------------------------------------------------------------
@@ -208,4 +208,4 @@ SELECT online.place_online_order('2170', pg_temp.web('P008'), 1, pg_temp.ts(1, '
 -- ---------------------------------------------------------------------------
 -- Now: initial sync for the demo. Website numbers become correct.
 -- ---------------------------------------------------------------------------
-SELECT dw.run_sync();
+SELECT online.sync_website_stock();

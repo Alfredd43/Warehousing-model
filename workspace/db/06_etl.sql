@@ -25,7 +25,7 @@
 -- etl.run_etl() straight after the source change, in the same transaction
 -- (near-real-time micro-batch), so the warehouse is never behind the stores.
 -- It can also be run by hand: SELECT etl.run_etl();  (e.g. after approving a
--- mapping). dw.run_sync() runs it first as well.
+-- mapping). Loading a website sync (07_sync.sql) runs it first as well.
 -- =============================================================================
 
 

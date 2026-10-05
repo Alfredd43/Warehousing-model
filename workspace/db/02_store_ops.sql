@@ -17,6 +17,7 @@
 --            cancel_order()             order cancelled, held stock back on a shelf
 --            cancel_overdue_orders()    housekeeping: cancel orders not collected in time
 --            stores_with_stock()        which stores could supply a line (called by Source 3)
+--            shelf_totals()             units on the shelf per product, all stores (website sync)
 -- =============================================================================
 
 -- EAN-13 check digit: weights 1,3,1,3... over the first 12 digits.
@@ -203,6 +204,19 @@ LANGUAGE sql AS $$
     ON CONFLICT (store_no, barcode) DO UPDATE
        SET in_store_quantity = store_ops.store_stock.in_store_quantity + EXCLUDED.in_store_quantity,
            updated_at        = EXCLUDED.updated_at;
+$$;
+
+
+-- -----------------------------------------------------------------------------
+-- Interface used by Source 3's website sync: units on the shelf per product,
+-- summed over all stores. Reserved units are not available, so not counted.
+-- -----------------------------------------------------------------------------
+CREATE FUNCTION store_ops.shelf_totals()
+RETURNS TABLE (barcode text, in_store_total integer)
+LANGUAGE sql STABLE AS $$
+    SELECT barcode, sum(in_store_quantity)::integer
+      FROM store_ops.store_stock
+     GROUP BY barcode;
 $$;
 
 

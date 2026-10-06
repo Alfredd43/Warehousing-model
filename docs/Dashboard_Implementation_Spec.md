@@ -75,7 +75,7 @@ Do not claim these API endpoints or UI interactions already exist. New queries m
 
 ### 2.3 Required, secondary, and excluded work
 
-**Required for the first release:** all four pages, existing open-reservation detail, source/fact lineage, the core sale/delivery/basket/checkout/sync demo, and the unmapped-product recovery demonstration.
+**Required for the first release:** all four pages, existing open-reservation detail, source/fact lineage, the core sale/supplier delivery/basket/checkout/sync demo, and the unmapped-product recovery demonstration.
 
 **Secondary, after the required release works:** daily sales analysis; dispatch/receive/collect/cancel controls in the demo; historical sync-batch selection; CSV export; true concurrent-checkout visual demonstration.
 
@@ -411,7 +411,7 @@ This diagram is explanatory, not a graph database, live network monitor, or anim
 
 Product table from `etl.v_product_codes`: `Warehouse product | Product name | Store barcode | Supplier SKU | Web SKU`.
 
-Store table from `etl.v_store_codes`: `Warehouse store | Store name | Store code | Delivery location | Collection point`.
+Store table from `etl.v_store_codes`: `Warehouse store | Store name | Store code | Supplier delivery location | Collection point`.
 
 Missing mappings show `Not mapped`; unavailable source participation shows `Not sold online` only when confirmed by the source catalogue. Do not assume every null means the same thing.
 
@@ -426,7 +426,7 @@ Selecting a staging record or following `View data trace` opens one detail panel
 3. **Transformation**: source codes to approved unified codes, source quantity/units to warehouse units, source time to Sydney event date.
 4. **Warehouse**: event ID, event type, product/store/date keys and labels, signed stock changes, ETL run ID, loaded time.
 
-For a delivery, show actual values such as `5 cartons × 4 units/carton = 20 units` only when those values come from the selected record.
+For a supplier delivery, show actual values such as `5 cartons × 4 units/carton = 20 units` only when those values come from the selected record.
 
 Important implementation detail: `etl.v_transform` exposes pending/rejected records, not all successfully loaded history. For a loaded record, use its retained staging fields and linked fact row. Label displayed conversion steps as derived from stored fields; do not require the loaded row to remain in `v_transform`.
 
@@ -464,16 +464,16 @@ Provide small forms using real catalogue options. Show warehouse-friendly codes 
 
 Every submitted action returns the actual database-generated identifier and a concise result, followed by `View affected report` and `View data trace` where applicable. Do not use fixed order/basket/run IDs copied from comments in the old SQL demo.
 
-Disable repeated submission while an action is pending. Do not automatically retry writes after a timeout: the transaction may already have committed. Explain an unknown outcome and allow the user to inspect recent records before repeating it. For the local single-presenter prototype, an in-flight guard and explicit inspection are the minimum; do not promise exactly-once delivery without a persisted design.
+Disable repeated submission while an action is pending. Do not automatically retry writes after a timeout: the transaction may already have committed. Explain an unknown outcome and allow the user to inspect recent records before repeating it. For the local single-presenter prototype, an in-flight guard and explicit inspection are the minimum; do not promise exactly-once supplier delivery without a persisted design.
 
-Ordinary sale/delivery/checkout/sync submits need no extra confirmation after the user has filled the form and pressed its labelled action. Keep a review step for approving a code mapping because it changes integration interpretation. No general-purpose SQL execution box or database rebuild endpoint.
+Ordinary sale/supplier delivery/checkout/sync submits need no extra confirmation after the user has filled the form and pressed its labelled action. Keep a review step for approving a code mapping because it changes integration interpretation. No general-purpose SQL execution box or database rebuild endpoint.
 
 ### 10.2 Required operations
 
 | Action | Inputs | Existing function(s) | Expected visible result |
 | --- | --- | --- | --- |
 | Record store sale | Store, one or more products, positive integer units | `store_ops.record_sale` | Receipt ID; shelf/fact changes; website may remain stale |
-| Record delivery | Delivery location, supplier name, SKU, positive integer cartons | `supply.record_delivery` | Delivery ID; source cartons and converted units; updated shelf/fact |
+| Record supplier delivery | Supplier delivery location, supplier name, SKU, positive integer cartons | `supply.record_supplier_delivery` | Supplier delivery ID; source cartons and converted units; updated shelf/fact |
 | Create bag | Known customer postcode | `online.create_basket` | Generated basket ID; open bag |
 | Add/update bag item | Basket, web SKU, positive integer quantity | `online.add_to_basket` | Actual bag content; no reservation |
 | Remove bag item | Basket, web SKU | `online.remove_from_basket` | Updated bag |
@@ -483,7 +483,7 @@ Ordinary sale/delivery/checkout/sync submits need no extra confirmation after th
 | Approve demo mapping | Source system/code and P019 after review | `etl.approve_product_mapping` | Stored mapping; does not itself claim records have loaded |
 | Run ETL | No raw SQL | `etl.run_etl` | Recorded run outcome, or a no-work result; rejected records may now load |
 
-Before coding, inspect function signatures and use typed, parameterised SQL. Leave default event timestamps to the database in interactive operations. Source delivery time is UTC without time zone in its interface; handle it as that explicit source format.
+Before coding, inspect function signatures and use typed, parameterised SQL. Leave default event timestamps to the database in interactive operations. Source supplier delivery time is UTC without time zone in its interface; handle it as that explicit source format.
 
 `online.checkout` returning NULL for a blocked attempt is a normal committed result. **Do not roll it back**, or the evidence the report needs will disappear. Retrieve the exact new attempt for that basket within the operation, not a global maximum ID that could belong to another request.
 
@@ -493,7 +493,7 @@ Optional lifecycle actions call the existing `dispatch_order_transfers`, `receiv
 
 | Mutation | Data to invalidate/re-read |
 | --- | --- |
-| Sale/delivery | Website comparison, store stock/events, staging/runs/reconciliation |
+| Sale/supplier delivery | Website comparison, store stock/events, staging/runs/reconciliation |
 | Bag creation/edit | Bag and pickup options only; no optimistic stock change |
 | Blocked checkout | Blocked items, source attempt, staging/runs |
 | Successful checkout | Bag/order, stock, website comparison, open reservations, staging/runs |
@@ -517,19 +517,19 @@ Treat these as reproducible walkthroughs, not scripted browser animations. Verif
 6. Run website sync; show website before > 0 and after = 0.
 7. In a new bag, attempting to add one unit is now refused by the website-quantity check. This is an add-to-bag refusal, not another blocked checkout record.
 
-If the product is already out of stock, explain the unmet prerequisite and suggest a valid product or an explicit delivery. Never silently rebuild or manufacture balances. A labelled scenario preparation/commit is allowed; unrequested background business changes are not.
+If the product is already out of stock, explain the unmet prerequisite and suggest a valid product or an explicit supplier delivery. Never silently rebuild or manufacture balances. A labelled scenario preparation/commit is allowed; unrequested background business changes are not.
 
 **B. Supplier format becomes warehouse data**
 
 1. Deliver P001 to Chatswood using supplier SKU `PF-DOG-ADT-3K`, location `NSW-CHATS`, 5 cartons, after checking the source catalogue.
 2. Show the stored `units_per_carton` (currently 4), hence 20 units, and UTC-to-Sydney timestamp/date handling.
-3. Follow the new staging record to its loaded delivery event and updated store availability.
+3. Follow the new staging record to its loaded supplier delivery event and updated store availability.
 4. Show that the website may now display fewer units than the stores have; sync and inspect the actual change if demonstrating that direction.
 
 **C. Unmapped record is rejected, then recovered**
 
 1. Verify the clean fixture: P019 exists in source catalogues, supplier SKU `PP-CAT-TUNNEL`, store barcode `9300601001194`, and its STORE/SUPPLY mappings are absent. It is not sold online.
-2. Record a delivery of 2 cartons to `NSW-PARRA`; optionally sell one unit using its source barcode. Source operations succeed.
+2. Record a supplier delivery of 2 cartons to `NSW-PARRA`; optionally sell one unit using its source barcode. Source operations succeed.
 3. Show the staging rejection reason and source-versus-warehouse gap.
 4. Review and approve the SUPPLY and STORE mappings to P019 with the existing function.
 5. Explicitly run ETL; show linked loaded facts, resolved current rejections, and corrected reconciliation.
@@ -587,7 +587,7 @@ Paginate long event/staging/run lists, default 50 rows and a bounded maximum suc
 
 ### 11.2 Mutation endpoints: proposed contract
 
-Use POST routes such as `/api/demo/sales`, `/deliveries`, `/baskets`, `/baskets/{id}/items`, `/baskets/{id}/remove-item`, `/baskets/{id}/checkout`, `/sync`, `/mappings/approve`, and `/etl`, under the same `/api/demo` prefix. Pickup options and current bag reads use GET.
+Use POST routes such as `/api/demo/sales`, `/supplier-deliveries`, `/baskets`, `/baskets/{id}/items`, `/baskets/{id}/remove-item`, `/baskets/{id}/checkout`, `/sync`, `/mappings/approve`, and `/etl`, under the same `/api/demo` prefix. Pickup options and current bag reads use GET.
 
 Support scenario A through one explicit, bounded endpoint that sells the selected product's current free stock using source functions, or an equivalent server-side scenario action. Validate and execute the preparation against one transactionally consistent set of balances; if state changes or a sale is refused, roll back that scenario action and explain why.
 
@@ -710,7 +710,7 @@ Use semantic headings/tables/forms. Associate labels with fields, support keyboa
 - [ ] Blocked checkout commits its evidence, creates no paid order, and leaves no partial reservation.
 - [ ] Repeated attempts from the same basket remain separately traceable.
 - [ ] Open order readiness remains correct when only some lines are visible.
-- [ ] Delivery trace displays stored cartons, conversion factor, units, and correct Sydney business date.
+- [ ] Supplier delivery trace displays stored cartons, conversion factor, units, and correct Sydney business date.
 - [ ] Loaded lineage works after a row disappears from `v_transform`.
 - [ ] Unmapped P019 is visible through rejection/source detail even before warehouse dimensions contain it.
 - [ ] Approving mappings then running ETL loads previously rejected rows; rerun creates no duplicate facts.
@@ -733,9 +733,9 @@ Add focused API/query integration checks against `pethaven_check` for:
 
 1. View-equivalent stock/comparison values and correct sync measure filtering.
 2. Parameter validation and refusal of unsupported dynamic query fields.
-3. Sale/delivery effects through existing functions, with website unchanged until its prescribed update.
+3. Sale/supplier delivery effects through existing functions, with website unchanged until its prescribed update.
 4. A committed blocked attempt, stable attempt/event identity, no partial reservation, and successful retry after editing a bag when applicable.
-5. Source/staging/fact lineage for delivery and rejection recovery, including idempotent ETL rerun.
+5. Source/staging/fact lineage for supplier delivery and rejection recovery, including idempotent ETL rerun.
 6. Empty/no-sync/disconnected states, date boundaries in Sydney, and immutable current-stock scope.
 
 Do not run automated mutation tests on the user's working `pethaven_demo`. Do not claim that a sequential walkthrough proves concurrent isolation. A true concurrency demonstration, if added, needs independent database sessions and appropriate evidence.
@@ -752,7 +752,7 @@ Capture at least:
 - Latest website corrections after sync.
 - Store inventory with a selected product/event.
 - A newly blocked checkout and its detail.
-- Delivery source-to-fact trace.
+- Supplier delivery source-to-fact trace.
 - Rejected P019 records and their recovered state.
 
 Screenshots are evidence from the running app with synthetic database data, not generated design mockups. Record actual test results and any remaining limitation in `dashboard_runbook.md`.

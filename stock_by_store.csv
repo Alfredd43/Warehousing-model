@@ -1,0 +1,91 @@
+store_code,store_name,product_code,product_name,category,in_store_quantity,reserved_quantity,total_on_hand,low_stock,last_event_at
+S01,PetHaven Parramatta,P001,Adult Dry Dog Food Chicken 3kg,Food,37,0,37,f,2026-10-02 09:35:00+10
+S01,PetHaven Parramatta,P002,Puppy Dry Dog Food Lamb 3kg,Food,14,0,14,f,2026-10-01 10:30:00+10
+S01,PetHaven Parramatta,P003,Wet Cat Food Tuna 12-pack,Food,33,0,33,f,2026-09-29 10:05:00+10
+S01,PetHaven Parramatta,P004,Indoor Dry Cat Food 2kg,Food,18,0,18,f,2026-09-26 07:00:00+10
+S01,PetHaven Parramatta,P005,Grain-Free Dog Treats 500g,Treats,57,0,57,f,2026-09-28 09:20:00+10
+S01,PetHaven Parramatta,P006,Dental Chew Sticks 28-pack,Treats,29,0,29,f,2026-10-02 09:35:00+10
+S01,PetHaven Parramatta,P007,Catnip Mouse Toy 3-pack,Toys,24,0,24,f,2026-09-26 07:00:00+10
+S01,PetHaven Parramatta,P008,Rope Tug Toy Large,Toys,15,1,16,f,2026-10-02 21:10:00+10
+S01,PetHaven Parramatta,P009,Squeaky Plush Duck,Toys,24,0,24,f,2026-09-26 07:00:00+10
+S01,PetHaven Parramatta,P010,Interactive Feather Wand,Toys,18,0,18,f,2026-09-26 07:00:00+10
+S01,PetHaven Parramatta,P011,Adjustable Nylon Dog Collar M,Accessories,12,0,12,f,2026-09-26 07:00:00+10
+S01,PetHaven Parramatta,P012,Retractable Dog Lead 5m,Accessories,7,0,7,f,2026-09-27 09:42:00+10
+S01,PetHaven Parramatta,P013,Orthopaedic Dog Bed Large,Bedding,0,2,2,t,2026-09-29 19:05:00+10
+S01,PetHaven Parramatta,P014,Clumping Cat Litter 10L,Hygiene,32,0,32,f,2026-09-26 07:00:00+10
+S01,PetHaven Parramatta,P015,Stainless Steel Pet Bowl 1L,Accessories,24,0,24,f,2026-09-26 07:00:00+10
+S01,PetHaven Parramatta,P016,Flea and Tick Spot-On Dog 10-25kg,Health,18,0,18,f,2026-09-29 07:10:00+10
+S01,PetHaven Parramatta,P017,Cat Scratching Post 80cm,Furniture,4,0,4,f,2026-09-26 07:00:00+10
+S01,PetHaven Parramatta,P018,Aquarium Starter Kit 40L,Aquatics,0,0,0,t,2026-09-30 10:10:00+10
+S02,PetHaven Bondi,P001,Adult Dry Dog Food Chicken 3kg,Food,27,0,27,f,2026-09-29 11:20:00+10
+S02,PetHaven Bondi,P002,Puppy Dry Dog Food Lamb 3kg,Food,12,0,12,f,2026-09-26 07:00:00+10
+S02,PetHaven Bondi,P003,Wet Cat Food Tuna 12-pack,Food,61,0,61,f,2026-09-29 18:00:00+10
+S02,PetHaven Bondi,P004,Indoor Dry Cat Food 2kg,Food,24,0,24,f,2026-09-26 07:00:00+10
+S02,PetHaven Bondi,P005,Grain-Free Dog Treats 500g,Treats,36,0,36,f,2026-09-26 07:00:00+10
+S02,PetHaven Bondi,P006,Dental Chew Sticks 28-pack,Treats,24,0,24,f,2026-09-26 07:00:00+10
+S02,PetHaven Bondi,P007,Catnip Mouse Toy 3-pack,Toys,36,0,36,f,2026-09-26 07:00:00+10
+S02,PetHaven Bondi,P008,Rope Tug Toy Large,Toys,12,0,12,f,2026-09-26 07:00:00+10
+S02,PetHaven Bondi,P009,Squeaky Plush Duck,Toys,16,0,16,f,2026-09-28 10:55:00+10
+S02,PetHaven Bondi,P010,Interactive Feather Wand,Toys,17,0,17,f,2026-09-28 10:55:00+10
+S02,PetHaven Bondi,P011,Adjustable Nylon Dog Collar M,Accessories,12,0,12,f,2026-09-26 07:00:00+10
+S02,PetHaven Bondi,P012,Retractable Dog Lead 5m,Accessories,8,0,8,f,2026-10-02 10:00:00+10
+S02,PetHaven Bondi,P013,Orthopaedic Dog Bed Large,Bedding,1,0,1,t,2026-09-26 07:00:00+10
+S02,PetHaven Bondi,P014,Clumping Cat Litter 10L,Hygiene,20,0,20,f,2026-09-26 07:00:00+10
+S02,PetHaven Bondi,P015,Stainless Steel Pet Bowl 1L,Accessories,17,0,17,f,2026-10-01 11:45:00+10
+S02,PetHaven Bondi,P016,Flea and Tick Spot-On Dog 10-25kg,Health,6,0,6,f,2026-09-26 07:00:00+10
+S02,PetHaven Bondi,P017,Cat Scratching Post 80cm,Furniture,3,0,3,f,2026-09-26 07:00:00+10
+S02,PetHaven Bondi,P018,Aquarium Starter Kit 40L,Aquatics,0,0,0,t,2026-10-01 09:15:00+10
+S03,PetHaven Chatswood,P001,Adult Dry Dog Food Chicken 3kg,Food,53,0,53,f,2026-10-02 06:20:00+10
+S03,PetHaven Chatswood,P002,Puppy Dry Dog Food Lamb 3kg,Food,20,0,20,f,2026-09-26 07:00:00+10
+S03,PetHaven Chatswood,P003,Wet Cat Food Tuna 12-pack,Food,30,0,30,f,2026-09-26 07:00:00+10
+S03,PetHaven Chatswood,P004,Indoor Dry Cat Food 2kg,Food,16,2,18,f,2026-10-02 19:45:00+10
+S03,PetHaven Chatswood,P005,Grain-Free Dog Treats 500g,Treats,44,0,44,f,2026-09-27 13:05:00+10
+S03,PetHaven Chatswood,P006,Dental Chew Sticks 28-pack,Treats,29,0,29,f,2026-10-01 17:00:00+10
+S03,PetHaven Chatswood,P007,Catnip Mouse Toy 3-pack,Toys,12,0,12,f,2026-09-26 07:00:00+10
+S03,PetHaven Chatswood,P008,Rope Tug Toy Large,Toys,12,0,12,f,2026-09-26 07:00:00+10
+S03,PetHaven Chatswood,P009,Squeaky Plush Duck,Toys,24,0,24,f,2026-09-26 07:00:00+10
+S03,PetHaven Chatswood,P010,Interactive Feather Wand,Toys,8,0,8,f,2026-10-02 12:15:00+10
+S03,PetHaven Chatswood,P011,Adjustable Nylon Dog Collar M,Accessories,18,0,18,f,2026-09-26 07:00:00+10
+S03,PetHaven Chatswood,P012,Retractable Dog Lead 5m,Accessories,12,0,12,f,2026-09-26 07:00:00+10
+S03,PetHaven Chatswood,P013,Orthopaedic Dog Bed Large,Bedding,3,0,3,f,2026-09-26 07:00:00+10
+S03,PetHaven Chatswood,P014,Clumping Cat Litter 10L,Hygiene,22,0,22,f,2026-10-01 13:00:00+10
+S03,PetHaven Chatswood,P015,Stainless Steel Pet Bowl 1L,Accessories,18,0,18,f,2026-09-26 07:00:00+10
+S03,PetHaven Chatswood,P016,Flea and Tick Spot-On Dog 10-25kg,Health,12,0,12,f,2026-09-26 07:00:00+10
+S03,PetHaven Chatswood,P017,Cat Scratching Post 80cm,Furniture,4,0,4,f,2026-09-29 12:45:00+10
+S03,PetHaven Chatswood,P018,Aquarium Starter Kit 40L,Aquatics,0,0,0,t,2026-09-30 11:35:00+10
+S04,PetHaven Newtown,P001,Adult Dry Dog Food Chicken 3kg,Food,20,0,20,f,2026-09-26 07:00:00+10
+S04,PetHaven Newtown,P002,Puppy Dry Dog Food Lamb 3kg,Food,20,0,20,f,2026-09-29 06:45:00+10
+S04,PetHaven Newtown,P003,Wet Cat Food Tuna 12-pack,Food,44,0,44,f,2026-09-29 15:15:00+10
+S04,PetHaven Newtown,P004,Indoor Dry Cat Food 2kg,Food,28,0,28,f,2026-09-28 14:25:00+10
+S04,PetHaven Newtown,P005,Grain-Free Dog Treats 500g,Treats,33,0,33,f,2026-10-01 15:30:00+10
+S04,PetHaven Newtown,P006,Dental Chew Sticks 28-pack,Treats,18,0,18,f,2026-09-26 07:00:00+10
+S04,PetHaven Newtown,P007,Catnip Mouse Toy 3-pack,Toys,33,0,33,f,2026-10-02 14:05:00+10
+S04,PetHaven Newtown,P008,Rope Tug Toy Large,Toys,8,0,8,f,2026-09-26 07:00:00+10
+S04,PetHaven Newtown,P009,Squeaky Plush Duck,Toys,11,0,11,f,2026-09-29 15:15:00+10
+S04,PetHaven Newtown,P010,Interactive Feather Wand,Toys,24,0,24,f,2026-09-26 07:00:00+10
+S04,PetHaven Newtown,P011,Adjustable Nylon Dog Collar M,Accessories,4,0,4,f,2026-09-30 14:20:00+10
+S04,PetHaven Newtown,P012,Retractable Dog Lead 5m,Accessories,4,0,4,f,2026-09-26 07:00:00+10
+S04,PetHaven Newtown,P013,Orthopaedic Dog Bed Large,Bedding,1,0,1,t,2026-09-26 07:00:00+10
+S04,PetHaven Newtown,P014,Clumping Cat Litter 10L,Hygiene,36,0,36,f,2026-09-26 07:00:00+10
+S04,PetHaven Newtown,P015,Stainless Steel Pet Bowl 1L,Accessories,18,0,18,f,2026-09-26 07:00:00+10
+S04,PetHaven Newtown,P016,Flea and Tick Spot-On Dog 10-25kg,Health,6,0,6,f,2026-09-26 07:00:00+10
+S04,PetHaven Newtown,P017,Cat Scratching Post 80cm,Furniture,2,0,2,t,2026-09-26 07:00:00+10
+S04,PetHaven Newtown,P018,Aquarium Starter Kit 40L,Aquatics,1,0,1,t,2026-09-26 07:00:00+10
+S05,PetHaven Penrith,P001,Adult Dry Dog Food Chicken 3kg,Food,46,0,46,f,2026-09-29 17:30:00+10
+S05,PetHaven Penrith,P002,Puppy Dry Dog Food Lamb 3kg,Food,23,0,23,f,2026-09-28 16:40:00+10
+S05,PetHaven Penrith,P003,Wet Cat Food Tuna 12-pack,Food,24,0,24,f,2026-09-26 07:00:00+10
+S05,PetHaven Penrith,P004,Indoor Dry Cat Food 2kg,Food,12,0,12,f,2026-09-26 07:00:00+10
+S05,PetHaven Penrith,P005,Grain-Free Dog Treats 500g,Treats,60,0,60,f,2026-09-26 07:00:00+10
+S05,PetHaven Penrith,P006,Dental Chew Sticks 28-pack,Treats,34,0,34,f,2026-09-29 17:30:00+10
+S05,PetHaven Penrith,P007,Catnip Mouse Toy 3-pack,Toys,24,0,24,f,2026-09-26 07:00:00+10
+S05,PetHaven Penrith,P008,Rope Tug Toy Large,Toys,12,0,12,f,2026-09-30 16:05:00+10
+S05,PetHaven Penrith,P009,Squeaky Plush Duck,Toys,18,0,18,f,2026-09-26 07:00:00+10
+S05,PetHaven Penrith,P010,Interactive Feather Wand,Toys,12,0,12,f,2026-09-26 07:00:00+10
+S05,PetHaven Penrith,P011,Adjustable Nylon Dog Collar M,Accessories,12,0,12,f,2026-09-26 07:00:00+10
+S05,PetHaven Penrith,P012,Retractable Dog Lead 5m,Accessories,8,0,8,f,2026-09-26 07:00:00+10
+S05,PetHaven Penrith,P013,Orthopaedic Dog Bed Large,Bedding,1,0,1,t,2026-09-26 07:00:00+10
+S05,PetHaven Penrith,P014,Clumping Cat Litter 10L,Hygiene,38,0,38,f,2026-10-02 06:50:00+10
+S05,PetHaven Penrith,P015,Stainless Steel Pet Bowl 1L,Accessories,24,0,24,f,2026-09-26 07:00:00+10
+S05,PetHaven Penrith,P016,Flea and Tick Spot-On Dog 10-25kg,Health,11,0,11,f,2026-10-01 16:50:00+10
+S05,PetHaven Penrith,P017,Cat Scratching Post 80cm,Furniture,6,0,6,f,2026-09-26 07:00:00+10
+S05,PetHaven Penrith,P018,Aquarium Starter Kit 40L,Aquatics,1,0,1,t,2026-09-26 07:00:00+10

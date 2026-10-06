@@ -125,7 +125,7 @@ export default {
         h("p", {}, h("b", {}, `${differ} of ${all.length}`), " mapped online products differ from warehouse availability.", filteredNote),
         st.last_sync_at ? h("p", { class: "secondary small", style: "margin-top:4px" },
           `${fmt.num(st.pending_events)} stock events recorded since the last sync (${st.pending_sales} in-store sale lines, ` +
-          `${st.pending_deliveries} delivery lines, ${st.pending_order_events} order steps, ${st.pending_checkout_blocks} blocked items). ` +
+          `${st.pending_supplier_deliveries} supplier delivery lines, ${st.pending_order_events} order steps, ${st.pending_checkout_blocks} blocked items). ` +
           "Not every event changes a website number.") : null,
         stock.meta.warnings.map((w) => h("p", { class: "secondary small" }, w)));
     }

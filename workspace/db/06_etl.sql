@@ -121,7 +121,7 @@ CREATE TABLE etl.stg_store_sale_line (
 );
 COMMENT ON TABLE etl.stg_store_sale_line IS 'Extract of store_ops.sale_line joined to its receipt header, in store-system codes.';
 
-CREATE TABLE etl.stg_delivery_line (
+CREATE TABLE etl.stg_supplier_delivery_line (
     stg_id            bigint      GENERATED ALWAYS AS IDENTITY,
     delivery_no       bigint      NOT NULL,
     line_no           integer     NOT NULL,
@@ -137,12 +137,12 @@ CREATE TABLE etl.stg_delivery_line (
     event_id          bigint,
     captured_at       timestamptz NOT NULL DEFAULT clock_timestamp(),
     processed_at      timestamptz,
-    CONSTRAINT pk_stg_delivery_line PRIMARY KEY (stg_id),
-    CONSTRAINT uq_stg_delivery_line_ref UNIQUE (source_ref),
-    CONSTRAINT ck_stg_delivery_line_status CHECK (load_status IN ('pending', 'loaded', 'rejected', 'skipped'))
+    CONSTRAINT pk_stg_supplier_delivery_line PRIMARY KEY (stg_id),
+    CONSTRAINT uq_stg_supplier_delivery_line_ref UNIQUE (source_ref),
+    CONSTRAINT ck_stg_supplier_delivery_line_status CHECK (load_status IN ('pending', 'loaded', 'rejected', 'skipped'))
 );
-COMMENT ON TABLE etl.stg_delivery_line IS
-'Extract of supply.delivery_line joined to its docket and item, in delivery-system codes: cartons and UTC time, not yet converted.';
+COMMENT ON TABLE etl.stg_supplier_delivery_line IS
+'Extract of supply.supplier_delivery_line joined to its docket and item, in supplier delivery-system codes: cartons and UTC time, not yet converted.';
 
 CREATE TABLE etl.stg_reservation_change (
     stg_id          bigint      GENERATED ALWAYS AS IDENTITY,
@@ -210,23 +210,23 @@ CREATE TRIGGER trg_sale_line_extract
 AFTER INSERT ON store_ops.sale_line
 FOR EACH ROW EXECUTE FUNCTION etl.capture_sale_line();
 
-CREATE FUNCTION etl.capture_delivery_line() RETURNS trigger
+CREATE FUNCTION etl.capture_supplier_delivery_line() RETURNS trigger
 LANGUAGE plpgsql AS $$
 BEGIN
-    INSERT INTO etl.stg_delivery_line
+    INSERT INTO etl.stg_supplier_delivery_line
         (delivery_no, line_no, location_code, supplier_sku, cartons, units_per_carton, delivered_at_utc, source_ref)
     SELECT NEW.delivery_no, NEW.line_no, d.location_code, NEW.supplier_sku, NEW.cartons,
            i.units_per_carton, d.delivered_at_utc,
-           format('SUPPLY:delivery %s line %s', NEW.delivery_no, NEW.line_no)
-      FROM supply.delivery d
+           format('SUPPLY:supplier_delivery %s line %s', NEW.delivery_no, NEW.line_no)
+      FROM supply.supplier_delivery d
       JOIN supply.item i ON i.supplier_sku = NEW.supplier_sku
      WHERE d.delivery_no = NEW.delivery_no;
     RETURN NULL;
 END;
 $$;
-CREATE TRIGGER trg_delivery_line_extract
-AFTER INSERT ON supply.delivery_line
-FOR EACH ROW EXECUTE FUNCTION etl.capture_delivery_line();
+CREATE TRIGGER trg_supplier_delivery_line_extract
+AFTER INSERT ON supply.supplier_delivery_line
+FOR EACH ROW EXECUTE FUNCTION etl.capture_supplier_delivery_line();
 
 CREATE FUNCTION etl.capture_reservation() RETURNS trigger
 LANGUAGE plpgsql AS $$
@@ -327,11 +327,11 @@ WITH staged AS (
       FROM etl.stg_store_sale_line s
      WHERE s.load_status IN ('pending', 'rejected')
     UNION ALL
-    -- Deliveries: cartons -> units, UTC -> timestamptz.
-    SELECT 'stg_delivery_line', d.stg_id, 'SUPPLY', d.source_ref, 'delivery', NULL,
+    -- Supplier deliveries: cartons -> units, UTC -> timestamptz.
+    SELECT 'stg_supplier_delivery_line', d.stg_id, 'SUPPLY', d.source_ref, 'supplier_delivery', NULL,
            d.location_code, d.supplier_sku,
            d.cartons * d.units_per_carton, d.delivered_at_utc AT TIME ZONE 'UTC', NULL, NULL
-      FROM etl.stg_delivery_line d
+      FROM etl.stg_supplier_delivery_line d
      WHERE d.load_status IN ('pending', 'rejected')
     UNION ALL
     -- Reservation status changes -> reservation / transfer_out / transfer_in /
@@ -376,7 +376,7 @@ SELECT st.stg_table,
        st.order_ref,
        CASE st.event_type
            WHEN 'store_sale'   THEN -st.units
-           WHEN 'delivery'     THEN  st.units
+           WHEN 'supplier_delivery'     THEN  st.units
            WHEN 'reservation'  THEN -st.units
            WHEN 'cancellation' THEN  st.units
            ELSE 0
@@ -447,7 +447,7 @@ BEGIN
      ORDER BY event_ts, stg_table, stg_id;
 
     -- Record the outcome on every staged row this pass handled.
-    FOREACH v_table IN ARRAY ARRAY['stg_store_sale_line', 'stg_delivery_line',
+    FOREACH v_table IN ARRAY ARRAY['stg_store_sale_line', 'stg_supplier_delivery_line',
                                    'stg_reservation_change', 'stg_checkout_item']
     LOOP
         EXECUTE format(
@@ -492,9 +492,9 @@ SELECT 'stg_store_sale_line' AS stg_table, stg_id, 'STORE' AS source_system, sou
        load_status, note, etl_run_id, event_id, captured_at, processed_at
   FROM etl.stg_store_sale_line
 UNION ALL
-SELECT 'stg_delivery_line', stg_id, 'SUPPLY', source_ref,
+SELECT 'stg_supplier_delivery_line', stg_id, 'SUPPLY', source_ref,
        load_status, note, etl_run_id, event_id, captured_at, processed_at
-  FROM etl.stg_delivery_line
+  FROM etl.stg_supplier_delivery_line
 UNION ALL
 SELECT 'stg_reservation_change', stg_id, 'STORE', source_ref,
        load_status, note, etl_run_id, event_id, captured_at, processed_at
@@ -526,7 +526,7 @@ $$;
 
 CREATE TRIGGER trg_sale_line_load AFTER INSERT ON store_ops.sale_line
 FOR EACH STATEMENT EXECUTE FUNCTION etl.cdc_run_etl();
-CREATE TRIGGER trg_delivery_line_load AFTER INSERT ON supply.delivery_line
+CREATE TRIGGER trg_supplier_delivery_line_load AFTER INSERT ON supply.supplier_delivery_line
 FOR EACH STATEMENT EXECUTE FUNCTION etl.cdc_run_etl();
 CREATE TRIGGER trg_reservation_load AFTER INSERT OR UPDATE ON store_ops.reservation
 FOR EACH STATEMENT EXECUTE FUNCTION etl.cdc_run_etl();

@@ -81,7 +81,7 @@ SELECT ls.sync_id                                                        AS last
        date_trunc('second', now() - ls.run_at)                           AS time_since_sync,
        (SELECT count(*) FROM pending)                                    AS pending_events,
        (SELECT count(*) FROM pending WHERE event_type = 'store_sale')    AS pending_sales,
-       (SELECT count(*) FROM pending WHERE event_type = 'delivery')      AS pending_deliveries,
+       (SELECT count(*) FROM pending WHERE event_type = 'supplier_delivery')      AS pending_supplier_deliveries,
        (SELECT count(*) FROM pending
          WHERE event_type IN ('reservation', 'transfer_out', 'transfer_in', 'collection', 'cancellation'))
                                                                          AS pending_order_events,

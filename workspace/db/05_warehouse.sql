@@ -95,7 +95,7 @@ CREATE TABLE dw.fact_stock_event (
     -- Each event type has a fixed effect on the store's two quantities.
     CONSTRAINT ck_fact_signs CHECK (
            (event_type = 'store_sale'   AND quantity_change = -units AND reserved_change = 0      AND order_ref IS NULL)
-        OR (event_type = 'delivery'     AND quantity_change =  units AND reserved_change = 0      AND order_ref IS NULL)
+        OR (event_type = 'supplier_delivery'     AND quantity_change =  units AND reserved_change = 0      AND order_ref IS NULL)
         OR (event_type = 'reservation'  AND quantity_change = -units AND reserved_change =  units AND order_ref IS NOT NULL)
         OR (event_type = 'transfer_out' AND quantity_change = 0      AND reserved_change = -units AND order_ref IS NOT NULL)
         OR (event_type = 'transfer_in'  AND quantity_change = 0      AND reserved_change =  units AND order_ref IS NOT NULL)
@@ -106,7 +106,7 @@ CREATE TABLE dw.fact_stock_event (
 );
 COMMENT ON TABLE dw.fact_stock_event IS
 'Grain: one stock-changing event for one product at one physical store. Transaction fact table and the single history that every report and the sync read from. Summing quantity_change / reserved_change per store and product gives that store''s in-store / reserved stock.';
-COMMENT ON COLUMN dw.fact_stock_event.event_type IS 'store_sale, delivery, reservation, transfer_out, transfer_in, collection, cancellation or checkout_blocked.';
+COMMENT ON COLUMN dw.fact_stock_event.event_type IS 'store_sale, supplier_delivery, reservation, transfer_out, transfer_in, collection, cancellation or checkout_blocked.';
 COMMENT ON COLUMN dw.fact_stock_event.quantity_change IS 'Signed change to in-store (shelf) stock.';
 COMMENT ON COLUMN dw.fact_stock_event.reserved_change IS 'Signed change to reserved stock (held for an online order, at the pickup store or waiting to be sent there). Units in transit between stores are in no store.';
 COMMENT ON COLUMN dw.fact_stock_event.units IS 'Units involved, always positive. For checkout_blocked: units in the bag that no single store could supply.';

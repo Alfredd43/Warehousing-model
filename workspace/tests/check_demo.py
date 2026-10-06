@@ -212,16 +212,16 @@ def main() -> int:
         "SELECT store_ops.record_sale(%s, %s, %s)", (sno("S01"), [bc("P003"), bc("P013")], [1, 99])))
     check("R3 nothing deducted, no facts", (p3, n), (in_store("S01", "P003"), events()))
 
-    print("\n-- Delivery in cartons, UTC time")
+    print("\n-- Supplier delivery in cartons, UTC time")
     before_s02, before_online = in_store("S02", "P001"), online("P001")
     upc = one("SELECT units_per_carton FROM supply.item WHERE supplier_sku=%s", (sku("P001"),))
-    run("""SELECT supply.record_delivery(%s, 'Check Supplier', %s, '{2}',
+    run("""SELECT supply.record_supplier_delivery(%s, 'Check Supplier', %s, '{2}',
                                          ((current_date - 1) + time '15:30')::timestamp)""", (loc("S02"), [sku("P001")]))
     check("R9 cartons converted to units on the shelf", before_s02 + 2 * upc, in_store("S02", "P001"))
     check("R9 fact units = cartons x units per carton", 2 * upc,
-          one("SELECT units FROM dw.fact_stock_event WHERE event_type='delivery' ORDER BY event_id DESC LIMIT 1"))
+          one("SELECT units FROM dw.fact_stock_event WHERE event_type='supplier_delivery' ORDER BY event_id DESC LIMIT 1"))
     check("R9 15:30 UTC yesterday is today in Sydney (date_key)", one("SELECT to_char(current_date,'YYYYMMDD')::int"),
-          one("SELECT date_key FROM dw.fact_stock_event WHERE event_type='delivery' ORDER BY event_id DESC LIMIT 1"))
+          one("SELECT date_key FROM dw.fact_stock_event WHERE event_type='supplier_delivery' ORDER BY event_id DESC LIMIT 1"))
     check("R4 website number unchanged", before_online, online("P001"))
 
     print("\n-- Online order held at the closest store")
@@ -355,7 +355,7 @@ def main() -> int:
     print("\n-- Data quality: unmapped new product")
     tunnel = "9300601001194"
     n = events()
-    run("SELECT supply.record_delivery(%s, 'PlayPets Wholesale', '{PP-CAT-TUNNEL}', '{2}')", (loc("S01"),))
+    run("SELECT supply.record_supplier_delivery(%s, 'PlayPets Wholesale', '{PP-CAT-TUNNEL}', '{2}')", (loc("S01"),))
     run("SELECT store_ops.record_sale(%s, %s, '{1}')", (sno("S01"), [tunnel]))
     check("R14 store system works with the new product", 7,
           one("SELECT in_store_quantity FROM store_ops.store_stock WHERE store_no=%s AND barcode=%s", (sno("S01"), tunnel)))

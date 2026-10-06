@@ -41,7 +41,7 @@ docker exec -i student-postgres psql -U student -d pethaven_demo < workspace/dem
 | Payment processing | Out of scope | "Paid" means the checkout succeeded; no card handling is modelled |
 | Pickup at a store holding none of the items | Only stores holding at least one item are offered (Spec 4.3) | Everything would have to be transferred; not offered |
 | Scheduled overdue cancellation | `cancel_overdue_orders` is run on demand, like the sync | Overdue orders stay held until someone runs it |
-| Transit time and courier | Dispatch and receive are recorded steps only | No delivery estimate for transferred lines |
+| Transit time and courier | Dispatch and receive are recorded steps only | No supplier delivery estimate for transferred lines |
 | Scheduled sync | Manual by design for the demonstration (Spec 6) | Staleness grows until someone runs the sync; the staleness report shows by how much |
 | Online order status after placement | The store system owns the transfer/collection/cancellation lifecycle | `web_order.status` stays the outcome at placement; current state is in `store_ops.reservation` and `dw.rpt_open_reservations` |
 | SCD type 2 history for prices | Prices are not part of the problem | `rpt_daily_sales` values sales at the current price |

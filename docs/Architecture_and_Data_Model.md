@@ -20,8 +20,8 @@ flowchart LR
         stock[(store_stock)]
         res[reservation]
     end
-    subgraph S2["Source 2 · supply<br/>Delivery system"]
-        del[delivery / delivery_line]
+    subgraph S2["Source 2 · supply<br/>Supplier delivery system"]
+        del[supplier delivery / supplier_delivery_line]
     end
     subgraph S3["Source 3 · online<br/>Online store"]
         ord[web_order]
@@ -61,7 +61,7 @@ flowchart LR
 | Layer | Schema | Responsibility | Not responsible for |
 | --- | --- | --- | --- |
 | Source 1 | `store_ops` | Stores, product catalogue, live shelf and reserved stock, till receipts, click-and-collect holds and transfers between stores | The website number; history across systems |
-| Source 2 | `supply` | Delivery locations, supplier items, delivery dockets in cartons (UTC) | Store stock levels (it calls the store's receiving interface) |
+| Source 2 | `supply` | Supplier delivery locations, supplier items, supplier delivery dockets in cartons (UTC) | Store stock levels (it calls the store's receiving interface) |
 | Source 3 | `online` | Web catalogue, website stock number, collection points, customer postcodes, online orders | Real store stock (it asks the store system to hold stock) |
 | ETL | `etl` | Extract (CDC into staging), code cross-reference, transform, validate, load, run log, data quality | Business decisions; it never changes source data |
 | Warehouse | `dw` | Conformed dimensions, the stock event fact, the online sync and its log, reports | Operating checkout or tills |
@@ -77,9 +77,9 @@ erDiagram
     STORE ||--o{ SALE : records
     SALE ||--|{ SALE_LINE : contains
     PRODUCT ||--o{ SALE_LINE : "sold as"
-    STORE ||--o{ DELIVERY : receives
-    DELIVERY ||--|{ DELIVERY_LINE : contains
-    PRODUCT ||--o{ DELIVERY_LINE : "delivered as"
+    STORE ||--o{ SUPPLIER_DELIVERY : receives
+    SUPPLIER_DELIVERY ||--|{ SUPPLIER_DELIVERY_LINE : contains
+    PRODUCT ||--o{ SUPPLIER_DELIVERY_LINE : "delivered as"
     CUSTOMER_POSTCODE ||--o{ ONLINE_ORDER : places
     STORE ||--o{ ONLINE_ORDER : "is pickup store for"
     ONLINE_ORDER ||--|{ ORDER_LINE : contains
@@ -99,7 +99,7 @@ erDiagram
 | Product | One item PetHaven sells (food, treats, toys, accessories, health, aquatics). |
 | Stock position | Units of one product at one store: **in store** (on the shelf, free to sell) and **reserved** (held for online orders). |
 | Sale / sale line | A till receipt and its items. Reduces the shelf immediately. |
-| Delivery / delivery line | A supplier docket and its items, in cartons. Increases the shelf immediately. |
+| Supplier delivery / supplier delivery line | A supplier docket and its items, in cartons. Increases the shelf immediately. |
 | Online order / order line | A click-and-collect order from a customer postcode, with one line per product. Collected at the **pickup store** the customer chose from the stores holding at least one of the items. |
 | Reservation | Stock held for one order line, taken from one store. If that store is not the pickup store, the units are **transferred**: held → in transit → arrived → collected (or cancelled). |
 | Stock event | Any change to a stock position, from any system. The single history. |
@@ -117,7 +117,7 @@ Definitions used everywhere:
 
 Each source has its own identifiers and conventions, as separate products from separate vendors would. The differences are deliberate: integrating them is the ETL's job.
 
-| Concept | Store system (`store_ops`) | Delivery system (`supply`) | Online store (`online`) | Warehouse (`dw`) |
+| Concept | Store system (`store_ops`) | Supplier delivery system (`supply`) | Online store (`online`) | Warehouse (`dw`) |
 | --- | --- | --- | --- | --- |
 | Store | `store_no` `101` | `location_code` `NSW-PARRA` | `cp_code` `CP-PARRAMATTA` | `store_code` `S01` |
 | Product | EAN-13 `barcode` `9300601001019` (check digit enforced) | `supplier_sku` `PF-DOG-ADT-3K`, GTIN-14 | `web_sku` `WEB-10001` | `product_code` `P001` |
@@ -138,16 +138,16 @@ Each source has its own identifiers and conventions, as separate products from s
 
 Operations: `record_sale(store_no, barcodes[], quantities[])`, `receive_goods(...)`, `reserve_stock(...)`, `dispatch_order_transfers(order)`, `receive_order_transfers(order)`, `collect_order(order)`, `cancel_order(order, reason)`, `cancel_overdue_orders(days)` (housekeeping: cancels orders not collected within 3 days and puts the stock back), `stores_with_stock(...)`, `find_stock(...)`.
 
-### 4.2 Source 2 — delivery system (`supply`)
+### 4.2 Source 2 — supplier delivery system (`supply`)
 
 | Table | Key | Purpose |
 | --- | --- | --- |
-| `location` | `location_code` | Delivery destination; `ship_to_store` is the store number printed on the docket. |
+| `location` | `location_code` | Supplier delivery destination; `ship_to_store` is the store number printed on the docket. |
 | `item` | `supplier_sku` | Supplier item: description, GTIN-14 of the retail unit, `units_per_carton`. |
-| `delivery` | `delivery_no` | Docket: location, supplier, `delivered_at_utc`. |
-| `delivery_line` | `delivery_no, line_no` | Items in cartons. A BEFORE INSERT trigger converts to units and calls the store's `receive_goods`. |
+| `supplier_delivery` | `delivery_no` | Docket: location, supplier, `delivered_at_utc`. |
+| `supplier_delivery_line` | `delivery_no, line_no` | Items in cartons. A BEFORE INSERT trigger converts to units and calls the store's `receive_goods`. |
 
-Operation: `record_delivery(location_code, supplier, skus[], cartons[])`.
+Operation: `record_supplier_delivery(location_code, supplier, skus[], cartons[])`.
 
 ### 4.3 Source 3 — online store (`online`)
 
@@ -174,12 +174,12 @@ Operations: `create_basket(postcode)`, `add_to_basket(basket, web_sku, qty)`, `r
 
 | Business action | Owner | Calls | Effect |
 | --- | --- | --- | --- |
-| Delivery recorded | Source 2 | `store_ops.receive_goods(store_no, barcode, units, time)` | Shelf + units, immediately |
+| Supplier delivery recorded | Source 2 | `store_ops.receive_goods(store_no, barcode, units, time)` | Shelf + units, immediately |
 | Checkout (stock check) | Source 3 | `store_ops.find_stock(barcode, qty, stores in preference order)` per item | Returns the supplying store and locks the rows; changes nothing |
 | Checkout (paid) | Source 3 | `store_ops.reserve_stock(store_no, barcode, qty, order_ref, line_no, pickup_store_no, time)` per item | At the supplying store: shelf − qty, reserved + qty, immediately |
 | Sync run | Warehouse | writes `online.online_stock` | Website number corrected |
 
-These interfaces use the *receiving* system's codes (a delivery docket carries the store number and retail barcode; the website sends the store the barcode). They are operational routing data. The warehouse does **not** rely on them to integrate the sources; it uses its own approved cross-reference (section 5.2).
+These interfaces use the *receiving* system's codes (a supplier delivery docket carries the store number and retail barcode; the website sends the store the barcode). They are operational routing data. The warehouse does **not** rely on them to integrate the sources; it uses its own approved cross-reference (section 5.2).
 
 ### 4.5 Click-and-collect lines and transfers between stores
 
@@ -204,12 +204,12 @@ The ETL follows the extract → stage → transform/validate → load pattern fr
 
 ### 5.1 Extract: change data capture into staging
 
-Row-level AFTER triggers copy each new source record, **unchanged and in source format**, into one staging table per record type. Each staged row gets a unique `source_ref` (for example `SUPPLY:delivery 32 line 1`) and `load_status = 'pending'`.
+Row-level AFTER triggers copy each new source record, **unchanged and in source format**, into one staging table per record type. Each staged row gets a unique `source_ref` (for example `SUPPLY:supplier_delivery 32 line 1`) and `load_status = 'pending'`.
 
 | Source record | Staging table | Captured as |
 | --- | --- | --- |
 | `store_ops.sale_line` (+ header) | `stg_store_sale_line` | store number, barcode, quantity, sold time |
-| `supply.delivery_line` (+ docket, item) | `stg_delivery_line` | location code, supplier SKU, **cartons**, units per carton, **UTC** time |
+| `supply.supplier_delivery_line` (+ docket, item) | `stg_supplier_delivery_line` | location code, supplier SKU, **cartons**, units per carton, **UTC** time |
 | `store_ops.reservation` insert / status change | `stg_reservation_change` | `held` / `in_transit` / `arrived` / `collected` / `cancelled`; the store where that step changed stock; the pickup store; barcode, quantity, order ref |
 | `online.checkout_attempt_item` (+ attempt) | `stg_checkout_item` | basket, web SKU, quantity, pickup collection point, `available` / `unavailable` |
 
@@ -222,9 +222,9 @@ Row-level AFTER triggers copy each new source record, **unchanged and in source 
 | Step | Rule |
 | --- | --- |
 | Codes | source store/product code → conformed `store_code`/`product_code` → surrogate `store_key`/`product_key` |
-| Units | deliveries: `cartons × units_per_carton` |
-| Time | deliveries: `delivered_at_utc AT TIME ZONE 'UTC'`; every event gets the **Sydney** business `date_key` |
-| Event type | sale line → `store_sale`; delivery line → `delivery`; reservation held / in_transit / arrived / collected / cancelled → `reservation` / `transfer_out` / `transfer_in` / `collection` / `cancellation`; checkout item unavailable → `checkout_blocked` |
+| Units | supplier deliveries: `cartons × units_per_carton` |
+| Time | supplier deliveries: `delivered_at_utc AT TIME ZONE 'UTC'`; every event gets the **Sydney** business `date_key` |
+| Event type | sale line → `store_sale`; supplier delivery line → `supplier_delivery`; reservation held / in_transit / arrived / collected / cancelled → `reservation` / `transfer_out` / `transfer_in` / `collection` / `cancellation`; checkout item unavailable → `checkout_blocked` |
 | Pickup store | order events also get `pickup_store_key` (role-playing store dimension) from the pickup store code |
 | Signed quantities | from the event type (table in 6.2) |
 | Skips | checkout items that were available get a `skip_reason`: no stock moved at checkout, and if the order was paid its stock movements come from the store reservations (loading both would double count) |
@@ -329,7 +329,7 @@ erDiagram
 | `event_type` | Source | `quantity_change` (shelf) | `reserved_change` | `order_ref` |
 | --- | --- | ---: | ---: | --- |
 | `store_sale` | till sale line | −units | 0 | – |
-| `delivery` | delivery line | +units | 0 | – |
+| `supplier_delivery` | supplier delivery line | +units | 0 | – |
 | `reservation` | line held at the supplying store | −units | +units | order |
 | `transfer_out` | held units sent from the supplying store | 0 | −units | order |
 | `transfer_in` | units arrive at the pickup store | 0 | +units | order |
@@ -363,7 +363,7 @@ The sign rules are enforced by the `ck_fact_signs` check constraint, and `ck_fac
 
 Reports 2 and 3 use this record to show how stale the website was and what each sync corrected. If the warehouse were down or a product's codes were not yet approved, the website number would still be right; only the reports would lag.
 
-Between syncs the website changes only through its own paid orders (it knows those immediately). In-store sales, deliveries and store-side cancellations wait for the next sync, which is exactly the staleness the prototype demonstrates. Transfers do not change the website number: the units were already taken off it when the order was paid.
+Between syncs the website changes only through its own paid orders (it knows those immediately). In-store sales, supplier deliveries and store-side cancellations wait for the next sync, which is exactly the staleness the prototype demonstrates. Transfers do not change the website number: the units were already taken off it when the order was paid.
 
 ## 8. Reports
 
@@ -391,7 +391,7 @@ Created by `db/seed/01_reference_data.sql` and `02_business_history.sql`, throug
 | Stores | Parramatta, Bondi Junction, Chatswood, Newtown, Penrith, each with codes in all three systems |
 | Products | 18 mapped products in 9 categories with valid EAN-13 barcodes; P019 (cat tunnel) catalogued but deliberately unmapped |
 | Postcodes | 20 Sydney postcodes with coordinates |
-| History (7 days) | 90 opening-stock delivery lines (in cartons), 5 restock deliveries, 36 till sale lines on 28 receipts, 8 bags: 7 paid orders with 9 items (one overdue for collection, one 3-item order collected at the customer's chosen store with 2 items in transit from Chatswood) and 1 checkout blocked before payment by the stale website number; 2 collections, 1 cancellation, 2 syncs |
+| History (7 days) | 90 opening-stock supplier delivery lines (in cartons), 5 restock supplier deliveries, 36 till sale lines on 28 receipts, 8 bags: 7 paid orders with 9 items (one overdue for collection, one 3-item order collected at the customer's chosen store with 2 items in transit from Chatswood) and 1 checkout blocked before payment by the stale website number; 2 collections, 1 cancellation, 2 syncs |
 | Result | 155 staged source records → 146 fact rows + 9 skipped checkout items; 0 rejected; 90/90 store/product pairs reconcile; nothing pending |
 
 Times are relative to the build day, so "time since sync" and "overdue" are always realistic.
@@ -403,11 +403,11 @@ Times are relative to the build day, so "time since sync" and "overdue" are alwa
 | One event fact table instead of balance snapshots | Every report and the sync need the same thing: stock changes over time. One history with signed measures gives current stock (sum), stock at any point (sum to an `event_id`), and a complete audit trail. |
 | Different codes per source + approved cross-reference | Real systems from different vendors do not share keys. Conformed codes with surrogate keys keep the warehouse independent of source identifiers (as in the subject's surrogate-key pattern) and make integration explicit and auditable. |
 | Reject-and-retry instead of guessing or failing | A guessed mapping corrupts stock silently; failing the business transaction would stop a till. Rejecting into staging keeps the source working, keeps the warehouse correct, and makes the gap visible until a person fixes it. |
-| CDC + micro-batch ETL in the same transaction | The user requirement is that every sale, delivery and order is in the warehouse immediately, so the sync and reports never miss an event. Running the full extract-transform-load inside the source transaction guarantees source and warehouse cannot diverge, with no scheduler to run in the lab. |
+| CDC + micro-batch ETL in the same transaction | The user requirement is that every sale, supplier delivery and order is in the warehouse immediately, so the sync and reports never miss an event. Running the full extract-transform-load inside the source transaction guarantees source and warehouse cannot diverge, with no scheduler to run in the lab. |
 | Staging in source format | Keeps the extracted evidence unchanged (cartons, UTC, source codes), so every transformation is visible and re-runnable. |
 | Website number comes from the store system, not the warehouse | A data warehouse is for analysis. The number the website shows is operational and the store system already holds it, so the online store reads it there directly — as checkout does. The warehouse records each sync and reports on it, so analytics never sits in the path of trading. |
 | Manual sync | The business problem is staleness. A manual trigger lets the demo build up a realistic stale state and show the correction on cue; a schedule would only change *when* it runs. |
-| Website deducts its own orders immediately | The website knows its own sales. Only changes it cannot see (other channels, deliveries, store-side cancellations) need the sync. |
+| Website deducts its own orders immediately | The website knows its own sales. Only changes it cannot see (other channels, supplier deliveries, store-side cancellations) need the sync. |
 | One pickup store per order; missing lines transferred in from the nearest store that has them | Click-and-collect means one pickup location for the customer. Taking a missing line from the next-nearest store and transferring it keeps the order together instead of failing it, which is how multi-store retailers fulfil click-and-collect. |
 | Check real stock at checkout, before payment | Taking payment and then cancelling is a poor customer experience and costs refunds. Checking and locking real stock inside checkout means a paid order can always be fulfilled; the stale website number now shows up as items blocked at checkout. |
 | Block the whole checkout and let the customer edit the bag | The customer decides whether to buy the rest; nothing is charged for something that cannot be supplied. |
@@ -452,7 +452,7 @@ Times are relative to the build day, so "time since sync" and "overdue" are alwa
 ```text
 workspace/db/01_schemas.sql             5 schemas
 workspace/db/02_store_ops.sql           Source 1 tables, sale trigger, store operations
-workspace/db/03_supply.sql              Source 2 tables, delivery trigger, record_delivery
+workspace/db/03_supply.sql              Source 2 tables, supplier delivery trigger, record_supplier_delivery
 workspace/db/04_online.sql              Source 3 tables, bag, checkout (stock check before payment), orders
 workspace/db/05_warehouse.sql           dimensions, fact, sync log, indexes
 workspace/db/06_etl.sql                 cross-reference, staging, CDC extract, v_transform, run_etl, data quality

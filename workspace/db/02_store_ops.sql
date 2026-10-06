@@ -65,7 +65,7 @@ CREATE TABLE store_ops.store_stock (
     CONSTRAINT ck_store_stock_reserved CHECK (reserved_quantity >= 0)
 );
 COMMENT ON TABLE store_ops.store_stock IS
-'Live stock: one row per product per store. The real number; changes instantly on every sale, delivery, reservation, transfer, collection and cancellation.';
+'Live stock: one row per product per store. The real number; changes instantly on every sale, supplier delivery, reservation, transfer, collection and cancellation.';
 COMMENT ON COLUMN store_ops.store_stock.in_store_quantity IS 'Units on the shelf and free to sell.';
 COMMENT ON COLUMN store_ops.store_stock.reserved_quantity IS
 'Units set aside for online orders at this store: held here for collection, or held here waiting to be sent to another pickup store. Units in transit belong to no store.';
@@ -193,7 +193,7 @@ $$;
 
 -- -----------------------------------------------------------------------------
 -- Interface used by Source 2: goods delivered to a store go on the shelf.
--- The first delivery of a product to a store creates its stock row.
+-- The first supplier delivery of a product to a store creates its stock row.
 -- -----------------------------------------------------------------------------
 CREATE FUNCTION store_ops.receive_goods(
     p_store_no text, p_barcode text, p_units integer, p_received_at timestamptz

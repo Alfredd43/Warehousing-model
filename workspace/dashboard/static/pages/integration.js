@@ -5,7 +5,7 @@ import { h, clear, fmt, badge, card, state, loading, field, select, table, pager
 
 const STATUS_KIND = { loaded: "success", rejected: "danger", skipped: "neutral", pending: "warning" };
 const TABLE_LABEL = {
-  stg_store_sale_line: "Store sale line", stg_delivery_line: "Delivery line",
+  stg_store_sale_line: "Store sale line", stg_supplier_delivery_line: "Supplier delivery line",
   stg_reservation_change: "Reservation step", stg_checkout_item: "Checkout item",
 };
 
@@ -201,7 +201,7 @@ export default {
               { label: "Warehouse store", key: "store_code" },
               { label: "Store name", key: "store_name" },
               { label: "Store code", render: (s) => s.store_no ?? badge("Not mapped", "warning") },
-              { label: "Delivery location", render: (s) => s.location_code ?? badge("Not mapped", "warning") },
+              { label: "Supplier delivery location", render: (s) => s.location_code ?? badge("Not mapped", "warning") },
               { label: "Collection point", render: (s) => s.cp_code ?? badge("Not mapped", "warning") },
             ],
             rows: r.data.stores,
@@ -241,9 +241,9 @@ export default {
             rows: r.data.rows, empty: state("", "No ETL run recorded", ""),
           }), pager(r.data, (off) => app.setParams({ runoff: off ? String(off) : "" })))) }),
         card({ id: "staging", title: "Staged business-event records",
-          subtitle: "Every extracted sale line, delivery line, reservation step and checkout item, and what the ETL did with it. Select a row to trace it.",
+          subtitle: "Every extracted sale line, supplier delivery line, reservation step and checkout item, and what the ETL did with it. Select a row to trace it.",
           actions: [
-            field("Source", select([{ value: "", label: "All sources" }, { value: "STORE", label: "Store system" }, { value: "SUPPLY", label: "Delivery system" }, { value: "ONLINE", label: "Online store" }],
+            field("Source", select([{ value: "", label: "All sources" }, { value: "STORE", label: "Store system" }, { value: "SUPPLY", label: "Supplier delivery system" }, { value: "ONLINE", label: "Online store" }],
               params.stsrc || "", (v) => app.setParams({ stsrc: v, stoff: "" }), { "data-fk": "stsrc" })),
             field("Status", select([{ value: "", label: "All statuses" }, ...["loaded", "rejected", "skipped", "pending"].map((s) => ({ value: s, label: s[0].toUpperCase() + s.slice(1) }))],
               params.ststat || "", (v) => app.setParams({ ststat: v, stoff: "" }), { "data-fk": "ststat" })),

@@ -180,7 +180,7 @@ def catalogue(conn, params) -> Result:
              ORDER BY x.store_code, c.cp_code"""),
         "postcodes": rows(conn, "SELECT postcode, suburb FROM online.postcode_location ORDER BY postcode"),
         "suppliers": [r["supplier_name"] for r in rows(conn,
-                      "SELECT DISTINCT supplier_name FROM supply.delivery ORDER BY supplier_name")],
+                      "SELECT DISTINCT supplier_name FROM supply.supplier_delivery ORDER BY supplier_name")],
     }
     return Result(data, provenance=["dw.dim_product", "dw.dim_store", "etl.v_product_codes",
                                     "etl.v_store_codes", "store_ops", "supply", "online"])
@@ -258,7 +258,7 @@ def stock(conn, params) -> Result:
 
 
 EVENT_LABELS = {
-    "store_sale": "In-store sale", "delivery": "Supplier delivery", "reservation": "Held for online order",
+    "store_sale": "In-store sale", "supplier_delivery": "Supplier delivery", "reservation": "Held for online order",
     "transfer_out": "Sent to pickup store", "transfer_in": "Arrived at pickup store",
     "collection": "Collected by customer", "cancellation": "Order cancelled",
     "checkout_blocked": "Checkout blocked",
@@ -426,7 +426,7 @@ def mappings(conn, params) -> Result:
                               "store_ops.product", "supply.item", "online.product"])
 
 
-STAGING_TABLES = {"stg_store_sale_line", "stg_delivery_line", "stg_reservation_change", "stg_checkout_item"}
+STAGING_TABLES = {"stg_store_sale_line", "stg_supplier_delivery_line", "stg_reservation_change", "stg_checkout_item"}
 
 
 def staging(conn, params) -> Result:
@@ -449,7 +449,7 @@ def staging(conn, params) -> Result:
     counts = rows(conn, """
         SELECT load_status, count(*) AS n FROM etl.v_staging GROUP BY load_status ORDER BY load_status""")
     return Result({**paged(data, total, limit, offset), "status_counts": counts},
-                  scope="Business-event staging (sales, deliveries, reservations, checkout items); "
+                  scope="Business-event staging (sales, supplier deliveries, reservations, checkout items); "
                         "website sync records are listed separately",
                   provenance=["etl.v_staging"])
 
@@ -510,12 +510,12 @@ SOURCE_QUERIES = {
                l.quantity, l.unit_price, s.sold_at
           FROM store_ops.sale_line l JOIN store_ops.sale s USING (sale_no)
          WHERE l.sale_no = %(a)s AND l.line_no = %(b)s"""),
-    "stg_delivery_line": ("supply.delivery + supply.delivery_line + supply.item", """
+    "stg_supplier_delivery_line": ("supply.supplier_delivery + supply.supplier_delivery_line + supply.item", """
         SELECT d.delivery_no::text AS delivery_no, l.line_no, d.location_code, d.supplier_name,
                l.supplier_sku, l.cartons, i.units_per_carton,
                to_char(d.delivered_at_utc, 'YYYY-MM-DD HH24:MI:SS') AS delivered_at_utc
-          FROM supply.delivery_line l
-          JOIN supply.delivery d USING (delivery_no)
+          FROM supply.supplier_delivery_line l
+          JOIN supply.supplier_delivery d USING (delivery_no)
           JOIN supply.item i ON i.supplier_sku = l.supplier_sku
          WHERE l.delivery_no = %(a)s AND l.line_no = %(b)s"""),
     "stg_reservation_change": ("store_ops.reservation (current state of the record)", """
@@ -539,14 +539,14 @@ STAGING_SELECT = {
                NULL::text AS order_ref, NULL::text AS pickup_source_code, NULL::text AS detail,
                source_ref, load_status, note, etl_run_id, event_id::text AS event_id, captured_at, processed_at
           FROM etl.stg_store_sale_line WHERE stg_id = %s""",
-    "stg_delivery_line": """
+    "stg_supplier_delivery_line": """
         SELECT stg_id::text AS stg_id, delivery_no AS source_key, line_no AS source_line, location_code AS store_source_code,
                supplier_sku AS product_source_code, cartons AS source_quantity, 'cartons' AS source_unit,
                (delivered_at_utc AT TIME ZONE 'UTC') AS source_time,
                to_char(delivered_at_utc, 'YYYY-MM-DD HH24:MI:SS') AS source_time_utc, units_per_carton,
                NULL::text AS order_ref, NULL::text AS pickup_source_code, NULL::text AS detail,
                source_ref, load_status, note, etl_run_id, event_id::text AS event_id, captured_at, processed_at
-          FROM etl.stg_delivery_line WHERE stg_id = %s""",
+          FROM etl.stg_supplier_delivery_line WHERE stg_id = %s""",
     "stg_reservation_change": """
         SELECT stg_id::text AS stg_id, reservation_no AS source_key, NULL::integer AS source_line,
                store_no AS store_source_code, barcode AS product_source_code, quantity AS source_quantity,
@@ -565,9 +565,9 @@ STAGING_SELECT = {
           FROM etl.stg_checkout_item WHERE stg_id = %s""",
 }
 
-SOURCE_SYSTEM = {"stg_store_sale_line": "STORE", "stg_delivery_line": "SUPPLY",
+SOURCE_SYSTEM = {"stg_store_sale_line": "STORE", "stg_supplier_delivery_line": "SUPPLY",
                  "stg_reservation_change": "STORE", "stg_checkout_item": "ONLINE"}
-SOURCE_LABEL = {"STORE": "Store system", "SUPPLY": "Delivery system", "ONLINE": "Online store"}
+SOURCE_LABEL = {"STORE": "Store system", "SUPPLY": "Supplier delivery system", "ONLINE": "Online store"}
 
 
 def trace(conn, params) -> Result:

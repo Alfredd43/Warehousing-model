@@ -75,7 +75,7 @@ GET_ROUTES = [
 
 POST_ROUTES = [
     (r"/api/demo/sales", actions.record_sale),
-    (r"/api/demo/deliveries", actions.record_delivery),
+    (r"/api/demo/supplier-deliveries", actions.record_supplier_delivery),
     (r"/api/demo/baskets", actions.create_basket),
     (r"/api/demo/baskets/(\d+)/items", actions.set_basket_item),
     (r"/api/demo/baskets/(\d+)/remove-item", actions.remove_basket_item),

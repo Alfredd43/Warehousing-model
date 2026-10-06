@@ -5,7 +5,7 @@ Usage (from the repository root; prefix every command with
 
   Business events (each goes to the source system that owns it)
     sale S01 P001 2 [P005 1 ...]     till sale at a store (one receipt, any number of items)
-    delivery S03 P001 5              supplier delivery to a store, in CARTONS
+    supplier-delivery S03 P001 5              supplier delivery to a store, in CARTONS
     order 2026 P003 2 [P013 2 ...]   online bag from a customer postcode: shows the pickup options,
           [--pickup S03]             then checks out at the chosen store (default: best option).
                                      Real stock is checked BEFORE payment; blocked if any item is
@@ -112,16 +112,16 @@ def cmd_sale(conn, args) -> None:
         show_position(conn, barcode)
 
 
-def cmd_delivery(conn, args) -> None:
+def cmd_supplier_delivery(conn, args) -> None:
     location = to_source(conn, "store", "SUPPLY", args.store)
     sku = to_source(conn, "product", "SUPPLY", args.product)
     before = last_event_id(conn)
-    _, rows = db.query(conn, "SELECT supply.record_delivery(%s, %s, %s, %s)",
+    _, rows = db.query(conn, "SELECT supply.record_supplier_delivery(%s, %s, %s, %s)",
                        (location, args.supplier, [sku], [args.cartons]))
     conn.commit()
     _, item = db.query(conn, "SELECT units_per_carton, right(gtin14, 13) FROM supply.item WHERE supplier_sku = %s", (sku,))
     upc, barcode = item[0]
-    print(f"Delivery {rows[0][0]} to {location}: {args.cartons} carton(s) x {upc} = {args.cartons * upc} units.")
+    print(f"Supplier delivery {rows[0][0]} to {location}: {args.cartons} carton(s) x {upc} = {args.cartons * upc} units.")
     show_new_facts(conn, before)
     show_position(conn, barcode)
 
@@ -328,10 +328,10 @@ def main() -> int:
     p.add_argument("store"); p.add_argument("items", nargs="+", help="PRODUCT QUANTITY pairs")
     p.set_defaults(func=cmd_sale)
 
-    p = sub.add_parser("delivery", help="supplier delivery in cartons")
+    p = sub.add_parser("supplier-delivery", help="supplier delivery in cartons")
     p.add_argument("store"); p.add_argument("product"); p.add_argument("cartons", type=int)
     p.add_argument("--supplier", default="Demo Supplier")
-    p.set_defaults(func=cmd_delivery)
+    p.set_defaults(func=cmd_supplier_delivery)
 
     p = sub.add_parser("order", help="online bag + checkout")
     p.add_argument("postcode"); p.add_argument("items", nargs="+", help="PRODUCT QUANTITY pairs")

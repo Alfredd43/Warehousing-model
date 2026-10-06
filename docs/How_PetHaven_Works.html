@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en-AU">
+<head>
+<meta charset="utf-8">
+<title>PetHaven inventory prototype — How it works</title>
+<!-- Source of How_PetHaven_Works.pdf. Regenerate with Edge/Chrome:
+     msedge --headless --no-pdf-header-footer --print-to-pdf=How_PetHaven_Works.pdf How_PetHaven_Works.html -->
+<style>
+  @page {
+    size: A4; margin: 22mm 20mm 20mm;
+    @bottom-left { content: "PetHaven inventory prototype — How it works"; font: 8pt Arial, sans-serif; color: #777; }
+    @bottom-right { content: "Page " counter(page); font: 8pt Arial, sans-serif; color: #777; }
+  }
+  body { font: 10.3pt/1.45 Arial, Helvetica, sans-serif; color: #222; margin: 0; }
+  h1 { color: #1F4E79; font-size: 22pt; margin: 0 0 4pt; line-height: 1.15; }
+  .sub { color: #666; font-size: 11pt; margin: 0 0 14pt; }
+  h2 { color: #1F4E79; font-size: 15pt; margin: 16pt 0 6pt; break-after: avoid; }
+  p { margin: 0 0 8pt; }
+  ol, ul { margin: 0 0 8pt; padding-left: 22pt; }
+  li { margin-bottom: 4pt; }
+  ul li::marker { color: #1F4E79; }
+  .example { background: #E9EFF7; color: #555; font-style: italic; padding: 6pt 10pt; margin: 0 0 10pt; }
+  .page-break { break-before: page; }
+  table { width: 100%; border-collapse: collapse; font-size: 10pt; }
+  th { background: #1F4E79; color: #fff; text-align: left; padding: 6pt 8pt; }
+  td { border: 1px solid #C9D3DF; padding: 6pt 8pt; vertical-align: top; }
+  th:first-child, td:first-child { width: 34%; }
+  tr:nth-child(odd) td { background: #E9EFF7; }
+</style>
+</head>
+<body>
+
+<h1>How the PetHaven system works</h1>
+<p class="sub">PetHaven inventory prototype — a plain-language guide to what happens when customers buy in a shop or online</p>
+
+<h2>The big picture</h2>
+<p>PetHaven has <b>five shops</b> in Sydney and an <b>online store</b>. Three separate computer systems run the business:</p>
+<ol>
+  <li><b>The store system</b> — the tills and stock records in the five shops. It always knows exactly what's on each shelf.</li>
+  <li><b>The supplier delivery system</b> — records when suppliers drop off new stock at a shop.</li>
+  <li><b>The online store</b> — the website. It shows customers <b>one number per product</b>: how many are available across all five shops combined.</li>
+</ol>
+<p>The catch is that the website's number isn't live. It only gets corrected when someone runs a <b>sync</b>. Between syncs it can be out of date ("stale").</p>
+<p>Behind all three systems sits a <b>data warehouse</b>: one central record of every stock movement in the business. It's the business's record book: it watches and writes everything down, and all the reports read from it. It doesn't run the shops or the website.</p>
+<p>Each system also uses its own codes. For example, the store system calls the dog food <i>9300601001019</i>, the supplier delivery system calls it <i>PF-DOG-ADT-3K</i> and the website calls it <i>WEB-10001</i>. The warehouse translates all of these into one code, <i>P001</i>, so everything lines up.</p>
+
+<h2>1. A customer buys in a shop</h2>
+<p class="example">Example: a customer at Parramatta buys 2 bags of dog food at the till.</p>
+<ol>
+  <li><b>The shop's stock drops straight away.</b> Parramatta had 37 bags; now it has 35.</li>
+  <li><b>The sale is copied to the warehouse automatically,</b> in the same instant:
+    <ul>
+      <li><b>Copy:</b> the sale is copied exactly as the till recorded it, using the store's own codes.</li>
+      <li><b>Translate:</b> the store number and barcode are converted into the warehouse's codes (Parramatta becomes S01, the dog food becomes P001).</li>
+      <li><b>Check:</b> if a code isn't recognised (for example a brand-new product nobody has registered yet), the record is set aside with a note explaining why, instead of being guessed. It loads as soon as someone approves the new code.</li>
+      <li><b>Save:</b> the warehouse records "Parramatta, dog food, −2, at this time".</li>
+    </ul>
+  </li>
+  <li><b>The website doesn't change.</b> It still says 183 available, even though there are really 181. This is the out-of-date number the project is about, and it stays that way until the next sync.</li>
+</ol>
+<p>If the customer buys several things at once, they all go on one receipt. If even one item isn't on the shelf, the whole sale is refused.</p>
+
+<h2 class="page-break">2. A customer buys online</h2>
+<p class="example">Example: a customer in Bondi buys 2 bags of dog food online.</p>
+<ol>
+  <li><b>They add items to their bag.</b> The website only allows what its number says is in stock. Nothing is set aside yet, and the website number doesn't change. Bags never expire.</li>
+  <li><b>They choose where to collect.</b> The website lists every shop that has their items, best first. Here Bondi Junction has the dog food and is closest, so it's top of the list.</li>
+  <li><b>They press checkout. Before any money is taken,</b> the system checks the <b>real</b> stock at the chosen shop. Bondi has enough.</li>
+  <li><b>Payment goes through and the order is created.</b> Bondi sets the 2 bags aside behind the counter: 2 fewer on the shelf, 2 more "reserved".</li>
+  <li><b>The website number drops straight away</b> (183 → 181). The website knows about its own sales.</li>
+  <li><b>The warehouse records the reservation</b> automatically, as with shop sales.</li>
+  <li><b>The customer collects</b> at Bondi, and the reserved bags leave the shop.</li>
+</ol>
+<p>If the customer cancels before collecting, the items go back on the shelf. If they never come, the overdue clean-up (run like the sync) cancels any order older than 3 days and puts the items back on the shelf. Either way, the website only finds out at the next sync.</p>
+<p><b>Two customers, one item left:</b> putting something in a bag doesn't hold it. Whoever checks out first gets it. The other customer's checkout is stopped before payment, and the item stays in their bag.</p>
+
+<h2>3. An online customer buys items that are in different shops</h2>
+<p class="example">Example: a Bondi customer buys a squeaky duck and an aquarium kit.</p>
+<p>Before checkout, the customer sees the shops they can collect from. Only shops that have at least one of the items are offered, best first:</p>
+<ul>
+  <li><b>Newtown</b> has both items, so nothing needs moving. This is the top option.</li>
+  <li><b>Bondi</b> has the duck but not the kit, so the kit would be sent over from another shop.</li>
+  <li>A shop with neither item isn't offered at all.</li>
+</ul>
+<p>Say the customer chooses <b>Bondi</b> because it's closer. Payment goes through, Bondi sets the duck aside, and <b>Newtown</b> sets the kit aside. The Newtown kit then has to be <b>transferred</b>:</p>
+<ol>
+  <li><b>Sent:</b> Newtown sends the kit. While it's on the way, it doesn't count as stock in any shop.</li>
+  <li><b>Received:</b> Bondi receives it and sets it aside with the duck.</li>
+  <li><b>Collected:</b> only now can the customer collect, because the order is ready only when <b>every</b> item has arrived. The system won't let them collect half an order, and the order can't be cancelled while something is on the way.</li>
+</ol>
+<p>Every step (set aside, sent, received, collected) is recorded in the warehouse, so the reports always show where each item is: <i>waiting to be sent</i>, <i>in transit</i> or <i>ready for collection</i>.</p>
+
+<h2 class="page-break">4. The website shows stock that isn't really there</h2>
+<p>This is the core business problem.</p>
+<p class="example">Example from the sample data: the website was synced when there were 7 aquarium kits. Since then, 5 were sold in the shops. The website still says 7, but only 2 are really left — one at Newtown and one at Penrith.</p>
+<ol>
+  <li>A Bondi customer puts <b>3 kits</b> in their bag. The website says 7, so it lets them.</li>
+  <li>They press checkout. <b>Before payment</b>, the system checks the real shop stock and finds that no shop has 3 kits. There are only 2 in total.</li>
+  <li><b>Checkout is blocked.</b> The customer isn't charged, nothing is set aside, and they're shown which item can't be supplied. Their bag stays open, so they can remove it and buy the rest.</li>
+  <li>The warehouse records this as a <b>blocked checkout</b>, and <b>Report 3</b> lists it: <i>"website showed 7, really 2: stock sold since last sync, online number was stale."</i></li>
+</ol>
+<p>A checkout can also be blocked when there's enough in total but <b>no single shop</b> has the full amount — for example, 2 dog beds when the shops have 1 each. Report 3 gives that reason separately: <i>"enough stock in total but no single store had enough."</i></p>
+<p><b>Why this matters:</b> nobody is ever charged for something that can't be supplied. But the customer was still shown stock that didn't exist and walked away disappointed: a lost sale. That's the cost of the out-of-date number, and the reports measure it.</p>
+
+<h2>5. The sync puts the website right</h2>
+<p>Someone runs the sync whenever they want; it isn't automatic. When they do, it:</p>
+<ol>
+  <li>Asks the shops' system how many of each product are really on the shelves, across all five shops.</li>
+  <li>Updates the website with those numbers.</li>
+  <li>The warehouse then writes down what the sync did: a <b>before and after</b> for every number that changed (for example, <i>"aquarium kit: website 7 → 2"</i>), what was sold or delivered by suppliers since the last sync, and whether its records agree with every shop's own records.</li>
+</ol>
+<p>The website gets its number straight from the shops, not from the warehouse. The warehouse is the record book for reports; it doesn't run the business.</p>
+<p>Right after a sync the website is correct again, until the next shop sale or supplier delivery makes it stale.</p>
+
+<h2 class="page-break">In one line each</h2>
+<table>
+  <tr><th>Situation</th><th>What happens</th></tr>
+  <tr><td>Shop sale</td><td>Shelf drops instantly, warehouse updated instantly, website unchanged until sync</td></tr>
+  <tr><td>Supplier delivery</td><td>Shelf rises instantly, warehouse updated instantly, website unchanged until sync</td></tr>
+  <tr><td>Online order</td><td>Customer picks from the shops that have their items; real stock checked before payment; set aside; website drops instantly</td></tr>
+  <tr><td>Items in different shops</td><td>Each item set aside where it's found, sent to the chosen shop, collected together once all have arrived</td></tr>
+  <tr><td>Two customers, one item left</td><td>Whoever checks out first gets it; the other is stopped before payment and keeps it in their bag</td></tr>
+  <tr><td>Not collected in 3 days</td><td>Cancelled by the overdue clean-up, items back on the shelf</td></tr>
+  <tr><td>Website shows stock that's gone</td><td>Checkout blocked before payment, no charge, recorded as a lost sale in Report 3</td></tr>
+  <tr><td>Sync</td><td>Website corrected straight from the shops' shelf totals; the warehouse logs every change before → after</td></tr>
+</table>
+
+</body>
+</html>

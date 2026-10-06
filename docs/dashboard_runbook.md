@@ -70,7 +70,7 @@ Every write happens in the **Business demo** panel, which is labelled "Writes to
 | 8:00 | Demo → Approve code mapping | Review and approve SUPPLY PP-CAT-TUNNEL → P019, then STORE 9300601001194 → P019; **Run ETL** | The waiting records load, the banner disappears, reconciliation matches again. Running ETL again says "No pending records to process" (no duplicates). |
 | 9:00 | Checkout & Fulfilment → Open reservations | Order 5 | Lines held at Chatswood are in transit to Bondi, so the whole order is not ready, even though one line is. Optional: Demo → Order lifecycle → Customer collects on order 5 is refused with the store system's reason. |
 
-If a step's prerequisite is not met (for example P018 already sold out), the panel explains why. Choose another product, record a delivery first, or rebuild. Approved mappings are never deleted automatically; for a fresh rejection demonstration, rebuild the database.
+If a step's prerequisite is not met (for example P018 already sold out), the panel explains why. Choose another product, record a supplier delivery first, or rebuild. Approved mappings are never deleted automatically; for a fresh rejection demonstration, rebuild the database.
 
 ## 4. Verification (6 October 2026)
 
@@ -88,11 +88,11 @@ All runs used the isolated `pethaven_check` database; the dashboard's write test
 - that `/stock` ignores date parameters;
 - website corrections filtered to `online_available`, with the count taken from those rows rather than `numbers_changed`;
 - parameter validation (400), body validation (422), wrong content type (415), cross-origin writes (403), missing records (404) and business refusals (409);
-- that a sale or delivery changes store stock but not the website number, and that cartons are converted to units;
+- that a sale or supplier delivery changes store stock but not the website number, and that cartons are converted to units;
 - that a blocked checkout is committed with no order and no hold, appears in Report 3 with its attempt, and that the bag can be edited and paid on a second attempt;
 - the stale-preview refusal of the sell-out scenario;
 - the add-to-bag refusal after the sync;
-- that delivery and rejected-record traces are correct, and that P019 approval plus ETL loads exactly two facts, a second run does nothing, and reconciliation recovers;
+- that supplier delivery and rejected-record traces are correct, and that P019 approval plus ETL loads exactly two facts, a second run does nothing, and reconciliation recovers;
 - the Sydney business date and the history date filter;
 - the 503 response when the database cannot be reached.
 

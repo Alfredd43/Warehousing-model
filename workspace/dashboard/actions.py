@@ -122,7 +122,7 @@ def cp_code(conn, code: str) -> str:
 # --- read-back helpers -------------------------------------------------------------
 def staged(conn, table: str, ref_pattern: str) -> list[dict]:
     """Staging rows (and their fact rows) created by one operation."""
-    assert table in {"stg_store_sale_line", "stg_delivery_line", "stg_reservation_change", "stg_checkout_item"}
+    assert table in {"stg_store_sale_line", "stg_supplier_delivery_line", "stg_reservation_change", "stg_checkout_item"}
     return rows(conn, f"""
         SELECT '{table}' AS stg_table, s.stg_id::text AS stg_id, s.source_ref, s.load_status, s.note,
                s.etl_run_id, s.event_id::text AS event_id, f.event_type, p.product_code, st.store_code,
@@ -195,13 +195,13 @@ def record_sale(conn, body: dict) -> dict:
             "message": f"Receipt {sale_no} recorded at store {store}. The website number is unchanged until the next sync."}
 
 
-def record_delivery(conn, body: dict) -> dict:
+def record_supplier_delivery(conn, body: dict) -> dict:
     loc = location(conn, _text(body, "location"))
     supplier = _text(body, "supplier_name")
     if len(supplier) > 80:
         raise BadRequest("'supplier_name' is too long")
     items = [(supplier_sku(conn, code), qty) for code, qty in _items(body, "sku", "cartons")]
-    delivery_no = value(conn, "SELECT supply.record_delivery(%s, %s, %s, %s)",
+    delivery_no = value(conn, "SELECT supply.record_supplier_delivery(%s, %s, %s, %s)",
                         (loc, supplier, [s for s, _ in items], [c for _, c in items]))
     conn.commit()
     lines = rows(conn, """
@@ -209,14 +209,14 @@ def record_delivery(conn, body: dict) -> dict:
                right(i.gtin14, 13) AS barcode,
                to_char(d.delivered_at_utc, 'YYYY-MM-DD HH24:MI:SS') AS delivered_at_utc,
                d.delivered_at_utc AT TIME ZONE 'UTC' AS delivered_at_sydney
-          FROM supply.delivery_line l
-          JOIN supply.delivery d USING (delivery_no)
+          FROM supply.supplier_delivery_line l
+          JOIN supply.supplier_delivery d USING (delivery_no)
           JOIN supply.item i ON i.supplier_sku = l.supplier_sku
          WHERE l.delivery_no = %s ORDER BY l.line_no""", (delivery_no,))
     return {"delivery_no": str(delivery_no), "location_code": loc, "lines": lines,
-            "staging": staged(conn, "stg_delivery_line", f"SUPPLY:delivery {delivery_no} line %"),
+            "staging": staged(conn, "stg_supplier_delivery_line", f"SUPPLY:supplier_delivery {delivery_no} line %"),
             "website_vs_shelf": website_vs_shelf(conn, [l["barcode"] for l in lines]),
-            "message": f"Delivery {delivery_no} recorded at {loc}. The website number is unchanged until the next sync."}
+            "message": f"Supplier delivery {delivery_no} recorded at {loc}. The website number is unchanged until the next sync."}
 
 
 def create_basket(conn, body: dict) -> dict:
@@ -407,7 +407,7 @@ def sellout_preview(conn, product: str) -> dict:
             "ready": bool(to_sell) and web is not None,
             "problem": (None if to_sell and web else
                         "This product has no free shelf stock in any store. Choose another product or "
-                        "record a delivery first." if web else "This product is not sold online.")}
+                        "record a supplier delivery first." if web else "This product is not sold online.")}
 
 
 def sellout(conn, body: dict) -> dict:

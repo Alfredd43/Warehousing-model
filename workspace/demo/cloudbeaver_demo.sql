@@ -60,10 +60,10 @@ SELECT * FROM dw.rpt_online_vs_actual WHERE status <> 'in sync';
 -- 2. Supplier delivery (Source 2): 5 cartons of dog food to Chatswood.
 --    Recorded in cartons and UTC; arrives on the shelf as units.
 -- -----------------------------------------------------------------------------
-SELECT supply.record_delivery('NSW-CHATS', 'Pawfect Foods', ARRAY['PF-DOG-ADT-3K'], ARRAY[5]);
+SELECT supply.record_supplier_delivery('NSW-CHATS', 'Pawfect Foods', ARRAY['PF-DOG-ADT-3K'], ARRAY[5]);
 
 SELECT delivery_no, location_code, supplier_sku, cartons, units_per_carton, delivered_at_utc, load_status
-  FROM etl.stg_delivery_line ORDER BY stg_id DESC LIMIT 1;
+  FROM etl.stg_supplier_delivery_line ORDER BY stg_id DESC LIMIT 1;
 SELECT event_type, units, event_ts, date_key, source_ref
   FROM dw.fact_stock_event ORDER BY event_id DESC LIMIT 1;      -- 5 cartons x 4 = 20 units, Sydney time
 
@@ -159,7 +159,7 @@ SELECT * FROM dw.rpt_open_reservations ORDER BY order_no, product_code;
 -- -----------------------------------------------------------------------------
 -- 7. Data quality: a new product the warehouse has not approved yet
 -- -----------------------------------------------------------------------------
-SELECT supply.record_delivery('NSW-PARRA', 'PlayPets Wholesale', ARRAY['PP-CAT-TUNNEL'], ARRAY[2]);
+SELECT supply.record_supplier_delivery('NSW-PARRA', 'PlayPets Wholesale', ARRAY['PP-CAT-TUNNEL'], ARRAY[2]);
 SELECT store_ops.record_sale('101', ARRAY['9300601001194'], ARRAY[1]);
 
 SELECT * FROM etl.v_data_quality;                               -- rejected, with the reason

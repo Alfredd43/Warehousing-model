@@ -7,12 +7,12 @@
 --
 -- Each source names the same store and product differently:
 --
---   Warehouse  Store system (S1)  Delivery system (S2)  Online store (S3)
+--   Warehouse  Store system (S1)  Supplier delivery system (S2)  Online store (S3)
 --   S01        store_no 101       NSW-PARRA             CP-PARRAMATTA
 --   P001       9300601001019      PF-DOG-ADT-3K         WEB-10001
 --
 -- Product P019 (Crinkle Cat Tunnel) is a new line: it is in the store and
--- delivery catalogues but has NO approved warehouse mapping yet and is not
+-- supplier delivery catalogues but has NO approved warehouse mapping yet and is not
 -- sold online. Moving its stock exercises the ETL's rejection path
 -- (see docs/demo_runbook.md, data quality step).
 -- =============================================================================
@@ -81,7 +81,7 @@ INSERT INTO store_ops.product (barcode, description, category, shelf_price)
 SELECT barcode, description, category, price FROM seed_product;
 
 -- ---------------------------------------------------------------------------
--- Source 2: delivery system
+-- Source 2: supplier delivery system
 -- ---------------------------------------------------------------------------
 INSERT INTO supply.location (location_code, location_name, ship_to_store)
 SELECT location_code, store_name || ' (store receiving dock)', store_no FROM seed_store;

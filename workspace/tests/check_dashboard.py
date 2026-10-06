@@ -114,7 +114,7 @@ def main() -> int:
     s, r = post("/demo/sales", {"store": "S01", "items": [{"product": "P018", "quantity": 99}]})
     check("D2 shelf shortage is a 409 business refusal", (409, "refused"), (s, r["error"]["code"]))
 
-    # --- 3. sale and delivery effects through existing functions ---------------------
+    # --- 3. sale and supplier delivery effects through existing functions ---------------------
     before = {x["product_code"]: x for x in get("/website-stock")[1]["data"]["comparison"]}["P001"]
     s, r = post("/demo/sales", {"store": "S01", "items": [{"product": "P001", "quantity": 1}]})
     check("D3 sale returns its receipt and a loaded fact", (200, "loaded"), (s, r["data"]["staging"][0]["load_status"]))
@@ -122,14 +122,14 @@ def main() -> int:
     check("D3 sale leaves the website number unchanged", before["online_shown"], after["online_shown"])
     check("D3 sale lowers warehouse available by 1", before["actual_in_store"] - 1, after["actual_in_store"])
 
-    s, r = post("/demo/deliveries", {"location": "S03", "supplier_name": "Pawfect Foods",
+    s, r = post("/demo/supplier-deliveries", {"location": "S03", "supplier_name": "Pawfect Foods",
                                      "items": [{"sku": "PF-DOG-ADT-3K", "cartons": 5}]})
     line = r["data"]["lines"][0]
-    check("D3 delivery converts cartons to units", (5, 4, 20), (line["cartons"], line["units_per_carton"], line["units"]))
+    check("D3 supplier delivery converts cartons to units", (5, 4, 20), (line["cartons"], line["units_per_carton"], line["units"]))
     ev = r["data"]["staging"][0]["event_id"]
     s, t = get(f"/integration/trace?event_id={ev}")
     tr = t["data"]
-    check("D5 delivery trace links source, staging and fact",
+    check("D5 supplier delivery trace links source, staging and fact",
           ("SUPPLY", "loaded", ev, 20), (tr["source"]["system"], tr["staging"]["load_status"], tr["warehouse"]["event_id"], tr["warehouse"]["units"]))
     sydney_date = sql("SELECT (event_ts AT TIME ZONE 'Australia/Sydney')::date::text FROM dw.fact_stock_event WHERE event_id = %s", (int(ev),))[0][0]
     check("D6 business date is the Sydney date of the event", sydney_date, tr["warehouse"]["business_date"])
@@ -186,10 +186,10 @@ def main() -> int:
     check("D5 sync records link to their warehouse sync", True, all(x["warehouse_sync_id"] for x in ss["data"]["rows"]))
 
     # --- 5. unmapped product: rejection and recovery --------------------------------
-    s, r = post("/demo/deliveries", {"location": "NSW-PARRA", "supplier_name": "PlayPets Wholesale",
+    s, r = post("/demo/supplier-deliveries", {"location": "NSW-PARRA", "supplier_name": "PlayPets Wholesale",
                                      "items": [{"sku": "PP-CAT-TUNNEL", "cartons": 2}]})
     stg = r["data"]["staging"][0]
-    check("D5 unmapped delivery succeeds in its source but is rejected by the ETL", (200, "rejected"), (s, stg["load_status"]))
+    check("D5 unmapped supplier delivery succeeds in its source but is rejected by the ETL", (200, "rejected"), (s, stg["load_status"]))
     s, t = get(f"/integration/trace?table={stg['stg_table']}&id={stg['stg_id']}")
     check("D5 rejected trace has no warehouse row", (None, None), (t["data"]["warehouse"], t["data"]["transform"]["product"]["warehouse_code"]))
     post("/demo/sales", {"store": "S01", "items": [{"product": "9300601001194", "quantity": 1}]})

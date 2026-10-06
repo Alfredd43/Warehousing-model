@@ -6,9 +6,9 @@
 -- Design ref: docs/Architecture_and_Data_Model.md section 9.
 -- Prerequisites: seed/01_reference_data.sql.
 -- Timeline (Sydney time, relative to the day the build runs):
---   7 days ago 07:00  opening stock: one delivery docket per store and supplier
+--   7 days ago 07:00  opening stock: one supplier delivery docket per store and supplier
 --   7 days ago 08:00  sync #1 - the website gets its first real numbers
---   6..1 days ago     till sales (some multi-item receipts), restock deliveries,
+--   6..1 days ago     till sales (some multi-item receipts), restock supplier deliveries,
 --                     7 paid online orders (one 3-item order collected at
 --                     the customer's chosen store with 2 items coming from
 --                     another store and still in transit), 1 checkout
@@ -21,7 +21,7 @@
 -- =============================================================================
 
 -- Sydney local time N days before today, and the same instant in UTC
--- (the delivery system records UTC).
+-- (the supplier delivery system records UTC).
 CREATE FUNCTION pg_temp.ts(days_ago integer, hhmm text) RETURNS timestamptz
 LANGUAGE sql STABLE AS $$
     SELECT ((current_date - days_ago) + hhmm::time) AT TIME ZONE 'Australia/Sydney';
@@ -80,7 +80,7 @@ DO $$
 DECLARE
     d record;
 BEGIN
-    -- One docket per delivery location and supplier.
+    -- One docket per supplier delivery location and supplier.
     FOR d IN
         SELECT loc.location_code,
                CASE left(x.source_code, 2)
@@ -101,7 +101,7 @@ BEGIN
          GROUP BY loc.location_code, 2
          ORDER BY loc.location_code, 2
     LOOP
-        PERFORM supply.record_delivery(d.location_code, d.supplier_name, d.skus, d.cartons,
+        PERFORM supply.record_supplier_delivery(d.location_code, d.supplier_name, d.skus, d.cartons,
                                        pg_temp.utc(7, '07:00'));
     END LOOP;
 END;
@@ -136,9 +136,9 @@ SELECT online.place_online_order('2112', pg_temp.web('P006'), 1, pg_temp.ts(5, '
 -- ---------------------------------------------------------------------------
 -- 4 days ago
 -- ---------------------------------------------------------------------------
-SELECT supply.record_delivery('NSW-BONDI', 'Pawfect Foods',        pg_temp.sku('{P003}'), '{4}', pg_temp.utc(4, '06:30'));
-SELECT supply.record_delivery('NSW-NEWTN', 'Pawfect Foods',        pg_temp.sku('{P002}'), '{3}', pg_temp.utc(4, '06:45'));
-SELECT supply.record_delivery('NSW-PARRA', 'VetCare Distributors', pg_temp.sku('{P016}'), '{1}', pg_temp.utc(4, '07:10'));
+SELECT supply.record_supplier_delivery('NSW-BONDI', 'Pawfect Foods',        pg_temp.sku('{P003}'), '{4}', pg_temp.utc(4, '06:30'));
+SELECT supply.record_supplier_delivery('NSW-NEWTN', 'Pawfect Foods',        pg_temp.sku('{P002}'), '{3}', pg_temp.utc(4, '06:45'));
+SELECT supply.record_supplier_delivery('NSW-PARRA', 'VetCare Distributors', pg_temp.sku('{P016}'), '{1}', pg_temp.utc(4, '07:10'));
 
 SELECT store_ops.record_sale('101', pg_temp.bc('{P003}'),           '{3}',   pg_temp.ts(4, '10:05'));
 SELECT store_ops.record_sale('102', pg_temp.bc('{P001}'),           '{1}',   pg_temp.ts(4, '11:20'));
@@ -184,8 +184,8 @@ SELECT store_ops.collect_order('2', pg_temp.ts(2, '17:00'));                    
 -- ---------------------------------------------------------------------------
 -- 1 day ago
 -- ---------------------------------------------------------------------------
-SELECT supply.record_delivery('NSW-CHATS', 'Pawfect Foods',        pg_temp.sku('{P001}'), '{5}', pg_temp.utc(1, '06:20'));
-SELECT supply.record_delivery('NSW-PENRI', 'VetCare Distributors', pg_temp.sku('{P014}'), '{3}', pg_temp.utc(1, '06:50'));
+SELECT supply.record_supplier_delivery('NSW-CHATS', 'Pawfect Foods',        pg_temp.sku('{P001}'), '{5}', pg_temp.utc(1, '06:20'));
+SELECT supply.record_supplier_delivery('NSW-PENRI', 'VetCare Distributors', pg_temp.sku('{P014}'), '{3}', pg_temp.utc(1, '06:50'));
 
 SELECT store_ops.record_sale('101', pg_temp.bc('{P001,P006}'),      '{1,1}', pg_temp.ts(1, '09:35'));
 SELECT store_ops.cancel_order('4', 'Customer cancelled', pg_temp.ts(1, '10:00'));         -- #4 cancelled

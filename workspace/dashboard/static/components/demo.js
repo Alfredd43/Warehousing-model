@@ -7,7 +7,7 @@ import { h, clear, fmt, badge, table, keepFocus, announce, icon } from "./ui.js"
 const SECTIONS = [
   ["scenario", "Scenario: stale website stock", "A"],
   ["sale", "Record store sale", ""],
-  ["delivery", "Record supplier delivery", ""],
+  ["supplier_delivery", "Record supplier delivery", ""],
   ["bag", "Online bag and checkout", ""],
   ["sync", "Sync website stock", ""],
   ["mapping", "Approve code mapping and run ETL", "C"],
@@ -22,7 +22,7 @@ export function createDemo(panel, app, { onToggle }) {
     pending: {},
     results: {},
     sale: { store: "S01", lines: [{ product: "P001", qty: 1 }] },
-    delivery: { location: "NSW-CHATS", supplier: "Pawfect Foods", sku: "PF-DOG-ADT-3K", cartons: 5 },
+    supplier_delivery: { location: "NSW-CHATS", supplier: "Pawfect Foods", sku: "PF-DOG-ADT-3K", cartons: 5 },
     bag: { postcode: "2026", basket: null, product: "", qty: 1, options: null, pickup: "", loadId: "" },
     scenario: { product: "P018", preview: null },
     mapping: { system: "SUPPLY", code: "", product: "", reviewing: false },
@@ -233,10 +233,10 @@ export function createDemo(panel, app, { onToggle }) {
       resultBox("sale"));
   }
 
-  function deliverySection() {
-    const s = st.delivery;
+  function supplierDeliverySection() {
+    const s = st.supplier_delivery;
     return h("div", { class: "form" },
-      lbl("Delivery location", sel("del-loc", s.location, cat.locations.map((l) => h("option", { value: l.location_code }, `${l.location_code} · ${l.location_name.replace(" (store receiving dock)", "")}`)), (v) => { s.location = v; })),
+      lbl("Supplier delivery location", sel("del-loc", s.location, cat.locations.map((l) => h("option", { value: l.location_code }, `${l.location_code} · ${l.location_name.replace(" (store receiving dock)", "")}`)), (v) => { s.location = v; })),
       lbl("Supplier name", h("input", { type: "text", "data-fk": "del-sup", list: "supplier-list", value: s.supplier, maxlength: "80", oninput: (e) => { s.supplier = e.target.value; } }),
         null),
       h("datalist", { id: "supplier-list" }, cat.suppliers.map((x) => h("option", { value: x }))),
@@ -244,18 +244,18 @@ export function createDemo(panel, app, { onToggle }) {
         lbl("Supplier SKU", sel("del-sku", s.sku, cat.supplier_items.map((i) => h("option", { value: i.supplier_sku },
           `${i.supplier_sku} · ${i.item_description} · ${i.units_per_carton}/carton${i.product_code ? "" : " (not mapped)"}`)), (v) => { s.sku = v; })),
         lbl("Cartons", num("del-cartons", s.cartons, (v) => { s.cartons = v; }, "Cartons"))),
-      h("p", { class: "hint" }, "Quantities are in cartons and the delivery time is recorded in UTC, as the delivery system does. The ETL converts both."),
-      h("div", {}, button("delivery", "Record delivery", async () => {
-        const r = await post("/demo/deliveries", { location: s.location, supplier_name: s.supplier, items: [{ sku: s.sku, cartons: s.cartons }] });
+      h("p", { class: "hint" }, "Quantities are in cartons and the supplier delivery time is recorded in UTC, as the supplier delivery system does. The ETL converts both."),
+      h("div", {}, button("supplier_delivery", "Record supplier delivery", async () => {
+        const r = await post("/demo/supplier-deliveries", { location: s.location, supplier_name: s.supplier, items: [{ sku: s.sku, cartons: s.cartons }] });
         const d = r.data;
         const l = d.lines[0];
         const st0 = d.staging[0];
-        return { kind: "ok", title: `Delivery ${d.delivery_no}:`, message: d.message,
+        return { kind: "ok", title: `Supplier delivery ${d.delivery_no}:`, message: d.message,
           body: [h("div", {}, `${l.cartons} cartons × ${l.units_per_carton} units/carton = ${l.units} units. Recorded at UTC ${l.delivered_at_utc} (Sydney ${fmt.dateTimeSec(l.delivered_at_sydney)}).`),
             stagingTable(d.staging), shelfTable(d.website_vs_shelf)],
           links: [st0?.product_code ? ["View affected report", "inventory", { product: st0.product_code, store_sel: st0.store_code }] : ["View rejected records", "integration", {}], traceLink(d.staging)].filter(Boolean) };
       })),
-      resultBox("delivery"));
+      resultBox("supplier_delivery"));
   }
 
   function bagSection() {
@@ -422,7 +422,7 @@ export function createDemo(panel, app, { onToggle }) {
       resultBox("overdue"));
   }
 
-  const BUILDERS = { scenario: scenarioSection, sale: saleSection, delivery: deliverySection, bag: bagSection, sync: syncSection, mapping: mappingSection, orders: ordersSection };
+  const BUILDERS = { scenario: scenarioSection, sale: saleSection, supplier_delivery: supplierDeliverySection, bag: bagSection, sync: syncSection, mapping: mappingSection, orders: ordersSection };
 
   function draw() {
     clear(panel);

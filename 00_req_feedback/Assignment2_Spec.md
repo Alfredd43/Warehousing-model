@@ -4,7 +4,7 @@
 
 This guide defines the business problem, the three source systems, the business actions that create their records, and the stock rules the prototype follows. The solution design that implements it is in [docs/Architecture_and_Data_Model.md](../docs/Architecture_and_Data_Model.md).
 
-**What changed from v5.** Following the tutor's 29 Sep feedback (focus on one problem: inventory not syncing between in-store and online sales), the case was simplified: five stores instead of thirty, no distribution centre or inter-store transfers, deliveries go straight to stores, and the website shows one combined number per product that is refreshed by a manual sync instead of an overnight snapshot and 5 am copy. The three sources are now the **store system**, the **delivery system** and the **online store**.
+**What changed from v5.** Following the tutor's 29 Sep feedback (focus on one problem: inventory not syncing between in-store and online sales), the case was simplified: five stores instead of thirty, no distribution centre or inter-store transfers, supplier deliveries go straight to stores, and the website shows one combined number per product that is refreshed by a manual sync instead of an overnight snapshot and 5 am copy. The three sources are now the **store system**, the **supplier delivery system** and the **online store**.
 
 PetHaven is fictional. Its size, operating arrangements and update rules below are fixed definitions for this project.
 
@@ -49,7 +49,7 @@ In scope: in-store sales, supplier deliveries, online C&C orders with several li
 | Operational system | Used by | Source schema | Main responsibility |
 | --- | --- | --- | --- |
 | **Store system** (POS tills + stock screens + C&C counter) | Store staff | `store_ops` | Stores, product catalogue, live shelf and reserved stock per store, till receipts, C&C holds |
-| **Delivery system** | Receiving staff, suppliers | `supply` | Delivery locations, supplier items, delivery dockets |
+| **Supplier delivery system** | Receiving staff, suppliers | `supply` | Supplier delivery locations, supplier items, supplier delivery dockets |
 | **Online store** | Customers, web team | `online` | Web catalogue, the website stock number, collection points, online orders |
 
 The lab hosts them as separate schemas in one PostgreSQL database. They are separate systems: none has a foreign key into another, and they cooperate only through the actions in section 4.
@@ -58,7 +58,7 @@ The **integrated data warehouse** (`dw`), fed by the ETL layer (`etl`), is a sep
 
 ### 3.2 Each system has its own codes
 
-| | Store system | Delivery system | Online store |
+| | Store system | Supplier delivery system | Online store |
 | --- | --- | --- | --- |
 | Store | store number `101`–`105` | location code `NSW-PARRA` | collection point `CP-PARRAMATTA` |
 | Product | EAN-13 barcode `9300601001019` | supplier SKU `PF-DOG-ADT-3K` | web SKU `WEB-10001` |
@@ -82,11 +82,11 @@ All changes to a store's stock happen **immediately** when the action is recorde
 | C&C order not collected within 3 days | the overdue job (`cancel_overdue_orders`) cancels it like the row below | as below | unchanged until sync |
 | C&C order cancelled before collection (not while a line is in transit) | each `reservation` → `cancelled`, with reason | where the units are: reserved − qty, shelf + qty | unchanged until sync |
 
-### 4.2 Delivery system
+### 4.2 Supplier delivery system
 
 | Action | Recorded as | Store stock effect | Website number |
 | --- | --- | --- | --- |
-| Supplier delivery to a store | `delivery` + `delivery_line` in cartons | shelf + cartons × units per carton at that store | unchanged until sync |
+| Supplier delivery to a store | `supplier_delivery` + `supplier_delivery_line` in cartons | shelf + cartons × units per carton at that store | unchanged until sync |
 
 ### 4.3 Online store
 
@@ -114,7 +114,7 @@ All changes to a store's stock happen **immediately** when the action is recorde
 
 1. A **sync** sets it to the real combined available: the shelf totals taken straight from the store system.
 2. Between syncs it drops by each **held** online order line (the website knows its own sales).
-3. Nothing else changes it: in-store sales, deliveries and cancellations wait for the next sync; transfers and collections do not change it (the units were already deducted).
+3. Nothing else changes it: in-store sales, supplier deliveries and cancellations wait for the next sync; transfers and collections do not change it (the units were already deducted).
 
 Overstated website number → items blocked at checkout (lost sales, frustrated customers). Understated → hidden stock and lost online sales. C&C orders waiting more than 3 days are overdue.
 
@@ -161,7 +161,7 @@ Additional reports: daily sales by store, channel (in store / online) and catego
 
 **Case 2b: the customer picks a store that has only some items.** A Bondi customer ordered cat food, 2 dog beds and 4 scratching posts. Chatswood had all three, but the customer chose Bondi, which had only the cat food. The beds and posts were taken from Chatswood and are in transit, so the order is not ready to collect yet.
 
-**Case 3: the sync corrects the website.** After sales and deliveries, the website shows numbers that are too high or too low. Running the sync shows each product's old and new number and each store total that moved.
+**Case 3: the sync corrects the website.** After sales and supplier deliveries, the website shows numbers that are too high or too low. Running the sync shows each product's old and new number and each store total that moved.
 
 **Case 4: unmatched new product.** A new cat tunnel (P019) is delivered and sold before the warehouse has approved its codes. The stores work normally; the warehouse rejects the records with a reason and the reconciliation shows the gap until the mapping is approved.
 
@@ -169,7 +169,7 @@ Additional reports: daily sales by store, channel (in store / online) and catego
 
 | Word | Meaning here |
 | --- | --- |
-| Source system | An operational system that records business actions (store system, delivery system, online store). |
+| Source system | An operational system that records business actions (store system, supplier delivery system, online store). |
 | Data warehouse | The integrated analytical database (`dw`) combining the three sources. |
 | ETL | Extract, transform, load: copying source records into staging, converting them, and loading them into the warehouse. |
 | Staging | ETL tables holding source records in their original format. |

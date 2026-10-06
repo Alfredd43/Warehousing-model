@@ -5,14 +5,14 @@ Assignment 2 prototype (32113 Advanced Database). PetHaven has five Sydney store
 | Schema | Role | Own codes | Main objects |
 | --- | --- | --- | --- |
 | `store_ops` | Source 1: store system (tills, store stock, click & collect) | store `101`, barcode `9300601001019` | `store`, `product`, `store_stock`, `sale`/`sale_line`, `reservation` |
-| `supply` | Source 2: delivery system | location `NSW-PARRA`, SKU `PF-DOG-ADT-3K`, **cartons**, **UTC** | `location`, `item`, `delivery`/`delivery_line` |
+| `supply` | Source 2: supplier delivery system | location `NSW-PARRA`, SKU `PF-DOG-ADT-3K`, **cartons**, **UTC** | `location`, `item`, `supplier_delivery`/`supplier_delivery_line` |
 | `online` | Source 3: online store | collection point `CP-PARRAMATTA`, `WEB-10001` | `product`, `online_stock` (website number), `collection_point`, `web_order` |
 | `etl` | ETL layer | – | staging tables, `product_xref`/`store_xref` (approved code mappings), `v_transform`, `run_etl`, `etl_run`, `v_data_quality` |
 | `dw` | Integrated data warehouse | `S01`, `P001` | `dim_product`, `dim_store`, `dim_date`, `fact_stock_event`, `sync_run`/`sync_change` (record of each sync), 8 report views |
 
 How it behaves:
 
-- **In-store sale / delivery / collection / cancellation**: the store's stock changes immediately; the website number waits for the next sync.
+- **In-store sale / supplier delivery / collection / cancellation**: the store's stock changes immediately; the website number waits for the next sync.
 - **Online shopping**: items go into a **bag** up to the (possibly stale) website number; nothing is held and bags never expire. The customer is offered every store that holds at least one bag item (fewest transfers first) and **chooses** where to collect. At **checkout, before payment**, real store stock is checked and locked, so whoever checks out first gets it. If any item can't be supplied by a single store, checkout is **blocked**: nothing charged, nothing held, and the customer removes it and tries again. Otherwise the order is **paid**, each item is held where it was found, items from other stores are **transferred** to the chosen store (dispatch → in transit → receive), and the website number drops at once. Orders not collected within 3 days are cancelled by the overdue job.
 - **ETL**: every source record is captured into staging in its source format, mapped to warehouse codes through approved cross-references, converted (cartons → units, UTC → Sydney date), validated and loaded into `dw.fact_stock_event` in the same transaction. Records with unmapped codes are rejected with a reason and load once the mapping is approved.
 - **Sync** (`SELECT online.sync_website_stock();`): the online store takes the real shelf totals from the store system and updates the website. The warehouse is not involved in setting the number; through the ETL it records each sync (website before/after, store changes since the last sync, reconciliation) for the reports.
@@ -100,7 +100,7 @@ Safe to rerun at any time. Only `pethaven_demo` and `pethaven_check` are ever dr
 | Command | What it does |
 | --- | --- |
 | `sale S01 P003 2 P005 1` | Till sale (one receipt, any number of items) |
-| `delivery S03 P001 5` | Supplier delivery, in cartons |
+| `supplier-delivery S03 P001 5` | Supplier delivery, in cartons |
 | `order 2026 P009 1 P018 1 [--pickup S02]` | New bag from a customer postcode: shows pickup options, then checks out (real stock checked before payment) |
 | `options 10` | Pickup options for bag 10 |
 | `remove 10 P013` / `checkout 10 [--pickup S02]` | After a blocked checkout: remove an item from bag 10 / check out again |
@@ -122,7 +122,7 @@ The full 10-minute demonstration, with what to say at each step, is in [docs/dem
 docker compose -f docker-compose.yml -f workspace/dashboard/compose.dashboard.yml up -d dashboard
 ```
 
-Open <http://localhost:8080>. It has the three required reports (Website & Sync, Store Inventory, Checkout & Fulfilment), an Integration & Quality page with a source-to-warehouse trace, and a **Business demo** panel that records sales, deliveries, bags, checkouts, syncs and mapping approvals through the source systems. The overlay adds a `dashboard` service and leaves the lab files unchanged. The dashboard demonstration is in [docs/dashboard_runbook.md](docs/dashboard_runbook.md).
+Open <http://localhost:8080>. It has the three required reports (Website & Sync, Store Inventory, Checkout & Fulfilment), an Integration & Quality page with a source-to-warehouse trace, and a **Business demo** panel that records sales, supplier deliveries, bags, checkouts, syncs and mapping approvals through the source systems. The overlay adds a `dashboard` service and leaves the lab files unchanged. The dashboard demonstration is in [docs/dashboard_runbook.md](docs/dashboard_runbook.md).
 
 ### Step 6: Run the checks
 
@@ -166,7 +166,7 @@ docker-compose.yml, python/            Lab Environment (unchanged course files)
 workspace/
   db/01_schemas.sql                    five schemas
   db/02_store_ops.sql                  Source 1: store system
-  db/03_supply.sql                     Source 2: delivery system
+  db/03_supply.sql                     Source 2: supplier delivery system
   db/04_online.sql                     Source 3: online store
   db/05_warehouse.sql                  star schema + sync log
   db/06_etl.sql                        extract -> transform -> validate -> load

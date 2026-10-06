@@ -10,7 +10,7 @@
 
 PetHaven is a fictional Sydney pet-supplies retailer with five stores and a website. The website shows one stock number per product for all five stores, and that number is only updated when a sync is run. In-store sales, supplier deliveries and cancellations change real stock straight away, so between syncs the website can show stock that no store has. Customers add these items to their bag and only find out at checkout that they cannot buy them.
 
-We designed and built a prototype for this problem in the Lab Environment on PostgreSQL 15. Three source systems (a store system, a delivery system and an online store) each keep their own codes, units and time zones. An ETL layer captures every source record, matches codes through approved cross-references, converts cartons to units and UTC to Sydney time, and loads one stock-event fact table in a star schema. A manual sync copies real shelf totals from the store system to the website, and the warehouse records what each sync changed. Report views and a web dashboard show current stock, how stale the website is and which checkouts were blocked. One script builds the whole prototype, and it passes 95 automated behaviour checks and 53 dashboard checks.
+We designed and built a prototype for this problem in the Lab Environment on PostgreSQL 15. Three source systems (a store system, a supplier delivery system and an online store) each keep their own codes, units and time zones. An ETL layer captures every source record, matches codes through approved cross-references, converts cartons to units and UTC to Sydney time, and loads one stock-event fact table in a star schema. A manual sync copies real shelf totals from the store system to the website, and the warehouse records what each sync changed. Report views and a web dashboard show current stock, how stale the website is and which checkouts were blocked. One script builds the whole prototype, and it passes 95 automated behaviour checks and 53 dashboard checks.
 
 ---
 
@@ -20,7 +20,7 @@ PetHaven sells pet food, treats, toys, bedding, health and aquarium products in 
 
 The website shows one combined "available" number per product for all five stores, and that number is refreshed only when someone runs a sync. Every till sale, supplier delivery and cancelled order changes the real stock in a store at once. Between syncs the website can show stock that is already gone, so customers put items in their bag and are only told at checkout that no store can supply them. The number can also be too low, which hides stock and loses sales.
 
-The cause is the delay between a stock change in one system and its use in another. A second problem makes it hard to measure: the three systems involved name stores and products differently. The store system uses barcodes, the delivery system uses supplier SKUs counted in cartons with times in UTC, and the online store uses its own web SKUs. Their records have to be matched reliably before they can be combined.
+The cause is the delay between a stock change in one system and its use in another. A second problem makes it hard to measure: the three systems involved name stores and products differently. The store system uses barcodes, the supplier delivery system uses supplier SKUs counted in cartons with times in UTC, and the online store uses its own web SKUs. Their records have to be matched reliably before they can be combined.
 
 The prototype has five goals:
 
@@ -41,12 +41,12 @@ The prototype has five goals:
 The solution has five layers, each in its own PostgreSQL schema. Three are the operational systems PetHaven uses every day:
 
 - **Store system** (`store_ops`): tills, live shelf and reserved stock in each store, and click-and-collect holds.
-- **Delivery system** (`supply`): supplier deliveries to each store, recorded in cartons.
+- **Supplier delivery system** (`supply`): supplier deliveries to each store, recorded in cartons.
 - **Online store** (`online`): the web catalogue, the website stock number, the customer's bag, checkout and online orders.
 
 The other two layers are the **ETL layer** (`etl`), which moves data from the sources into the warehouse, and the **integrated data warehouse** (`dw`), which the reports read.
 
-The three source systems behave like separate products from different vendors. No source table has a foreign key into another source. They interact only through a few business functions, for example a delivery calls the store system's function for receiving goods, and checkout asks the store system to find and hold stock.
+The three source systems behave like separate products from different vendors. No source table has a foreign key into another source. They interact only through a few business functions, for example a supplier delivery calls the store system's function for receiving goods, and checkout asks the store system to find and hold stock.
 
 Data moves along two separate paths. On the **analytical path**, a business action changes a source system, the ETL copies the record into staging, transforms it and loads it into the warehouse, and reports read the warehouse. On the **operational path**, the sync reads real shelf totals from the store system and writes them to the website number. The warehouse is not part of this path; it only receives a log of each sync so the reports can show what was corrected.
 
@@ -54,7 +54,7 @@ Data moves along two separate paths. On the **analytical path**, a business acti
 
 > **[TODO Figure 2]** Conceptual ER diagram. Mermaid diagram in `docs/Architecture_and_Data_Model.md` §3.
 
-The central entity is the **stock position**: the units of one product at one store. It has two parts. **In store** units are on the shelf and free to sell. **Reserved** units are held for online orders. Till sales and deliveries change the shelf. Online orders create **reservations**, which hold stock at a store until the customer collects it. Every one of these changes is a **stock event**, and the stock events together form the single history of stock across all systems.
+The central entity is the **stock position**: the units of one product at one store. It has two parts. **In store** units are on the shelf and free to sell. **Reserved** units are held for online orders. Till sales and supplier deliveries change the shelf. Online orders create **reservations**, which hold stock at a store until the customer collects it. Every one of these changes is a **stock event**, and the stock events together form the single history of stock across all systems.
 
 On the online side, each **product** has one **website number**, the combined quantity the website shows. A **sync** replaces the website numbers with the real shelf totals. Between syncs the website number only goes down when the website itself sells something. We call a website number **stale** when it differs from the real combined shelf stock. A bag item is **blocked at checkout** when the website showed it as in stock but no single store could supply it.
 
@@ -70,11 +70,11 @@ An online order is collected at one **pickup store** that the customer chooses. 
 
 The **store system** holds the store and product master data, live stock per store and product, till receipts, and reservations. A receipt is refused as a whole if any line is short of stock. Each reservation records the store supplying the units, the pickup store and the time of each step.
 
-The **delivery system** holds delivery locations, supplier items with their units per carton, and delivery dockets. Quantities are in cartons and times are in UTC with no time zone. When a delivery is recorded, it converts cartons to units and adds them to the store's shelf.
+The **supplier delivery system** holds supplier delivery locations, supplier items with their units per carton, and supplier delivery dockets. Quantities are in cartons and times are in UTC with no time zone. When a supplier delivery is recorded, it converts cartons to units and adds them to the store's shelf.
 
 The **online store** holds the web catalogue, the website number for each product, collection points, the customer's bag, each checkout attempt and paid orders. A customer can only add an item to the bag up to the website number, and adding holds nothing. At checkout, before payment, the store system checks that one store can supply each item, starting with the pickup store, and locks that stock. If any item is unavailable the checkout is blocked and nothing is charged. Otherwise the order is paid, stock is reserved and the website number drops at once.
 
-Each system uses its own identifiers. The same Parramatta store is `101` in the store system, `NSW-PARRA` in the delivery system and `CP-PARRAMATTA` online. The same bag of dog food is a 13-digit barcode, a supplier SKU and a web SKU.
+Each system uses its own identifiers. The same Parramatta store is `101` in the store system, `NSW-PARRA` in the supplier delivery system and `CP-PARRAMATTA` online. The same bag of dog food is a 13-digit barcode, a supplier SKU and a web SKU.
 
 > **[TODO Figure 5]** The same stores and products in each system. Dashboard → Integration & Quality → Code mappings tab.
 
@@ -82,7 +82,7 @@ Each system uses its own identifiers. The same Parramatta store is `101` in the 
 
 The ETL works in four steps.
 
-**Extract.** Triggers copy each new source record, unchanged and in source format, into a staging table. Each staged row gets a unique source reference such as `SUPPLY:delivery 32 line 1`.
+**Extract.** Triggers copy each new source record, unchanged and in source format, into a staging table. Each staged row gets a unique source reference such as `SUPPLY:supplier_delivery 32 line 1`.
 
 **Transform.** A view maps source codes to the warehouse's own codes, converts cartons to units and UTC to a Sydney business date, and assigns each row an event type with signed quantities.
 
@@ -103,7 +103,7 @@ The warehouse is a star schema with one fact table, `fact_stock_event`, and thre
 | Event type | Shelf | Reserved |
 | --- | ---: | ---: |
 | Store sale | − | 0 |
-| Delivery | + | 0 |
+| Supplier delivery | + | 0 |
 | Reservation (online order held) | − | + |
 | Transfer out | 0 | − |
 | Transfer in | 0 | + |
@@ -123,7 +123,7 @@ The dimensions use surrogate keys and conformed codes (`S01`, `P001`). The date 
 
 **Reject unknown codes instead of guessing or failing.** A guessed mapping corrupts stock silently, and failing the sale would stop a till. Rejecting the record into staging lets the store keep trading, keeps the warehouse correct and shows the gap until someone approves the mapping.
 
-**ETL in the same transaction as the source change.** Every sale, delivery and order reaches the warehouse immediately, so the source and the warehouse never disagree, and no scheduler is needed in the lab.
+**ETL in the same transaction as the source change.** Every sale, supplier delivery and order reaches the warehouse immediately, so the source and the warehouse never disagree, and no scheduler is needed in the lab.
 
 **The website number comes from the store system.** The website number is operational, and the store system already holds real stock. The warehouse is used for analysis only, so a problem in the warehouse can never stop customers from buying.
 
@@ -175,7 +175,7 @@ All SQL is commented and runs on a clean database without errors. Table 2 maps e
 | --- | --- |
 | `01_schemas.sql` | The five schemas |
 | `02_store_ops.sql` | Store system: tables, sale trigger, stock and order functions |
-| `03_supply.sql` | Delivery system: tables, delivery trigger |
+| `03_supply.sql` | Supplier delivery system: tables, supplier delivery trigger |
 | `04_online.sql` | Online store: bag, pickup options, checkout, website sync |
 | `05_warehouse.sql` | Dimensions, fact table, sync tables, indexes |
 | `06_etl.sql` | Cross-references, staging, extract triggers, transform view, load |
@@ -189,21 +189,21 @@ For example, the fact table's check constraint enforces the sign rules from Tabl
 ```sql
 CONSTRAINT ck_fact_signs CHECK (
        (event_type = 'store_sale'   AND quantity_change = -units AND reserved_change = 0      AND order_ref IS NULL)
-    OR (event_type = 'delivery'     AND quantity_change =  units AND reserved_change = 0      AND order_ref IS NULL)
+    OR (event_type = 'supplier_delivery'     AND quantity_change =  units AND reserved_change = 0      AND order_ref IS NULL)
     OR (event_type = 'reservation'  AND quantity_change = -units AND reserved_change =  units AND order_ref IS NOT NULL)
     ...
 )
 ```
 
-The synthetic data covers five stores and 18 products, plus a new product (P019) whose codes are deliberately left unmapped. It is created through the source systems' own functions, so every record passes through the ETL just as live data would. The seven days of trading include opening stock and restock deliveries, 28 till receipts, eight online bags (seven paid and one blocked by a stale website number), collections, a cancellation and two syncs. Dates are relative to the build day, so "time since last sync" and overdue orders always look realistic.
+The synthetic data covers five stores and 18 products, plus a new product (P019) whose codes are deliberately left unmapped. It is created through the source systems' own functions, so every record passes through the ETL just as live data would. The seven days of trading include opening stock and restock supplier deliveries, 28 till receipts, eight online bags (seven paid and one blocked by a stale website number), collections, a cancellation and two syncs. Dates are relative to the build day, so "time since last sync" and overdue orders always look realistic.
 
 > **[TODO Figure 9]** Output of `build.py`, ending with 155 records staged, 146 loaded, 0 rejected, 0 not reconciled.
 
-> **[TODO Figure 10]** One delivery traced from source to warehouse: cartons and UTC in staging, units and Sydney date in the fact table. Dashboard → record a delivery in the Business demo panel → View data trace.
+> **[TODO Figure 10]** One supplier delivery traced from source to warehouse: cartons and UTC in staging, units and Sydney date in the fact table. Dashboard → record a supplier delivery in the Business demo panel → View data trace.
 
 ### 3.4 Reports and dashboard
 
-The reports are views in the `dw` schema. A local web dashboard presents them, and its Business demo panel records sales, deliveries, orders, syncs and mapping approvals through the source systems.
+The reports are views in the `dw` schema. A local web dashboard presents them, and its Business demo panel records sales, supplier deliveries, orders, syncs and mapping approvals through the source systems.
 
 **Report 1: current stock by store.** Shelf and reserved units for each store and product, with low-stock flags. It also lists the stock events behind each number.
 
@@ -227,7 +227,7 @@ Two automated test scripts build a separate test database and run scripted busin
 
 > **[TODO Figure 15]** Last lines of both test runs: `PASS 95, FAIL 0` and `PASS 53, FAIL 0`.
 
-The demonstration video starts from a fresh build and goes through the main business cases. A three-item till sale lowers the shelf and appears in the warehouse at once, while the website number stays the same. A delivery of 5 cartons arrives as 20 units on a Sydney date. A checkout with two dog beds is blocked before payment because no single store has both. A customer chooses Bondi for pickup, and one item is transferred from Newtown. The staleness report shows the wrong website numbers, and the sync corrects them. The last aquarium kit sells in store, the website still shows one, and the next online checkout for it is blocked and recorded in Report 3. Finally, the new product P019 is delivered and sold before its codes are approved. Its records are rejected with a reason and load once the mapping is approved.
+The demonstration video starts from a fresh build and goes through the main business cases. A three-item till sale lowers the shelf and appears in the warehouse at once, while the website number stays the same. A supplier delivery of 5 cartons arrives as 20 units on a Sydney date. A checkout with two dog beds is blocked before payment because no single store has both. A customer chooses Bondi for pickup, and one item is transferred from Newtown. The staleness report shows the wrong website numbers, and the sync corrects them. The last aquarium kit sells in store, the website still shows one, and the next online checkout for it is blocked and recorded in Report 3. Finally, the new product P019 is delivered and sold before its codes are approved. Its records are rejected with a reason and load once the mapping is approved.
 
 Demo video: [TODO link]
 

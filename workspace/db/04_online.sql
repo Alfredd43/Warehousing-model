@@ -36,7 +36,7 @@ CREATE TABLE online.online_stock (
     CONSTRAINT ck_online_stock_available CHECK (available_quantity >= 0)
 );
 COMMENT ON TABLE online.online_stock IS
-'What the website shows: one combined quantity per product for all five stores. Lowered immediately by the website''s own paid orders; otherwise only online.sync_website_stock() changes it (from the store system''s shelf totals), so in-store sales, deliveries and store-side cancellations leave it stale until the next sync.';
+'What the website shows: one combined quantity per product for all five stores. Lowered immediately by the website''s own paid orders; otherwise only online.sync_website_stock() changes it (from the store system''s shelf totals), so in-store sales, supplier deliveries and store-side cancellations leave it stale until the next sync.';
 
 CREATE TABLE online.collection_point (
     cp_code     text         NOT NULL,

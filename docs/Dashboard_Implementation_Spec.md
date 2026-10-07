@@ -5,6 +5,8 @@ Audience: the implementation agent and project team
 Language: English for the application, code-facing documentation, and user messages  
 Status: implementation brief; the dashboard and proposed HTTP endpoints are not yet built
 
+> **Update, 7 October 2026 (admin-focused redesign).** The built dashboard now opens on an **Overview** page for the company admin (headline tiles and a "Needs attention" list from `/api/overview`), and the pages were renamed for that audience: Website & Sync → **Website stock**, Store Inventory → **Store stock** (products × stores grid by default), Checkout & Fulfilment → **Orders & lost sales**, Integration & Quality → **Data & integration** (grouped under "Technical" in the navigation). Report-number badges, "report read" times and long explanatory notes were removed from the business pages; "Business demo" is now **Demo actions** and "Refresh reports" is **Refresh**. The sections below keep the original page names. The current page guide is [dashboard_runbook.md](dashboard_runbook.md).
+
 ## 1. Objective and scope
 
 Build a working dashboard over the existing PetHaven PostgreSQL prototype. It must make the inventory synchronisation problem visible, show the result of the existing solution, and provide inspectable evidence of multi-source integration through the warehouse.
@@ -24,6 +26,7 @@ This is an educational working prototype using synthetic data. It is not a full 
 
 - [Assignment requirements](../00_req_feedback/Assignment2_Requirements.md), especially Working Prototype Implementation items vi.a–e.
 - [Tutor feedback](../00_req_feedback/29_Sep_tutor_workshop_feedback.md): focus on in-store/online product inventory synchronisation.
+- [Tutor feedback, 6 Oct](../00_req_feedback/06_Oct_tutor_workshop_feedback.md): one item number in every system, different transaction IDs (receipt number, order ID, supplier ID + supplier order number), a sync every few minutes, and the words in-store / online / supplier.
 - [Business specification](../00_req_feedback/Assignment2_Spec.md): business rules, stock definitions, required reports, and demonstration cases.
 - [Architecture and model](Architecture_and_Data_Model.md).
 - [Implementation status and limitations](implementation_notes.md).
@@ -56,9 +59,9 @@ Label the three report pages in their subtitles or help text so a reviewer can i
 ### 2.1 Already implemented; reuse
 
 - `store_ops`, `supply`, and `online` operational schemas.
-- Approved source-code cross-references, staging tables, transformations, ETL triggers, loading functions, and logs in `etl`.
+- The warehouse product list (`etl.item_list`), the approved store-code mapping, staging tables, transformations, ETL triggers, loading functions, and logs in `etl`. All three source systems use the same item number (P001); `dw.dim_product.product_code` is that item number.
 - `dw.dim_product`, `dw.dim_store`, `dw.dim_date`, and `dw.fact_stock_event`.
-- Operational website sync and warehouse sync history.
+- Operational website sync — scheduled every `SYNC_INTERVAL_SECONDS` (180 s) by `scripts/sync_scheduler.py`, or run by hand — its registration in `online.sync_schedule`, and warehouse sync history (each sync tagged `scheduled` / `manual` / `seed`).
 - Current stock, online comparison/staleness, last-sync changes, blocked checkout items, daily sales, open reservations, and reconciliation views.
 - Command-line/SQL demonstration and business-behaviour checks.
 
@@ -75,7 +78,7 @@ Do not claim these API endpoints or UI interactions already exist. New queries m
 
 ### 2.3 Required, secondary, and excluded work
 
-**Required for the first release:** all four pages, existing open-reservation detail, source/fact lineage, the core sale/supplier delivery/basket/checkout/sync demo, and the unmapped-product recovery demonstration.
+**Required for the first release:** all four pages, existing open-reservation detail, source/fact lineage, the core sale/supplier delivery/basket/checkout/sync demo, and the unknown-item recovery demonstration.
 
 **Secondary, after the required release works:** daily sales analysis; dispatch/receive/collect/cancel controls in the demo; historical sync-batch selection; CSV export; true concurrent-checkout visual demonstration.
 
@@ -107,14 +110,14 @@ Additional rules:
 3. A blocked checkout is a recorded business outcome, not a server crash. It creates no paid order or partial stock hold, and the bag remains open.
 4. The two blocked-item reasons are combined-stock shortage and stock split across stores. Sync does not remove the single-store fulfilment constraint.
 5. The website sync reads store-system shelf totals and updates the website. It does not use warehouse totals to operate the website.
-6. The warehouse records the sync and analyses its effects. Source ETL currently runs through triggers within operational transactions; do not display invented background job progress.
+6. The warehouse records the sync and analyses its effects. Source ETL currently runs through triggers within operational transactions; do not display invented background job progress. The only background job is the website sync scheduler; show its real state from `dw.rpt_online_staleness` (status, interval, next sync due), never an invented one.
 7. `pending_events` means events since the last sync boundary. It is not a queue of failed/unloaded ETL records and does not mean every event will alter the website number.
 8. `rpt_last_sync_changes` contains both website adjustments and store balance changes between syncs. Only `measure = 'online_available'` is a website correction. Store changes are not stock edits performed by sync.
 9. `dw.sync_run.numbers_changed` counts changed measure rows, not distinct corrected website products. Do not relabel it as a product count.
 10. Rejected and skipped staging rows are different. An available checkout item may be skipped because its stock movement is represented by a store reservation; skipped does not automatically mean failure.
 11. Current stock has no reporting-period filter. Date filters apply to historical events, attempts, runs, or sales only.
 12. Use `Australia/Sydney` for business dates and display. Respect daylight saving; do not use a fixed UTC+10 offset.
-13. Adding an existing SKU to a bag sets that line's requested quantity; the current function does not increment it. Label the edit accordingly and return the actual resulting bag.
+13. Adding an item already in the bag sets that line's requested quantity; the current function does not increment it. Label the edit accordingly and return the actual resulting bag.
 14. `etl.run_etl` returns NULL when there is nothing to process and creates no run-log row. Display `No pending records to process`; do not invent a successful run ID or treat this as a failure.
 
 ## 4. Visual direction
@@ -227,7 +230,7 @@ Do not use a global date picker or global store picker. Their meaning differs be
 - Product selections may carry between the website and inventory pages. Label each remaining filter and provide `Clear filters`.
 - Search uses existing product names and codes; it is local to product-related content, not a decorative global search.
 - Load from the database on page entry and on explicit refresh. After a successful mutation invalidate related data and re-query it.
-- Do not automatically sync when navigating, refreshing, or opening the app.
+- Do not run a sync when navigating, refreshing, or opening the app. The scheduler syncs on its own; when a scheduled sync is due, the Website & Sync page may re-read its reports (read-only) so the new numbers appear.
 - Show loading, empty, disconnected, validation-error, and stale-request states distinctly.
 - Prevent an older async response from replacing data for a newer filter selection.
 
@@ -242,7 +245,7 @@ Desktop composition:
 
 ```text
 Title / subtitle                                      Refresh | Business demo
-Last website sync: timestamp   Report read: timestamp   Data quality: status
+Automatic sync: every 3 min · next in m:ss (or "not started / stopped")   Last website sync: timestamp (automatic / manual)   Report read: timestamp   Data quality: status
 
 Product search | Category | All / Different / Website higher / Website lower
 
@@ -403,19 +406,19 @@ Supplier deliveries ─┼─> Staging -> Map / convert / validate -> Warehouse 
 Online store        ─┘
 ```
 
-Also identify the separate operational path in a short caption: **Website sync copies available quantities from the store system to the online system; its log is recorded in the warehouse.**
+Also identify the separate operational path in a short caption: **All three systems use the same item number. The website sync copies available quantities from the store system to the online store on a schedule (and on demand); its log is recorded in the warehouse.**
 
 This diagram is explanatory, not a graph database, live network monitor, or animated ETL progress display.
 
-### 9.2 Code mappings
+### 9.2 Item list and store codes
 
-Product table from `etl.v_product_codes`: `Warehouse product | Product name | Store barcode | Supplier SKU | Web SKU`.
+Item table from `etl.v_item_list`: `Item number | Description | Barcode (store) | Supplier | Online | Warehouse product list`. The barcode, supplier and web title are attributes; the item number is the same in every system.
 
 Store table from `etl.v_store_codes`: `Warehouse store | Store name | Store code | Supplier delivery location | Collection point`.
 
-Missing mappings show `Not mapped`; unavailable source participation shows `Not sold online` only when confirmed by the source catalogue. Do not assume every null means the same thing.
+Missing store mappings show `Not mapped`; an item not on the warehouse product list shows `Not on list`; `Not sold online` only when confirmed by the online catalogue. Do not assume every null means the same thing.
 
-These mapping views start from warehouse dimensions. Unmapped P019 may not appear there before approval. It must still be visible in the rejected-record/source-detail flow. Do not "fix" that by guessing mappings from names.
+The item list starts from the store catalogue, so P019 appears there (not on the warehouse product list) before it is added. It must also be visible in the rejected-record/source-detail flow. Never load a record for an unknown item under a guess.
 
 ### 9.3 Source-to-warehouse trace
 
@@ -423,7 +426,7 @@ Selecting a staging record or following `View data trace` opens one detail panel
 
 1. **Source**: source system, source reference, relevant source-format fields.
 2. **Staging**: staging table, ID, captured time, load status and note.
-3. **Transformation**: source codes to approved unified codes, source quantity/units to warehouse units, source time to Sydney event date.
+3. **Transformation**: item number checked against the warehouse product list, source store code to the approved warehouse store code, source quantity/units to warehouse units, source time to Sydney event date.
 4. **Warehouse**: event ID, event type, product/store/date keys and labels, signed stock changes, ETL run ID, loaded time.
 
 For a supplier delivery, show actual values such as `5 cartons × 4 units/carton = 20 units` only when those values come from the selected record.
@@ -452,7 +455,7 @@ Mismatch columns: `Store source code | Product source code | Unified store/produ
 - Empty mismatch list means all compared pairs match; state the comparison scope.
 - No comparison rows means unavailable/no data, not 100% success.
 - Keep rejection and reconciliation sections separate: they answer different questions and their counts need not match.
-- Clicking a rejection opens its staging trace and, for the supported P019 demo, its mapping-recovery workflow.
+- Clicking a rejection opens its staging trace and, for the supported P019 demo, its "add to product list" recovery workflow.
 
 ## 10. Business demo workspace
 
@@ -460,27 +463,27 @@ Mismatch columns: `Store source code | Product source code | Unified store/produ
 
 Label clearly: **Business demo — writes to pethaven_demo**. Default application loading is read-only. Opening the workspace alone does not change data.
 
-Provide small forms using real catalogue options. Show warehouse-friendly codes in selectors and the resolved source codes as secondary details. Unmapped-product demonstration selectors must also support actual source codes.
+Provide small forms using real catalogue options. Show item numbers and warehouse store codes in selectors and the resolved source store codes as secondary details. The unknown-item demonstration selectors must also offer items that are not on the warehouse product list.
 
 Every submitted action returns the actual database-generated identifier and a concise result, followed by `View affected report` and `View data trace` where applicable. Do not use fixed order/basket/run IDs copied from comments in the old SQL demo.
 
 Disable repeated submission while an action is pending. Do not automatically retry writes after a timeout: the transaction may already have committed. Explain an unknown outcome and allow the user to inspect recent records before repeating it. For the local single-presenter prototype, an in-flight guard and explicit inspection are the minimum; do not promise exactly-once supplier delivery without a persisted design.
 
-Ordinary sale/supplier delivery/checkout/sync submits need no extra confirmation after the user has filled the form and pressed its labelled action. Keep a review step for approving a code mapping because it changes integration interpretation. No general-purpose SQL execution box or database rebuild endpoint.
+Ordinary sale/supplier delivery/checkout/sync submits need no extra confirmation after the user has filled the form and pressed its labelled action. Keep a review step for adding an item to the warehouse product list because it changes what the warehouse accepts. No general-purpose SQL execution box or database rebuild endpoint.
 
 ### 10.2 Required operations
 
 | Action | Inputs | Existing function(s) | Expected visible result |
 | --- | --- | --- | --- |
 | Record store sale | Store, one or more products, positive integer units | `store_ops.record_sale` | Receipt ID; shelf/fact changes; website may remain stale |
-| Record supplier delivery | Supplier delivery location, supplier name, SKU, positive integer cartons | `supply.record_supplier_delivery` | Supplier delivery ID; source cartons and converted units; updated shelf/fact |
+| Record supplier delivery | Supplier delivery location, item number, positive integer cartons, supplier ID (default: the item's supplier), optional supplier order number | `supply.record_supplier_delivery` | Supplier ID and supplier order number; source cartons and converted units; updated shelf/fact |
 | Create bag | Known customer postcode | `online.create_basket` | Generated basket ID; open bag |
-| Add/update bag item | Basket, web SKU, positive integer quantity | `online.add_to_basket` | Actual bag content; no reservation |
-| Remove bag item | Basket, web SKU | `online.remove_from_basket` | Updated bag |
+| Add/update bag item | Basket, item number, positive integer quantity | `online.add_to_basket` | Actual bag content; no reservation |
+| Remove bag item | Basket, item number | `online.remove_from_basket` | Updated bag |
 | View pickup options | Basket | `online.pickup_options` | Actual offered collection points and transfer information |
 | Checkout | Basket, offered pickup point or automatic selection | `online.checkout` | Generated order ID or recorded blocked attempt |
-| Sync website stock | No quantity input | `online.sync_website_stock` | Source sync ID and linked warehouse sync ID; before/after website values |
-| Approve demo mapping | Source system/code and P019 after review | `etl.approve_product_mapping` | Stored mapping; does not itself claim records have loaded |
+| Sync website stock now (manual) | No quantity input | `online.sync_website_stock` | Source sync ID and linked warehouse sync ID (`triggered_by = manual`); before/after website values |
+| Add item to product list | Item number (P019) after review | `etl.add_item` | Item on the list; does not itself claim records have loaded |
 | Run ETL | No raw SQL | `etl.run_etl` | Recorded run outcome, or a no-work result; rejected records may now load |
 
 Before coding, inspect function signatures and use typed, parameterised SQL. Leave default event timestamps to the database in interactive operations. Source supplier delivery time is UTC without time zone in its interface; handle it as that explicit source format.
@@ -498,7 +501,7 @@ Optional lifecycle actions call the existing `dispatch_order_transfers`, `receiv
 | Blocked checkout | Blocked items, source attempt, staging/runs |
 | Successful checkout | Bag/order, stock, website comparison, open reservations, staging/runs |
 | Website sync | Last sync, website comparison, sync staging/log, quality/reconciliation |
-| Mapping approval + later ETL | Mappings, rejections, facts, affected stock/reconciliation, selector options |
+| Adding an item + later ETL | Item list, rejections, facts, affected stock/reconciliation, selector options |
 | Transfer/collection/cancellation | Open reservations, stock/events, comparison, integration evidence |
 
 Re-query after commit. Read refresh failures after a successful write must say **Action completed; report refresh failed**, not **Action failed**.
@@ -509,7 +512,7 @@ Treat these as reproducible walkthroughs, not scripted browser animations. Verif
 
 **A. Stale website stock affects checkout, then sync corrects it**
 
-1. Use a mapped online product with positive shelf stock, preferably P018 after a clean build. Query current source balances and sync to establish an equal starting point.
+1. Use an online product on the warehouse product list with positive shelf stock, preferably P018 after a clean build. Query current source balances and sync to establish an equal starting point.
 2. Present an explicit scenario action, `Sell remaining available units`, showing which stores and quantities will be sold. On submission, call `record_sale` for each positive store balance of this one product in a single backend transaction. Do not directly overwrite stock. This bounded scenario consumes only this product's free stock, not reserved units.
 3. Verify combined shelf availability is now zero and the website still shows its prior positive quantity.
 4. Create a new bag, add one unit, and check out using the existing automatic selection behaviour. Confirm a blocked attempt, no successful order, and no additional reservations caused by this attempt.
@@ -521,21 +524,21 @@ If the product is already out of stock, explain the unmet prerequisite and sugge
 
 **B. Supplier format becomes warehouse data**
 
-1. Deliver P001 to Chatswood using supplier SKU `PF-DOG-ADT-3K`, location `NSW-CHATS`, 5 cartons, after checking the source catalogue.
+1. Deliver item P001 to Chatswood (supplier SUP-01), location `NSW-CHATS`, 5 cartons, after checking the source catalogue.
 2. Show the stored `units_per_carton` (currently 4), hence 20 units, and UTC-to-Sydney timestamp/date handling.
 3. Follow the new staging record to its loaded supplier delivery event and updated store availability.
 4. Show that the website may now display fewer units than the stores have; sync and inspect the actual change if demonstrating that direction.
 
-**C. Unmapped record is rejected, then recovered**
+**C. Unknown item is rejected, then recovered**
 
-1. Verify the clean fixture: P019 exists in source catalogues, supplier SKU `PP-CAT-TUNNEL`, store barcode `9300601001194`, and its STORE/SUPPLY mappings are absent. It is not sold online.
-2. Record a supplier delivery of 2 cartons to `NSW-PARRA`; optionally sell one unit using its source barcode. Source operations succeed.
-3. Show the staging rejection reason and source-versus-warehouse gap.
-4. Review and approve the SUPPLY and STORE mappings to P019 with the existing function.
+1. Verify the clean fixture: item P019 exists in the store and supplier catalogues but is not on the warehouse product list. It is not sold online.
+2. Record a supplier delivery of 2 cartons of P019 to `NSW-PARRA`; optionally sell one unit at S01. Source operations succeed.
+3. Show the staging rejection reason ("Unknown item P019") and source-versus-warehouse gap.
+4. Review and add P019 to the warehouse product list with the existing function.
 5. Explicitly run ETL; show linked loaded facts, resolved current rejections, and corrected reconciliation.
 6. Run ETL again and verify the same source references do not create duplicate facts.
 
-If mappings were already approved, mark the scenario as already prepared/completed and direct the presenter to the documented manual clean-build workflow if a fresh rejection demonstration is needed. Do not delete approved mappings as an automatic reset.
+If P019 is already on the list, mark the scenario as already prepared/completed and direct the presenter to the documented manual clean-build workflow if a fresh rejection demonstration is needed. Do not remove items from the list as an automatic reset.
 
 **D. Existing reservation lifecycle, read-only minimum**
 
@@ -558,7 +561,7 @@ These routes are to be implemented; names may be adjusted consistently across ba
 | `GET /api/checkout/blocked` | Report fields plus stable event/attempt identifiers |
 | `GET /api/checkout/attempts/{id}` | Exact source attempt/items and lineage context |
 | `GET /api/reservations` | Current open lines and full-order readiness |
-| `GET /api/integration/mappings` | Existing product/store code views |
+| `GET /api/integration/mappings` | Item list (`etl.v_item_list`) and store code view; items not on the warehouse product list |
 | `GET /api/integration/staging` | Business-event staging rows and status filters |
 | `GET /api/integration/sync-staging` | Separate sync stream with source/warehouse sync linkage |
 | `GET /api/integration/runs` | Recorded ETL run rows |
@@ -587,7 +590,7 @@ Paginate long event/staging/run lists, default 50 rows and a bounded maximum suc
 
 ### 11.2 Mutation endpoints: proposed contract
 
-Use POST routes such as `/api/demo/sales`, `/supplier-deliveries`, `/baskets`, `/baskets/{id}/items`, `/baskets/{id}/remove-item`, `/baskets/{id}/checkout`, `/sync`, `/mappings/approve`, and `/etl`, under the same `/api/demo` prefix. Pickup options and current bag reads use GET.
+Use POST routes such as `/api/demo/sales`, `/supplier-deliveries`, `/baskets`, `/baskets/{id}/items`, `/baskets/{id}/remove-item`, `/baskets/{id}/checkout`, `/sync`, `/items/add`, and `/etl`, under the same `/api/demo` prefix. Pickup options and current bag reads use GET.
 
 Support scenario A through one explicit, bounded endpoint that sells the selected product's current free stock using source functions, or an equivalent server-side scenario action. Validate and execute the preparation against one transactionally consistent set of balances; if state changes or a sale is refused, roll back that scenario action and explain why.
 
@@ -618,7 +621,7 @@ Most report calculations come from warehouse facts. Two existing reports deliber
 
 Source checkout detail and demo forms also read operational records. Label provenance accurately. Do not advertise that every displayed value is read solely from `dw`, even though some existing comments describe Reports 1–5 that way.
 
-Unmapped online products are not automatically included in the mapped comparison view. Qualify its scope and surface relevant sync-staging skips instead of assuming universal coverage.
+Online items not on the warehouse product list are not included in the comparison view. Qualify its scope and surface relevant sync-staging skips instead of assuming universal coverage.
 
 ## 12. Implementation structure and lab integration
 
@@ -712,8 +715,9 @@ Use semantic headings/tables/forms. Associate labels with fields, support keyboa
 - [ ] Open order readiness remains correct when only some lines are visible.
 - [ ] Supplier delivery trace displays stored cartons, conversion factor, units, and correct Sydney business date.
 - [ ] Loaded lineage works after a row disappears from `v_transform`.
-- [ ] Unmapped P019 is visible through rejection/source detail even before warehouse dimensions contain it.
-- [ ] Approving mappings then running ETL loads previously rejected rows; rerun creates no duplicate facts.
+- [ ] Unknown item P019 is visible through rejection/source detail even before warehouse dimensions contain it.
+- [ ] Adding an unknown item to the product list then running ETL loads previously rejected rows; rerun creates no duplicate facts.
+- [ ] Website & Sync shows the sync interval, scheduler state, time since the last sync and the next sync due.
 - [ ] A no-work ETL call and setting an existing bag line's quantity match the actual function semantics.
 - [ ] Separate website sync staging is visible or explicitly scoped out of business-event totals.
 - [ ] Failed reads and valid zero/empty results look different.

@@ -1,11 +1,11 @@
-// Page D: Integration & Quality — architecture, trace, mappings, ETL runs, staging, reconciliation.
+// Page D: Data & integration — architecture, trace, item list and store codes, ETL runs, staging, reconciliation.
 
 import { get } from "../api.js";
 import { h, clear, fmt, badge, card, state, loading, field, select, table, pager, tabs, kv, errorState, keepFocus, icon } from "../components/ui.js";
 
 const STATUS_KIND = { loaded: "success", rejected: "danger", skipped: "neutral", pending: "warning" };
 const TABLE_LABEL = {
-  stg_store_sale_line: "Store sale line", stg_supplier_delivery_line: "Supplier delivery line",
+  stg_store_sale_line: "In-store sale line", stg_supplier_delivery_line: "Supplier delivery line",
   stg_reservation_change: "Reservation step", stg_checkout_item: "Checkout item",
 };
 
@@ -78,13 +78,12 @@ export default {
       clear(root);
       root.append(h("div", { class: "page-head" },
         h("div", {},
-          h("h1", {}, "Integration & Quality"),
-          h("p", { class: "subtitle" }, "Trace source records through ETL and verify warehouse completeness."),
-          h("span", { class: "report-id" }, "Solution evidence · three sources → staging → warehouse"))));
+          h("h1", {}, "Data & integration"),
+          h("p", { class: "subtitle" }, "Technical view: how records from the three systems reach the reports, and checks that nothing is missing."))));
       if (traceQuery()) root.append(traceCard());
       root.append(tabs([
         { value: "overview", label: "Overview and quality" },
-        { value: "mappings", label: "Code mappings" },
+        { value: "mappings", label: "Item list and store codes" },
         { value: "staging", label: "ETL runs and staging" },
         { value: "sync", label: "Website sync records" },
       ], tab(), (v) => app.setParams({ tab: v === "overview" ? "" : v }), "Integration views"));
@@ -101,17 +100,17 @@ export default {
       return card({
         id: "architecture", title: "How data reaches the reports",
         body: h("div", { class: "card-body" },
-          h("div", { class: "flow", role: "img", "aria-label": "Store operations, supplier deliveries and the online store feed staging; staging is mapped, converted and validated; valid rows load into the warehouse; reports read the warehouse." },
+          h("div", { class: "flow", role: "img", "aria-label": "In-store sales, supplier deliveries and the online store feed staging; staging is checked, converted and validated; valid rows load into the warehouse; reports read the warehouse." },
             h("div", { class: "flow-sources" },
-              h("div", { class: "flow-node" }, "Store operations"),
-              h("div", { class: "flow-node" }, "Supplier deliveries"),
-              h("div", { class: "flow-node" }, "Online store")),
+              h("div", { class: "flow-node" }, "In-store (receipt number)"),
+              h("div", { class: "flow-node" }, "Supplier (supplier order)"),
+              h("div", { class: "flow-node" }, "Online (order ID)")),
             arrow(), h("div", { class: "flow-node" }, "Staging"),
-            arrow(), h("div", { class: "flow-node" }, "Map / convert / validate"),
+            arrow(), h("div", { class: "flow-node" }, "Check item / map store / convert"),
             arrow(), h("div", { class: "flow-node dw" }, "Warehouse"),
             arrow(), h("div", { class: "flow-node" }, "Reports")),
           h("p", { class: "secondary small", style: "margin-top:12px" },
-            "Website sync copies available quantities from the store system to the online system; its log is recorded in the warehouse.")),
+            "All three systems use the same item number. The website sync copies available quantities from the store system to the online store on a schedule (and on demand); its log is recorded in the warehouse.")),
       });
     }
 
@@ -131,8 +130,8 @@ export default {
               caption: "Store-product pairs where the warehouse differs from the store system",
               columns: [
                 { label: "Store source code", key: "store_no" },
-                { label: "Product source code", render: (m) => h("span", { class: "mono" }, m.barcode) },
-                { label: "Unified store / product", render: (m) => `${m.store_code ?? "Not mapped"} / ${m.product_code ?? "Not mapped"}` },
+                { label: "Item", render: (m) => h("span", { class: "mono" }, m.item_no) },
+                { label: "Warehouse store / product", render: (m) => `${m.store_code ?? "Not mapped"} / ${m.product_code ?? "Unknown item"}` },
                 { label: "Source available", num: true, render: (m) => fmt.num(m.source_in_store) },
                 { label: "Warehouse available", num: true, render: (m) => (m.warehouse_in_store === null ? "No warehouse row" : fmt.num(m.warehouse_in_store)) },
                 { label: "Source reserved", num: true, render: (m) => fmt.num(m.source_reserved) },
@@ -154,8 +153,8 @@ export default {
               { label: "Last attempt", render: (q) => fmt.dateTime(q.last_attempt_at) },
               { label: "Actions", render: (q) => h("span", {},
                   h("a", { href: `#/integration?trace_table=${q.stg_table}&trace_id=${q.stg_id}` }, "Trace"),
-                  mappingCode(q) ? [" · ", h("button", { class: "btn-link", type: "button",
-                    onclick: () => app.openDemo("mapping", { source_system: q.source_system, source_code: mappingCode(q) }) }, "Review mapping")] : null) },
+                  unknownItem(q) ? [" · ", h("button", { class: "btn-link", type: "button",
+                    onclick: () => app.openDemo("mapping", { item_no: unknownItem(q) }) }, "Add to product list")] : null) },
             ],
             rows: r.data.rejected,
           }) : state("", "No currently rejected business-event records", "Website sync lines are checked separately (see Website sync records).")) }),
@@ -173,26 +172,27 @@ export default {
           }) })));
     }
 
-    function mappingCode(q) {
-      const m = /^No approved (STORE|SUPPLY|ONLINE) product mapping for code (.+)$/.exec(q.reject_reason || "");
-      return m ? m[2] : null;
+    function unknownItem(q) {
+      const m = /^Unknown item (P\d{3})/.exec(q.reject_reason || "");
+      return m ? m[1] : null;
     }
 
-    // ---------- mappings ----------
+    // ---------- item list and store codes ----------
     function drawMappings() {
       root.append(block("mappings", (r) => h("div", { class: "stack" },
-        card({ id: "product-codes", title: "Product codes in each system",
-          subtitle: "Approved mappings from each source's own code to the warehouse product code. Names are never used to match.",
+        card({ id: "product-codes", title: "Items: one item number in every system",
+          subtitle: "The store system, the supplier delivery system and the online store all identify a product by the same item number. The barcode, units per carton and web title are attributes, not keys. The warehouse accepts an item once it is on its product list.",
           body: table({
-            caption: "Product code mappings",
+            caption: "Item list",
             columns: [
-              { label: "Warehouse product", key: "product_code" },
-              { label: "Product name", key: "product_name" },
-              { label: "Store barcode", render: (p) => (p.store_barcode ? h("span", { class: "mono" }, p.store_barcode) : badge("Not mapped", "warning")) },
-              { label: "Supplier SKU", render: (p) => (p.supplier_sku ? h("span", { class: "mono" }, p.supplier_sku) : badge("Not mapped", "warning")) },
-              { label: "Web SKU", render: (p) => (p.web_sku ? h("span", { class: "mono" }, p.web_sku) : p.in_web_catalogue ? badge("Not mapped", "warning") : badge("Not sold online", "neutral", { dot: false })) },
+              { label: "Item number", render: (p) => h("span", { class: "mono" }, p.item_no) },
+              { label: "Description", key: "description" },
+              { label: "Barcode (store)", render: (p) => h("span", { class: "mono" }, p.barcode) },
+              { label: "Supplier", render: (p) => p.supplier_id ? `${p.supplier_id} · ${p.units_per_carton}/carton` : "—" },
+              { label: "Online", render: (p) => (p.sold_online ? p.web_title : badge("Not sold online", "neutral", { dot: false })) },
+              { label: "Warehouse product list", render: (p) => (p.on_product_list ? badge("On list", "success") : badge("Not on list", "warning")) },
             ],
-            rows: r.data.products,
+            rows: r.data.items,
           }) }),
         card({ id: "store-codes", title: "Store codes in each system",
           body: table({
@@ -206,19 +206,18 @@ export default {
             ],
             rows: r.data.stores,
           }) }),
-        card({ id: "unmapped", title: "Source products without an approved mapping",
-          subtitle: "These codes exist in a source catalogue but not in the warehouse. Their records are rejected with a reason until a data steward approves a mapping.",
-          body: r.data.unmapped_source_products.length ? table({
-            caption: "Unmapped source product codes",
+        card({ id: "unmapped", title: "Items not on the warehouse product list",
+          subtitle: "These items are in a source catalogue but not on the warehouse product list. Their records are rejected as \u201cUnknown item\u201d until a data steward adds them.",
+          body: r.data.items_not_on_list.length ? table({
+            caption: "Items not on the warehouse product list",
             columns: [
-              { label: "Source", key: "source_system" },
-              { label: "Source code", render: (u) => h("span", { class: "mono" }, u.source_code) },
-              { label: "Name in that source", key: "source_name" },
+              { label: "Item number", render: (u) => h("span", { class: "mono" }, u.item_no) },
+              { label: "Description", key: "description" },
               { label: "Action", render: (u) => h("button", { class: "btn btn-small btn-accent", type: "button",
-                  onclick: () => app.openDemo("mapping", { source_system: u.source_system, source_code: u.source_code }) }, "Review mapping") },
+                  onclick: () => app.openDemo("mapping", { item_no: u.item_no }) }, "Add to product list") },
             ],
-            rows: r.data.unmapped_source_products,
-          }) : state("", "Every source product code has an approved mapping", "") }))));
+            rows: r.data.items_not_on_list,
+          }) : state("", "Every catalogue item is on the warehouse product list", "") }))));
     }
 
     // ---------- staging and runs ----------
@@ -241,9 +240,9 @@ export default {
             rows: r.data.rows, empty: state("", "No ETL run recorded", ""),
           }), pager(r.data, (off) => app.setParams({ runoff: off ? String(off) : "" })))) }),
         card({ id: "staging", title: "Staged business-event records",
-          subtitle: "Every extracted sale line, supplier delivery line, reservation step and checkout item, and what the ETL did with it. Select a row to trace it.",
+          subtitle: "Every extracted in-store sale line, supplier delivery line, order step and checkout item, and what the ETL did with it. The reference carries the receipt number, supplier order number or order ID. Select a row to trace it.",
           actions: [
-            field("Source", select([{ value: "", label: "All sources" }, { value: "STORE", label: "Store system" }, { value: "SUPPLY", label: "Supplier delivery system" }, { value: "ONLINE", label: "Online store" }],
+            field("Source", select([{ value: "", label: "All sources" }, { value: "STORE", label: "Store system (in-store)" }, { value: "SUPPLY", label: "Supplier delivery system" }, { value: "ONLINE", label: "Online store" }],
               params.stsrc || "", (v) => app.setParams({ stsrc: v, stoff: "" }), { "data-fk": "stsrc" })),
             field("Status", select([{ value: "", label: "All statuses" }, ...["loaded", "rejected", "skipped", "pending"].map((s) => ({ value: s, label: s[0].toUpperCase() + s.slice(1) }))],
               params.ststat || "", (v) => app.setParams({ ststat: v, stoff: "" }), { "data-fk": "ststat" })),
@@ -281,7 +280,7 @@ export default {
           columns: [
             { label: "Online sync", num: true, key: "source_sync_no" },
             { label: "Warehouse sync", num: true, render: (x) => x.warehouse_sync_id ?? "Not recorded" },
-            { label: "Web SKU", render: (x) => h("span", { class: "mono" }, x.web_sku) },
+            { label: "Item", render: (x) => h("span", { class: "mono" }, x.item_no) },
             { label: "Before", num: true, key: "before_qty" },
             { label: "After", num: true, key: "after_qty" },
             { label: "Status", render: (x) => badge(x.load_status, STATUS_KIND[x.load_status] || "neutral") },
@@ -312,7 +311,7 @@ export default {
             : `Sydney ${fmt.dateTimeSec(t.time.event_ts)}`;
           const map = (m) => (m.warehouse_code
             ? [h("span", { class: "mono" }, m.source_code), " → ", h("b", {}, m.warehouse_code), h("span", { class: "cell-sub" }, m.basis)]
-            : [h("span", { class: "mono" }, m.source_code), " → ", badge("No approved mapping", "danger")]);
+            : [h("span", { class: "mono" }, m.source_code), " → ", badge(m === t.product ? "Not on the warehouse product list" : "No approved mapping", "danger")]);
           let whBody;
           if (w) {
             whBody = kv([
@@ -320,7 +319,7 @@ export default {
               ["Product", `${w.product_code} (key ${w.product_key})`], ["Store", `${w.store_code} (key ${w.store_key})`],
               ["Date key", `${w.date_key} · ${fmt.date(w.business_date)}`],
               ["Available change", fmt.signed(w.available_change)], ["Reserved change", fmt.signed(w.reserved_change)],
-              w.order_ref ? ["Order / basket", `${w.order_ref}${w.pickup_store_code ? ` · pickup ${w.pickup_store_code}` : ""}`] : null,
+              w.order_ref ? ["Order ID / basket", `${w.order_ref}${w.pickup_store_code ? ` · pickup ${w.pickup_store_code}` : ""}`] : null,
               ["ETL run", w.etl_run_id], ["Loaded at", fmt.dateTimeSec(w.loaded_at)],
             ]);
           } else if (s.load_status === "skipped") {
@@ -343,7 +342,7 @@ export default {
             step(3, "Transformation",
               h("p", { class: "small secondary", style: "margin-bottom:8px" }, "Derived from the stored staging fields."),
               kv([
-                ["Product code", map(t.product)], ["Store code", map(t.store)],
+                ["Item number", map(t.product)], ["Store code", map(t.store)],
                 ["Quantity", qty], ["Time", time], ["Business date", fmt.date(t.time.business_date)],
                 t.pending_result?.reject_reason ? ["Validation", badge(t.pending_result.reject_reason, "danger")] : null,
               ])),

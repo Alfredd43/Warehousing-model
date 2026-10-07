@@ -10,8 +10,8 @@
 -- online.stock_sync / stock_sync_line.
 --
 -- This file is the ANALYTICAL side. When a sync finishes, its log is
---   EXTRACTED  into etl.stg_website_sync_line (source format: web SKUs),
---   TRANSFORMED to warehouse products through the approved cross-reference,
+--   EXTRACTED  into etl.stg_website_sync_line (source format),
+--   TRANSFORMED to warehouse products by item number,
 --   LOADED     into dw.sync_run / dw.sync_change, together with what the
 --              warehouse knows about that moment: the stock events since the
 --              previous sync, the store totals they changed, and a
@@ -24,7 +24,7 @@ CREATE TABLE etl.stg_website_sync_line (
     stg_id        bigint      GENERATED ALWAYS AS IDENTITY,
     sync_no       bigint      NOT NULL,
     run_at        timestamptz NOT NULL,
-    web_sku       text        NOT NULL,
+    item_no       text        NOT NULL,
     before_qty    integer     NOT NULL,
     after_qty     integer     NOT NULL,
     source_ref    text        NOT NULL,
@@ -37,7 +37,7 @@ CREATE TABLE etl.stg_website_sync_line (
     CONSTRAINT ck_stg_website_sync_line_status CHECK (load_status IN ('pending', 'loaded', 'skipped'))
 );
 COMMENT ON TABLE etl.stg_website_sync_line IS
-'Extract of online.stock_sync_line for each finished website sync, in online-store codes. Lines whose web SKU has no approved mapping are skipped with a note.';
+'Extract of online.stock_sync_line for each finished website sync. Lines for an item not on the warehouse product list are skipped with a note.';
 
 
 -- Load one finished website sync into the warehouse.
@@ -45,17 +45,18 @@ CREATE FUNCTION dw.load_website_sync(p_sync_no bigint) RETURNS integer
 LANGUAGE plpgsql AS $$
 DECLARE
     v_run_at      timestamptz;
+    v_trigger     text;
     v_from        bigint;
     v_to          bigint;
     v_sync_id     integer;
     v_online_key  integer;
 BEGIN
-    SELECT run_at INTO v_run_at FROM online.stock_sync WHERE sync_no = p_sync_no;
+    SELECT run_at, triggered_by INTO v_run_at, v_trigger FROM online.stock_sync WHERE sync_no = p_sync_no;
 
     -- EXTRACT: the sync log, unchanged.
-    INSERT INTO etl.stg_website_sync_line (sync_no, run_at, web_sku, before_qty, after_qty, source_ref)
-    SELECT l.sync_no, v_run_at, l.web_sku, l.before_qty, l.after_qty,
-           format('ONLINE:sync %s %s', l.sync_no, l.web_sku)
+    INSERT INTO etl.stg_website_sync_line (sync_no, run_at, item_no, before_qty, after_qty, source_ref)
+    SELECT l.sync_no, v_run_at, l.item_no, l.before_qty, l.after_qty,
+           format('ONLINE:sync %s item %s', l.sync_no, l.item_no)
       FROM online.stock_sync_line l
      WHERE l.sync_no = p_sync_no;
 
@@ -69,9 +70,9 @@ BEGIN
     SELECT coalesce(max(to_event_id), 0) INTO v_from FROM dw.sync_run;
     SELECT coalesce(max(event_id), v_from) INTO v_to FROM dw.fact_stock_event;
 
-    INSERT INTO dw.sync_run (source_sync_no, run_at, from_event_id, to_event_id, events_processed,
+    INSERT INTO dw.sync_run (source_sync_no, run_at, triggered_by, from_event_id, to_event_id, events_processed,
                              numbers_changed, store_mismatches)
-    SELECT p_sync_no, v_run_at, v_from, v_to, count(*), 0, 0
+    SELECT p_sync_no, v_run_at, v_trigger, v_from, v_to, count(*), 0, 0
       FROM dw.fact_stock_event
      WHERE event_id > v_from AND event_id <= v_to
     RETURNING sync_id INTO v_sync_id;
@@ -98,24 +99,22 @@ BEGIN
     SELECT v_sync_id, product_key, store_key, 'reserved', res_before, res_after FROM totals
      WHERE res_before <> 0 OR res_after <> 0;
 
-    -- TRANSFORM + LOAD: the website numbers, web SKU -> warehouse product.
+    -- TRANSFORM + LOAD: the website numbers, matched to warehouse products
+    -- by item number (the same in every system).
     INSERT INTO dw.sync_change (sync_id, product_key, store_key, measure, before_qty, after_qty)
     SELECT v_sync_id, p.product_key, v_online_key, 'online_available', s.before_qty, s.after_qty
       FROM etl.stg_website_sync_line s
-      JOIN etl.product_xref x ON x.source_system = 'ONLINE' AND x.source_code = s.web_sku
-      JOIN dw.dim_product p   ON p.product_code = x.product_code
+      JOIN dw.dim_product p ON p.product_code = s.item_no
      WHERE s.sync_no = p_sync_no;
 
     UPDATE etl.stg_website_sync_line s
-       SET load_status  = CASE WHEN x.product_code IS NULL THEN 'skipped' ELSE 'loaded' END,
-           note         = CASE WHEN x.product_code IS NULL
-                               THEN format('No approved ONLINE product mapping for %s', s.web_sku) END,
+       SET load_status  = CASE WHEN p.product_code IS NULL THEN 'skipped' ELSE 'loaded' END,
+           note         = CASE WHEN p.product_code IS NULL
+                               THEN format('Unknown item %s: not on the warehouse product list', s.item_no) END,
            processed_at = clock_timestamp()
-      FROM (SELECT s2.stg_id, x2.product_code
-              FROM etl.stg_website_sync_line s2
-              LEFT JOIN etl.product_xref x2 ON x2.source_system = 'ONLINE' AND x2.source_code = s2.web_sku
-             WHERE s2.sync_no = p_sync_no) x
-     WHERE s.stg_id = x.stg_id;
+      FROM etl.stg_website_sync_line s2
+      LEFT JOIN dw.dim_product p ON p.product_code = s2.item_no
+     WHERE s2.stg_id = s.stg_id AND s2.sync_no = p_sync_no;
 
     -- Summary counts and reconciliation of the warehouse with the store system.
     UPDATE dw.sync_run

@@ -119,12 +119,22 @@ def quality_summary(conn) -> dict:
     return r
 
 
+def schedule_summary(conn) -> dict:
+    """The automatic sync as the staleness report shows it."""
+    r = row(conn, """
+        SELECT scheduler_status, extract(epoch FROM sync_interval)::integer AS interval_seconds,
+               next_sync_at, last_sync_at, last_sync_trigger
+          FROM dw.rpt_online_staleness""")
+    return r
+
+
 def status(conn, params) -> Result:
     last = row(conn, """
-        SELECT sync_id, source_sync_no::text AS source_sync_no, run_at
+        SELECT sync_id, source_sync_no::text AS source_sync_no, run_at, triggered_by
           FROM dw.sync_run ORDER BY sync_id DESC LIMIT 1""")
-    return Result({"last_sync": last, "quality": quality_summary(conn)},
-                  provenance=["dw.sync_run", "etl.v_data_quality", "dw.rpt_reconciliation"])
+    return Result({"last_sync": last, "schedule": schedule_summary(conn), "quality": quality_summary(conn)},
+                  provenance=["dw.sync_run", "dw.rpt_online_staleness", "etl.v_data_quality",
+                              "dw.rpt_reconciliation"])
 
 
 def health(conn, params) -> Result:
@@ -133,12 +143,63 @@ def health(conn, params) -> Result:
     return Result(r)
 
 
+# --- Overview: what the admin needs to act on -----------------------------------------
+def overview(conn, params) -> Result:
+    """Headline numbers and attention lists, all from the existing report views."""
+    website = row(conn, """
+        SELECT count(*)                                                   AS products,
+               count(*) FILTER (WHERE status <> 'in sync')                AS out_of_date,
+               count(*) FILTER (WHERE overstated_by > 0)                  AS overstated,
+               count(*) FILTER (WHERE overstated_by < 0)                  AS understated
+          FROM dw.rpt_online_vs_actual""")
+    website["rows"] = rows(conn, """
+        SELECT product_code, product_name, online_shown, actual_in_store, overstated_by AS difference
+          FROM dw.rpt_online_vs_actual WHERE status <> 'in sync'
+         ORDER BY abs(overstated_by) DESC, product_code LIMIT 6""")
+    sync = row(conn, """
+        SELECT scheduler_status, extract(epoch FROM sync_interval)::integer AS interval_seconds,
+               next_sync_at, last_sync_at, last_sync_trigger, pending_events
+          FROM dw.rpt_online_staleness""")
+    stock = row(conn, """
+        SELECT count(*) FILTER (WHERE in_store_quantity = 0)          AS out_of_stock,
+               count(*) FILTER (WHERE in_store_quantity BETWEEN 1 AND 2) AS low_stock
+          FROM dw.rpt_current_stock_by_store""")
+    stock["rows"] = rows(conn, """
+        SELECT store_code, store_name, product_code, product_name, in_store_quantity AS available,
+               reserved_quantity AS reserved
+          FROM dw.rpt_current_stock_by_store WHERE low_stock
+         ORDER BY in_store_quantity, product_code, store_code LIMIT 8""")
+    lost = row(conn, """
+        SELECT count(*) AS items, coalesce(sum(quantity_in_bag), 0) AS units
+          FROM dw.rpt_checkout_blocked WHERE attempted_at > now() - interval '7 days'""")
+    lost["rows"] = rows(conn, """
+        SELECT attempted_at, product_code, product_name, quantity_in_bag AS units, pickup_store,
+               CASE WHEN starts_with(reason, 'stock sold since last sync') THEN 'stale' ELSE 'split' END AS reason_code
+          FROM dw.rpt_checkout_blocked ORDER BY attempted_at DESC LIMIT 4""")
+    orders = row(conn, """
+        SELECT count(DISTINCT order_no)                                   AS open_orders,
+               count(DISTINCT order_no) FILTER (WHERE order_ready)        AS ready,
+               count(DISTINCT order_no) FILTER (WHERE NOT order_ready)    AS not_ready,
+               count(DISTINCT order_no) FILTER (WHERE overdue)            AS overdue
+          FROM dw.rpt_open_reservations""")
+    sales = rows(conn, """
+        SELECT channel, sum(units_sold)::integer AS units
+          FROM dw.rpt_daily_sales WHERE full_date > current_date - 7
+         GROUP BY channel ORDER BY channel""")
+    return Result({"website": website, "sync": sync, "stock": stock, "lost_sales": lost, "orders": orders,
+                   "sales_7_days": {r["channel"]: r["units"] for r in sales}, "quality": quality_summary(conn)},
+                  scope="All five stores; lost sales and sales over the last 7 days",
+                  provenance=["dw.rpt_online_vs_actual", "dw.rpt_online_staleness", "dw.rpt_current_stock_by_store",
+                              "dw.rpt_checkout_blocked", "dw.rpt_open_reservations", "dw.rpt_daily_sales"])
+
+
 # --- catalogue ---------------------------------------------------------------------
 def catalogue(conn, params) -> Result:
     data = {
         "products": rows(conn, """
-            SELECT d.product_code, d.product_name, d.category, c.store_barcode, c.supplier_sku, c.web_sku
-              FROM dw.dim_product d JOIN etl.v_product_codes c USING (product_code)
+            SELECT d.product_code, d.product_name, d.category, l.barcode, l.supplier_id,
+                   l.units_per_carton, l.sold_online
+              FROM dw.dim_product d JOIN etl.v_item_list l ON l.item_no = d.product_code
              ORDER BY d.product_code"""),
         "stores": rows(conn, """
             SELECT d.store_code, d.store_name, d.suburb, c.store_no, c.location_code, c.cp_code
@@ -146,23 +207,27 @@ def catalogue(conn, params) -> Result:
              WHERE d.channel = 'physical' ORDER BY d.store_code"""),
         "categories": [r["category"] for r in rows(conn,
                        "SELECT DISTINCT category FROM dw.dim_product ORDER BY category")],
-        # Source catalogues, with the warehouse code when a mapping is approved.
+        # Source catalogues by item number; product_code is set when the item is
+        # on the warehouse product list.
         "store_products": rows(conn, """
-            SELECT p.barcode, p.description, p.category, x.product_code
+            SELECT p.item_no, p.barcode, p.description, p.category,
+                   CASE WHEN l.item_no IS NOT NULL THEN p.item_no END AS product_code
               FROM store_ops.product p
-              LEFT JOIN etl.product_xref x ON x.source_system = 'STORE' AND x.source_code = p.barcode
-             ORDER BY coalesce(x.product_code, 'Z'), p.barcode"""),
+              LEFT JOIN etl.item_list l ON l.item_no = p.item_no
+             ORDER BY p.item_no"""),
         "supplier_items": rows(conn, """
-            SELECT i.supplier_sku, i.item_description, i.units_per_carton, x.product_code
+            SELECT i.item_no, i.item_description, i.supplier_id, i.units_per_carton,
+                   CASE WHEN l.item_no IS NOT NULL THEN i.item_no END AS product_code
               FROM supply.item i
-              LEFT JOIN etl.product_xref x ON x.source_system = 'SUPPLY' AND x.source_code = i.supplier_sku
-             ORDER BY coalesce(x.product_code, 'Z'), i.supplier_sku"""),
+              LEFT JOIN etl.item_list l ON l.item_no = i.item_no
+             ORDER BY i.item_no"""),
         "web_products": rows(conn, """
-            SELECT p.web_sku, p.title, s.available_quantity AS website_shown, x.product_code
+            SELECT p.item_no, p.title, s.available_quantity AS website_shown,
+                   CASE WHEN l.item_no IS NOT NULL THEN p.item_no END AS product_code
               FROM online.product p
-              JOIN online.online_stock s USING (web_sku)
-              LEFT JOIN etl.product_xref x ON x.source_system = 'ONLINE' AND x.source_code = p.web_sku
-             ORDER BY p.web_sku"""),
+              JOIN online.online_stock s USING (item_no)
+              LEFT JOIN etl.item_list l ON l.item_no = p.item_no
+             ORDER BY p.item_no"""),
         "store_numbers": rows(conn, """
             SELECT s.store_no, s.store_name, x.store_code
               FROM store_ops.store s
@@ -179,10 +244,9 @@ def catalogue(conn, params) -> Result:
               LEFT JOIN etl.store_xref x ON x.source_system = 'ONLINE' AND x.source_code = c.cp_code
              ORDER BY x.store_code, c.cp_code"""),
         "postcodes": rows(conn, "SELECT postcode, suburb FROM online.postcode_location ORDER BY postcode"),
-        "suppliers": [r["supplier_name"] for r in rows(conn,
-                      "SELECT DISTINCT supplier_name FROM supply.supplier_delivery ORDER BY supplier_name")],
+        "suppliers": rows(conn, "SELECT supplier_id, supplier_name FROM supply.supplier ORDER BY supplier_id"),
     }
-    return Result(data, provenance=["dw.dim_product", "dw.dim_store", "etl.v_product_codes",
+    return Result(data, provenance=["dw.dim_product", "dw.dim_store", "etl.v_item_list",
                                     "etl.v_store_codes", "store_ops", "supply", "online"])
 
 
@@ -197,18 +261,19 @@ def website_stock(conn, params) -> Result:
           FROM dw.rpt_online_vs_actual v
           JOIN dw.dim_product d USING (product_code)
          ORDER BY abs(v.overstated_by) DESC, v.product_code""")
-    staleness = row(conn, "SELECT * FROM dw.rpt_online_staleness")
-    unmapped_online = value(conn, """
+    staleness = row(conn, """
+        SELECT s.*, extract(epoch FROM s.sync_interval)::integer AS interval_seconds
+          FROM dw.rpt_online_staleness s""")
+    unlisted_online = value(conn, """
         SELECT count(*) FROM online.product p
-         WHERE NOT EXISTS (SELECT 1 FROM etl.product_xref x
-                            WHERE x.source_system = 'ONLINE' AND x.source_code = p.web_sku)""")
+         WHERE NOT EXISTS (SELECT 1 FROM etl.item_list l WHERE l.item_no = p.item_no)""")
     warnings = []
-    if unmapped_online:
-        warnings.append(f"{unmapped_online} online product(s) have no approved mapping and are not compared.")
+    if unlisted_online:
+        warnings.append(f"{unlisted_online} online item(s) are not on the warehouse product list and are not compared.")
     return Result(
         {"comparison": comparison, "staleness": staleness, "quality": quality_summary(conn),
-         "unmapped_online_products": unmapped_online},
-        scope="All five stores combined; mapped online products",
+         "unmapped_online_products": unlisted_online},
+        scope="All five stores combined; items on the warehouse product list",
         provenance=["dw.rpt_online_vs_actual (online.online_stock + dw.fact_stock_event)",
                     "dw.rpt_online_staleness"],
         warnings=warnings)
@@ -217,7 +282,7 @@ def website_stock(conn, params) -> Result:
 def sync_latest(conn, params) -> Result:
     sync_id = int_param(params, "sync_id", None, 1)
     runs = rows(conn, """
-        SELECT sync_id, source_sync_no::text AS source_sync_no, run_at, events_processed,
+        SELECT sync_id, source_sync_no::text AS source_sync_no, run_at, triggered_by, events_processed,
                numbers_changed, store_mismatches
           FROM dw.sync_run ORDER BY sync_id DESC""")
     if not runs:
@@ -358,16 +423,15 @@ def checkout_attempt(conn, params, attempt_no: str) -> Result:
     if attempt is None:
         raise NotFound(f"Checkout attempt {attempt_no} does not exist")
     items = rows(conn, """
-        SELECT i.web_sku, p.title, x.product_code, i.quantity, i.website_qty_shown, i.result,
+        SELECT i.item_no, p.title, i.item_no AS product_code, i.quantity, i.website_qty_shown, i.result,
                i.source_cp_code, cp.cp_name AS source_cp_name,
                s.stg_id::text AS stg_id, s.load_status, s.note, s.event_id::text AS event_id
           FROM online.checkout_attempt_item i
-          JOIN online.product p ON p.web_sku = i.web_sku
-          LEFT JOIN etl.product_xref x ON x.source_system = 'ONLINE' AND x.source_code = i.web_sku
+          JOIN online.product p ON p.item_no = i.item_no
           LEFT JOIN online.collection_point cp ON cp.cp_code = i.source_cp_code
-          LEFT JOIN etl.stg_checkout_item s ON s.attempt_no = i.attempt_no AND s.web_sku = i.web_sku
+          LEFT JOIN etl.stg_checkout_item s ON s.attempt_no = i.attempt_no AND s.item_no = i.item_no
          WHERE i.attempt_no = %s
-         ORDER BY i.web_sku""", (int(attempt_no),))
+         ORDER BY i.item_no""", (int(attempt_no),))
     # Values the report reconstructs for this attempt's blocked items.
     reconstructed = {r["event_id"]: r for r in checkout_blocked(conn, {}).data["rows"]
                      if r["attempt_no"] == attempt_no}
@@ -402,28 +466,15 @@ def reservations(conn, params) -> Result:
 
 # --- Page D: Integration & Quality ---------------------------------------------------------
 def mappings(conn, params) -> Result:
-    products = rows(conn, """
-        SELECT c.product_code, c.product_name, c.store_barcode, c.supplier_sku, c.web_sku,
-               -- 'Not sold online' only when the web catalogue has no item for this barcode.
-               EXISTS (SELECT 1 FROM online.product o WHERE o.pos_barcode = c.store_barcode) AS in_web_catalogue
-          FROM etl.v_product_codes c ORDER BY c.product_code""")
+    """The item list (one item number in every system) and the store-code mapping."""
+    items = rows(conn, """
+        SELECT item_no, description, category, barcode, supplier_id, units_per_carton,
+               web_title, sold_online, on_product_list, added_by, added_at
+          FROM etl.v_item_list ORDER BY item_no""")
     stores = rows(conn, "SELECT * FROM etl.v_store_codes ORDER BY store_code")
-    unmapped = rows(conn, """
-        SELECT 'STORE' AS source_system, p.barcode AS source_code, p.description AS source_name
-          FROM store_ops.product p
-         WHERE NOT EXISTS (SELECT 1 FROM etl.product_xref x WHERE x.source_system = 'STORE' AND x.source_code = p.barcode)
-        UNION ALL
-        SELECT 'SUPPLY', i.supplier_sku, i.item_description
-          FROM supply.item i
-         WHERE NOT EXISTS (SELECT 1 FROM etl.product_xref x WHERE x.source_system = 'SUPPLY' AND x.source_code = i.supplier_sku)
-        UNION ALL
-        SELECT 'ONLINE', o.web_sku, o.title
-          FROM online.product o
-         WHERE NOT EXISTS (SELECT 1 FROM etl.product_xref x WHERE x.source_system = 'ONLINE' AND x.source_code = o.web_sku)
-         ORDER BY 1, 2""")
-    return Result({"products": products, "stores": stores, "unmapped_source_products": unmapped},
-                  provenance=["etl.v_product_codes", "etl.v_store_codes", "etl.product_xref",
-                              "store_ops.product", "supply.item", "online.product"])
+    not_listed = [i for i in items if not i["on_product_list"]]
+    return Result({"items": items, "stores": stores, "items_not_on_list": not_listed},
+                  provenance=["etl.v_item_list", "etl.item_list", "etl.v_store_codes", "etl.store_xref"])
 
 
 STAGING_TABLES = {"stg_store_sale_line", "stg_supplier_delivery_line", "stg_reservation_change", "stg_checkout_item"}
@@ -462,11 +513,11 @@ def sync_staging(conn, params) -> Result:
     total = value(conn, "SELECT count(*) FROM etl.stg_website_sync_line s" + where, args)
     data = rows(conn, """
         SELECT s.stg_id::text AS stg_id, s.sync_no::text AS source_sync_no, r.sync_id AS warehouse_sync_id,
-               s.web_sku, s.before_qty, s.after_qty, s.source_ref, s.load_status, s.note,
+               s.item_no, s.before_qty, s.after_qty, s.source_ref, s.load_status, s.note,
                s.captured_at, s.processed_at
           FROM etl.stg_website_sync_line s
           LEFT JOIN dw.sync_run r ON r.source_sync_no = s.sync_no""" + where + """
-         ORDER BY s.sync_no DESC, s.web_sku
+         ORDER BY s.sync_no DESC, s.item_no
          LIMIT %(limit)s OFFSET %(offset)s""", args)
     return Result(paged(data, total, limit, offset),
                   scope="Website sync log lines (not part of etl.v_staging or etl.v_data_quality)",
@@ -494,10 +545,10 @@ def quality(conn, params) -> Result:
           JOIN etl.v_staging s ON s.source_ref = q.source_ref
          ORDER BY q.captured_at, q.source_ref""")
     mismatches = rows(conn, """
-        SELECT store_no, barcode, store_code, product_code, source_in_store, warehouse_in_store,
+        SELECT store_no, item_no, store_code, product_code, source_in_store, warehouse_in_store,
                source_reserved, warehouse_reserved, status
           FROM dw.rpt_reconciliation WHERE status <> 'match'
-         ORDER BY store_no, barcode""")
+         ORDER BY store_no, item_no""")
     return Result({"rejected": rejected, "mismatches": mismatches, "summary": quality_summary(conn)},
                   scope="Rejected business-event records; live store system compared with the warehouse",
                   provenance=["etl.v_data_quality", "dw.rpt_reconciliation (store_ops.store_stock + dw)"])
@@ -506,42 +557,43 @@ def quality(conn, params) -> Result:
 # --- Source -> staging -> transformation -> warehouse trace ----------------------------------
 SOURCE_QUERIES = {
     "stg_store_sale_line": ("store_ops.sale + store_ops.sale_line", """
-        SELECT s.sale_no::text AS sale_no, l.line_no, s.store_no, s.till_no, l.barcode,
+        SELECT s.sale_no::text AS receipt_number, l.line_no, s.store_no, s.till_no, l.item_no,
                l.quantity, l.unit_price, s.sold_at
           FROM store_ops.sale_line l JOIN store_ops.sale s USING (sale_no)
          WHERE l.sale_no = %(a)s AND l.line_no = %(b)s"""),
     "stg_supplier_delivery_line": ("supply.supplier_delivery + supply.supplier_delivery_line + supply.item", """
-        SELECT d.delivery_no::text AS delivery_no, l.line_no, d.location_code, d.supplier_name,
-               l.supplier_sku, l.cartons, i.units_per_carton,
+        SELECT d.supplier_id, sp.supplier_name, d.supplier_order_no, d.delivery_no::text AS delivery_no,
+               l.line_no, d.location_code, l.item_no, l.cartons, i.units_per_carton,
                to_char(d.delivered_at_utc, 'YYYY-MM-DD HH24:MI:SS') AS delivered_at_utc
           FROM supply.supplier_delivery_line l
           JOIN supply.supplier_delivery d USING (delivery_no)
-          JOIN supply.item i ON i.supplier_sku = l.supplier_sku
+          JOIN supply.supplier sp ON sp.supplier_id = d.supplier_id
+          JOIN supply.item i ON i.item_no = l.item_no
          WHERE l.delivery_no = %(a)s AND l.line_no = %(b)s"""),
     "stg_reservation_change": ("store_ops.reservation (current state of the record)", """
-        SELECT reservation_no::text AS reservation_no, web_order_ref, web_line_no, store_no,
-               pickup_store_no, barcode, quantity, status AS current_status,
+        SELECT web_order_ref AS order_id, web_line_no, reservation_no::text AS reservation_no, store_no,
+               pickup_store_no, item_no, quantity, status AS current_status,
                reserved_at, dispatched_at, arrived_at, closed_at, cancel_reason
           FROM store_ops.reservation WHERE reservation_no = %(a)s"""),
     "stg_checkout_item": ("online.checkout_attempt + online.checkout_attempt_item", """
         SELECT a.attempt_no::text AS attempt_no, a.basket_id::text AS basket_id, a.pickup_cp_code,
-               a.attempted_at, a.outcome, i.web_sku, i.quantity, i.website_qty_shown, i.result,
+               a.attempted_at, a.outcome, i.item_no, i.quantity, i.website_qty_shown, i.result,
                i.source_cp_code
           FROM online.checkout_attempt_item i JOIN online.checkout_attempt a USING (attempt_no)
-         WHERE i.attempt_no = %(a)s AND i.web_sku = %(sku)s"""),
+         WHERE i.attempt_no = %(a)s AND i.item_no = %(item)s"""),
 }
 
 STAGING_SELECT = {
     "stg_store_sale_line": """
         SELECT stg_id::text AS stg_id, sale_no AS source_key, line_no AS source_line, store_no AS store_source_code,
-               barcode AS product_source_code, quantity AS source_quantity, NULL::text AS source_unit,
+               item_no AS product_source_code, quantity AS source_quantity, NULL::text AS source_unit,
                sold_at AS source_time, NULL::text AS source_time_utc, NULL::integer AS units_per_carton,
                NULL::text AS order_ref, NULL::text AS pickup_source_code, NULL::text AS detail,
                source_ref, load_status, note, etl_run_id, event_id::text AS event_id, captured_at, processed_at
           FROM etl.stg_store_sale_line WHERE stg_id = %s""",
     "stg_supplier_delivery_line": """
         SELECT stg_id::text AS stg_id, delivery_no AS source_key, line_no AS source_line, location_code AS store_source_code,
-               supplier_sku AS product_source_code, cartons AS source_quantity, 'cartons' AS source_unit,
+               item_no AS product_source_code, cartons AS source_quantity, 'cartons' AS source_unit,
                (delivered_at_utc AT TIME ZONE 'UTC') AS source_time,
                to_char(delivered_at_utc, 'YYYY-MM-DD HH24:MI:SS') AS source_time_utc, units_per_carton,
                NULL::text AS order_ref, NULL::text AS pickup_source_code, NULL::text AS detail,
@@ -549,7 +601,7 @@ STAGING_SELECT = {
           FROM etl.stg_supplier_delivery_line WHERE stg_id = %s""",
     "stg_reservation_change": """
         SELECT stg_id::text AS stg_id, reservation_no AS source_key, NULL::integer AS source_line,
-               store_no AS store_source_code, barcode AS product_source_code, quantity AS source_quantity,
+               store_no AS store_source_code, item_no AS product_source_code, quantity AS source_quantity,
                NULL::text AS source_unit, changed_at AS source_time, NULL::text AS source_time_utc,
                NULL::integer AS units_per_carton, web_order_ref AS order_ref,
                pickup_store_no AS pickup_source_code, change_type AS detail,
@@ -557,10 +609,10 @@ STAGING_SELECT = {
           FROM etl.stg_reservation_change WHERE stg_id = %s""",
     "stg_checkout_item": """
         SELECT stg_id::text AS stg_id, attempt_no AS source_key, NULL::integer AS source_line,
-               pickup_cp_code AS store_source_code, web_sku AS product_source_code, quantity AS source_quantity,
+               pickup_cp_code AS store_source_code, item_no AS product_source_code, quantity AS source_quantity,
                NULL::text AS source_unit, attempted_at AS source_time, NULL::text AS source_time_utc,
                NULL::integer AS units_per_carton, 'basket ' || basket_id AS order_ref,
-               pickup_cp_code AS pickup_source_code, web_sku AS detail, result AS checkout_result,
+               pickup_cp_code AS pickup_source_code, item_no AS detail, result AS checkout_result,
                source_ref, load_status, note, etl_run_id, event_id::text AS event_id, captured_at, processed_at
           FROM etl.stg_checkout_item WHERE stg_id = %s""",
 }
@@ -589,7 +641,7 @@ def trace(conn, params) -> Result:
 
     # 1. Source record, read from the operational system.
     label, sql = SOURCE_QUERIES[table]
-    source_args = {"a": stg["source_key"], "b": stg["source_line"], "sku": stg["detail"]}
+    source_args = {"a": stg["source_key"], "b": stg["source_line"], "item": stg["detail"]}
     source = row(conn, sql, source_args)
 
     # 3. Transformation, derived from the stored staging fields.
@@ -610,9 +662,10 @@ def trace(conn, params) -> Result:
     pending = row(conn, """
         SELECT event_type, product_code, store_code, units, reject_reason, skip_reason
           FROM etl.v_transform WHERE stg_table = %s AND stg_id = %s""", (table, stg_id))
-    current_product_map = value(conn, """
-        SELECT product_code FROM etl.product_xref WHERE source_system = %s AND source_code = %s""",
-                                (system, stg["product_source_code"]))
+    # Items are not mapped: the item number is the warehouse product code once
+    # the item is on the warehouse product list.
+    current_product_map = value(conn, "SELECT item_no FROM etl.item_list WHERE item_no = %s",
+                                (stg["product_source_code"],))
     current_store_map = value(conn, """
         SELECT store_code FROM etl.store_xref WHERE source_system = %s AND source_code = %s""",
                               (system, stg["store_source_code"]))
@@ -623,7 +676,7 @@ def trace(conn, params) -> Result:
     transform = {
         "product": {"source_code": stg["product_source_code"],
                     "warehouse_code": fact["product_code"] if fact else current_product_map,
-                    "basis": "loaded fact row" if fact else "current approved mapping"},
+                    "basis": "loaded fact row" if fact else "warehouse product list"},
         "store": {"source_code": stg["store_source_code"],
                   "warehouse_code": fact["store_code"] if fact else current_store_map,
                   "basis": "loaded fact row" if fact else "current approved mapping"},
@@ -639,5 +692,5 @@ def trace(conn, params) -> Result:
                               "tables": label, "record": source},
                    "staging": stg_out, "transform": transform, "warehouse": fact},
                   scope="One source record followed through staging into the warehouse",
-                  provenance=[label, f"etl.{table}", "etl.product_xref", "etl.store_xref",
+                  provenance=[label, f"etl.{table}", "etl.item_list", "etl.store_xref",
                               "dw.fact_stock_event"])

@@ -28,6 +28,11 @@ MANAGED_DATABASES = {DEMO_DATABASE, CHECK_DATABASE}
 LOCAL_LAB_HOSTS = {"postgres", "localhost", "127.0.0.1"}
 SYDNEY = "Australia/Sydney"
 
+# How often the website stock sync runs (scripts/sync_scheduler.py). This is
+# the only place the interval is set. The scheduler records the value it uses
+# in online.sync_schedule, so the reports and the dashboard can show it.
+SYNC_INTERVAL_SECONDS = 180
+
 # Applied in this order by build_database().
 SQL_FILES = [
     "01_schemas.sql",

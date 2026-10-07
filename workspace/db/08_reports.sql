@@ -5,17 +5,18 @@
 -- Prerequisites: 05_warehouse.sql, 06_etl.sql.
 --
 --   Report 1  dw.rpt_current_stock_by_store   in-store vs reserved per store/product
---   Report 2  dw.rpt_online_staleness         time since last sync, pending events
+--   Report 2  dw.rpt_online_staleness         sync interval, time since last sync, next sync, pending events
 --             dw.rpt_online_vs_actual         website number vs real total per product
 --             dw.rpt_last_sync_changes        before/after of the most recent sync
 --   Report 3  dw.rpt_checkout_blocked         bag items blocked at checkout although the website showed them
---   Report 4  dw.rpt_daily_sales              units sold per day, store, channel (in store / online) and category
+--   Report 4  dw.rpt_daily_sales              units sold per day, store, channel (in-store / online) and category
 --   Report 5  dw.rpt_open_reservations        click-and-collect order lines not yet collected (incl. transfers)
 --   Report 6  dw.rpt_reconciliation           warehouse vs live store system
 --             etl.v_data_quality              source records rejected by the ETL (06_etl.sql)
 --
--- Reports 1-5 read only the warehouse (and the ETL cross-reference for web
--- SKUs). Report 6 deliberately compares the warehouse with Source 1.
+-- Reports 1-5 read the warehouse; Report 2 also reads what the website shows
+-- now and the sync scheduler's registration from the online store. Report 6
+-- deliberately compares the warehouse with Source 1.
 -- =============================================================================
 
 -- Report 1 ------------------------------------------------------------------
@@ -43,8 +44,8 @@ COMMENT ON VIEW dw.rpt_current_stock_by_store IS
 -- What the website shows now = latest synced value minus the website's own
 -- reservations since that sync (it deducts those immediately).
 CREATE VIEW dw.rpt_online_vs_actual AS
--- What the website shows right now (Source 3, through the web SKU mapping)
--- next to the real combined in-store stock from the warehouse.
+-- What the website shows right now (Source 3, by item number) next to the
+-- real combined in-store stock from the warehouse.
 WITH actual AS (
     SELECT product_key, sum(quantity_change) AS actual_in_store
       FROM dw.fact_stock_event
@@ -62,15 +63,23 @@ SELECT p.product_code,
        END                                                     AS status,
        os.last_synced_at                                       AS synced_at
   FROM dw.dim_product p
-  JOIN etl.product_xref x     ON x.product_code = p.product_code AND x.source_system = 'ONLINE'
-  JOIN online.online_stock os ON os.web_sku = x.source_code
+  JOIN online.online_stock os ON os.item_no = p.product_code
   LEFT JOIN actual a          ON a.product_key = p.product_key;
 COMMENT ON VIEW dw.rpt_online_vs_actual IS
 'Report 2 (detail). The number the website shows right now next to the real combined in-store stock from the warehouse, per product sold online. Shows what a sync would correct.';
 
+-- The interval comes from the scheduler's registration (online.sync_schedule):
+-- the value is configured once in the scheduler (SYNC_INTERVAL_SECONDS); this
+-- view only shows it. The scheduler counts as running while its heartbeat is
+-- less than 30 seconds old.
 CREATE VIEW dw.rpt_online_staleness AS
 WITH last_sync AS (
     SELECT * FROM dw.sync_run ORDER BY sync_id DESC LIMIT 1
+), schedule AS (
+    SELECT s.*,
+           s.status IN ('running', 'stop_requested')
+           AND s.heartbeat_at > now() - interval '30 seconds' AS is_running
+      FROM online.sync_schedule s
 ), pending AS (
     SELECT f.event_type
       FROM dw.fact_stock_event f
@@ -78,7 +87,15 @@ WITH last_sync AS (
 )
 SELECT ls.sync_id                                                        AS last_sync_id,
        ls.run_at                                                         AS last_sync_at,
+       ls.triggered_by                                                   AS last_sync_trigger,
        date_trunc('second', now() - ls.run_at)                           AS time_since_sync,
+       CASE WHEN sc.schedule_id IS NULL THEN 'never started'
+            WHEN sc.is_running         THEN 'running'
+            WHEN sc.status = 'stopped' THEN 'stopped'
+            ELSE 'not running'
+       END                                                               AS scheduler_status,
+       make_interval(secs => sc.interval_seconds)                        AS sync_interval,
+       CASE WHEN sc.is_running THEN sc.next_sync_at END                  AS next_sync_at,
        (SELECT count(*) FROM pending)                                    AS pending_events,
        (SELECT count(*) FROM pending WHERE event_type = 'store_sale')    AS pending_sales,
        (SELECT count(*) FROM pending WHERE event_type = 'supplier_delivery')      AS pending_supplier_deliveries,
@@ -89,9 +106,10 @@ SELECT ls.sync_id                                                        AS last
        (SELECT count(*) FROM dw.rpt_online_vs_actual WHERE status <> 'in sync') AS products_out_of_date,
        (SELECT count(*) FROM etl.v_data_quality)                         AS source_rows_not_loaded
   FROM (SELECT 1) AS one
-  LEFT JOIN last_sync ls ON true;
+  LEFT JOIN last_sync ls ON true
+  LEFT JOIN schedule sc  ON true;
 COMMENT ON VIEW dw.rpt_online_staleness IS
-'Report 2 (summary). When the website was last synced, how many stock events happened since, how many product numbers are wrong now, and how many source rows the ETL could not load.';
+'Report 2 (summary). The configured sync interval and whether the scheduler is running, when the website was last synced (and by whom), when the next sync is due, how many stock events happened since, how many product numbers are wrong now, and how many source rows the ETL could not load.';
 
 CREATE VIEW dw.rpt_last_sync_changes AS
 SELECT r.sync_id,
@@ -160,11 +178,11 @@ COMMENT ON VIEW dw.rpt_checkout_blocked IS
 
 -- Report 4 ------------------------------------------------------------------
 CREATE VIEW dw.rpt_daily_sales AS
--- In store: till sale lines, at the store that sold them.
+-- In-store: till sale lines, at the store that sold them.
 -- Online:   paid order items (reservation) minus cancelled ones, at the
 --           store where the customer collects (pickup store).
 WITH sales AS (
-    SELECT f.date_key, f.store_key, f.product_key, 'in store'::text AS channel, f.units
+    SELECT f.date_key, f.store_key, f.product_key, 'in-store'::text AS channel, f.units
       FROM dw.fact_stock_event f
      WHERE f.event_type = 'store_sale'
     UNION ALL
@@ -187,7 +205,7 @@ SELECT d.full_date,
   JOIN dw.dim_product p ON p.product_key = x.product_key
  GROUP BY d.full_date, d.day_name, d.is_weekend, s.store_name, x.channel, p.category;
 COMMENT ON VIEW dw.rpt_daily_sales IS
-'Report 4. Units sold per day, store, channel and category (star-schema roll-up through dim_date). In store = till sales; online = paid click-and-collect items less cancellations, credited to the pickup store. Value uses the current shelf price (dim_product is SCD type 1).';
+'Report 4. Units sold per day, store, channel and category (star-schema roll-up through dim_date). In-store = till sales; online = paid click-and-collect items less cancellations, credited to the pickup store. Value uses the current shelf price (dim_product is SCD type 1).';
 
 -- Report 5 ------------------------------------------------------------------
 CREATE VIEW dw.rpt_open_reservations AS
@@ -244,24 +262,25 @@ WITH warehouse AS (
      GROUP BY product_key, store_key
 )
 SELECT ss.store_no,
-       ss.barcode,
+       ss.item_no,
        sx.store_code,
-       px.product_code,
+       il.item_no                 AS product_code,
        ss.in_store_quantity       AS source_in_store,
        w.in_store                 AS warehouse_in_store,
        ss.reserved_quantity       AS source_reserved,
        w.reserved                 AS warehouse_reserved,
        CASE
-           WHEN sx.store_code IS NULL OR px.product_code IS NULL THEN 'not in warehouse - unmapped code'
+           WHEN il.item_no IS NULL   THEN 'not in warehouse - unknown item'
+           WHEN sx.store_code IS NULL THEN 'not in warehouse - unmapped store code'
            WHEN coalesce(w.in_store, 0) <> ss.in_store_quantity
              OR coalesce(w.reserved, 0) <> ss.reserved_quantity  THEN 'quantity differs'
            ELSE 'match'
        END                        AS status
   FROM store_ops.store_stock ss
   LEFT JOIN etl.store_xref   sx ON sx.source_system = 'STORE' AND sx.source_code = ss.store_no
-  LEFT JOIN etl.product_xref px ON px.source_system = 'STORE' AND px.source_code = ss.barcode
+  LEFT JOIN etl.item_list    il ON il.item_no = ss.item_no
   LEFT JOIN dw.dim_store     ds ON ds.store_code = sx.store_code
-  LEFT JOIN dw.dim_product   dp ON dp.product_code = px.product_code
+  LEFT JOIN dw.dim_product   dp ON dp.product_code = il.item_no
   LEFT JOIN warehouse         w ON w.store_key = ds.store_key AND w.product_key = dp.product_key;
 COMMENT ON VIEW dw.rpt_reconciliation IS
 'Report 6. Live store stock (Source 1) against the warehouse total, per store and product. Anything other than match means the warehouse is missing or disagrees with source data.';

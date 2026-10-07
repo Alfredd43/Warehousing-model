@@ -36,6 +36,8 @@ const ICONS = {
   checkout: "M6 6h15l-2 9H8L6 3H3M9 20a1 1 0 1 0 0-2 1 1 0 0 0 0 2zM18 20a1 1 0 1 0 0-2 1 1 0 0 0 0 2z",
   integration: "M4 6h6v4H4zM14 14h6v4h-6zM7 10v4a2 2 0 0 0 2 2h5M17 14v-4a2 2 0 0 0-2-2h-5",
   arrow: "M5 12h14M13 6l6 6-6 6",
+  overview: "M4 4h7v7H4zM13 4h7v4h-7zM13 10h7v10h-7zM4 13h7v7H4z",
+  sync: "M20 11a8 8 0 0 0-14.3-4.9L4 8M4 4v4h4M4 13a8 8 0 0 0 14.3 4.9L20 16M20 20v-4h-4",
   close: "M6 6l12 12M18 6L6 18",
 };
 
@@ -84,7 +86,44 @@ export const fmt = {
     return `${Math.floor(hrs / 24)} days ago`;
   },
   units: (n) => `${nFmt.format(n)} unit${Math.abs(n) === 1 ? "" : "s"}`,
+  time: (iso) => (iso ? new Intl.DateTimeFormat("en-AU", { timeZone: TZ, hour: "numeric", minute: "2-digit" }).format(new Date(iso)) : "—"),
 };
+
+// "3 min", "1 min 05 s", "40 s"
+export function duration(totalSeconds) {
+  const s = Math.max(0, Math.round(totalSeconds));
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  if (!m) return `${r} s`;
+  return r ? `${m} min ${String(r).padStart(2, "0")} s` : `${m} min`;
+}
+
+export function countdown(iso) {
+  if (!iso) return "—";
+  const s = (new Date(iso).getTime() - Date.now()) / 1000;
+  return s > 0 ? duration(s) : "due now";
+}
+
+export const SYNC_TRIGGER = { scheduled: "automatic", manual: "manual", seed: "sample data" };
+
+// Every second: refresh [data-until] countdowns and [data-ago] times inside
+// root, and shortly after a scheduled sync is due re-read the reports (never
+// runs a sync; the scheduler does). getSchedule() returns the latest
+// {scheduler_status, next_sync_at}.
+export function syncTicker(root, app, getSchedule) {
+  let rereadFor = null;
+  const timer = setInterval(() => {
+    if (!root.isConnected) { clearInterval(timer); return; }
+    root.querySelectorAll("[data-until]").forEach((el) => { el.textContent = countdown(el.dataset.until); });
+    root.querySelectorAll("[data-ago]").forEach((el) => { el.textContent = fmt.ago(el.dataset.ago); });
+    const s = getSchedule();
+    const due = s?.scheduler_status === "running" && s.next_sync_at;
+    if (due && Date.now() - new Date(due).getTime() > 1500 && rereadFor !== due) {
+      rereadFor = due;
+      app.refresh();
+    }
+  }, 1000);
+}
 
 // ---------- building blocks ----------
 export function badge(text, kind = "neutral", { dot = true } = {}) {

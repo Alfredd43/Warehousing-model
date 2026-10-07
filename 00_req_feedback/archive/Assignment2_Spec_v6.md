@@ -1,8 +1,6 @@
-# PetHaven - Assignment 2 Spec: Business Case and Prototype Scope (v7)
+# PetHaven - Assignment 2 Spec: Business Case and Prototype Scope (v6)
 
-7 Oct 2026 · Group 3 · Internal guide, not a submission
-
-**What changed from v6** (tutor feedback, 6 Oct; v6 is kept in [archive/Assignment2_Spec_v6.md](archive/Assignment2_Spec_v6.md)): every system now uses the same **item number** for a product, and what differs is each system's **transaction ID** (receipt number in-store, order ID online, supplier ID + supplier order number for the supplier); the website sync runs **every 3 minutes** instead of only on demand; the words used are **in-store**, **online** and **supplier**.
+3 Oct 2026 · Group 3 · Internal guide, not a submission
 
 This guide defines the business problem, the three source systems, the business actions that create their records, and the stock rules the prototype follows. The solution design that implements it is in [docs/Architecture_and_Data_Model.md](../docs/Architecture_and_Data_Model.md).
 
@@ -32,17 +30,17 @@ Use these words consistently:
 
 ### 2.1 Problem statement
 
-> PetHaven's website shows one combined "available" number per product for all five stores, but that number is only refreshed by the sync, which runs every 3 minutes. In-store sales, supplier deliveries and store-side cancellations change the real stock immediately, yet the website does not see them until the next sync. Between syncs customers can put items in their bag that the website says are in stock but no store can supply; they only find out at checkout. The website can also show too little stock and lose sales.
+> PetHaven's website shows one combined "available" number per product for all five stores, but that number is only refreshed when a sync is run. In-store sales, supplier deliveries and store-side cancellations change the real stock immediately, yet the website does not see them until the next sync. Between syncs customers can put items in their bag that the website says are in stock but no store can supply; they only find out at checkout. The website can also show too little stock and lose sales.
 
 The customer whose order cannot be supplied is let down; store staff spend time checking shelves and contacting customers; PetHaven loses sales and trust in its stock information.
 
-The cause investigated is **the delay between a stock change in one system and its use in another**. The supporting data requirement is that the three systems record their transactions differently (their own transaction IDs, store codes, units and time zones), so their records must be matched reliably before they can be combined.
+The cause investigated is **the delay between a stock change in one system and its use in another**. The supporting data requirement is that the three systems name stores and products differently, so their records must be matched reliably before they can be combined.
 
 ### 2.2 Scope
 
 The unit of analysis is **one product at one store**, and the combined number for one product across all stores.
 
-In scope: in-store sales, supplier deliveries, online C&C orders with several lines (hold, transfer to the pickup store, collect, cancel), the scheduled sync (every 3 minutes, plus "run sync now"), and matching records between systems. Out of scope: customer accounts and membership, grooming, home delivery, returns after collection, stock adjustments and counts, splitting one order line across several stores, pricing and promotions.
+In scope: in-store sales, supplier deliveries, online C&C orders with several lines (hold, transfer to the pickup store, collect, cancel), the manual sync, and code matching between systems. Out of scope: customer accounts and membership, grooming, home delivery, returns after collection, stock adjustments and counts, splitting one order line across several stores, pricing and promotions.
 
 ## 3. The three source systems
 
@@ -58,18 +56,16 @@ The lab hosts them as separate schemas in one PostgreSQL database. They are sepa
 
 The **integrated data warehouse** (`dw`), fed by the ETL layer (`etl`), is a separate analytical store. It is not a fourth source.
 
-### 3.2 One item number; each system has its own transaction IDs
+### 3.2 Each system has its own codes
 
-| | Store system (in-store) | Supplier delivery system (supplier) | Online store (online) |
+| | Store system | Supplier delivery system | Online store |
 | --- | --- | --- | --- |
-| Product | item number `P001` | item number `P001` | item number `P001` |
-| Product attributes | EAN-13 barcode, description, price | GTIN-14 carton barcode, units per carton, supplier | web title, web price |
-| Transaction ID | **receipt number** | **supplier ID** (`SUP-01`) + **supplier order number** (`PO-1001`) | **order ID** |
 | Store | store number `101`–`105` | location code `NSW-PARRA` | collection point `CP-PARRAMATTA` |
+| Product | EAN-13 barcode `9300601001019` | supplier SKU `PF-DOG-ADT-3K` | web SKU `WEB-10001` |
 | Quantity | units | cartons | units |
 | Time | Sydney time | UTC | Sydney time |
 
-The item number is how the business tells one product from another, so all three systems share it, and the warehouse uses it as its product code. The warehouse gives each store one conformed code (`S01`) and matches each system's store code to it only through an **approved mapping**; it accepts only items on its **product list** (section 5.4). Every warehouse record keeps the transaction ID of the source record it came from.
+The warehouse gives each store and product one conformed code (`S01`, `P001`) and matches each system's code to it only through an **approved mapping** (section 5.4).
 
 ## 4. Business actions and what they change
 
@@ -79,7 +75,7 @@ All changes to a store's stock happen **immediately** when the action is recorde
 
 | Action | Recorded as | Store stock effect | Website number |
 | --- | --- | --- | --- |
-| Till sale (one receipt, one or more items) | `sale` (receipt number) + `sale_line` | shelf − qty per item; the whole receipt is refused if any item is short | unchanged until sync |
+| Till sale (one receipt, one or more items) | `sale` + `sale_line` | shelf − qty per item; the whole receipt is refused if any item is short | unchanged until sync |
 | Held line sent to the pickup store | `reservation` → `in_transit` | supplying store: reserved − qty (in transit, in no store) | unchanged (already deducted) |
 | Transferred line arrives | `reservation` → `arrived` | pickup store: reserved + qty | unchanged |
 | Customer collects a C&C order (only when every line is at the pickup store) | each `reservation` → `collected` | pickup store: reserved − qty (goods leave) | unchanged (already deducted) |
@@ -90,7 +86,7 @@ All changes to a store's stock happen **immediately** when the action is recorde
 
 | Action | Recorded as | Store stock effect | Website number |
 | --- | --- | --- | --- |
-| Supplier delivery to a store | `supplier_delivery` (supplier ID + supplier order number) + `supplier_delivery_line` in cartons | shelf + cartons × units per carton at that store | unchanged until sync |
+| Supplier delivery to a store | `supplier_delivery` + `supplier_delivery_line` in cartons | shelf + cartons × units per carton at that store | unchanged until sync |
 
 ### 4.3 Online store
 
@@ -98,7 +94,7 @@ All changes to a store's stock happen **immediately** when the action is recorde
 | --- | --- | --- |
 | Customer adds items to the bag | `basket` + `basket_item` | Allowed only up to the website number (which may be stale). Nothing is held and the website number does not change. Bags never expire. |
 | Customer sees pickup options | `pickup_options()` | Every store holding at least one bag item, ranked by fewest transfers, then distance. A store with none of the items is not offered. |
-| Customer checks out (before payment) | `checkout_attempt` + items | 1. **Pickup store** = the customer's choice from the options (default: the top option). 2. For each item, find a store whose **real** shelf stock covers the whole quantity: the pickup store first, then the others by distance; whoever checks out first gets the stock. 3. If **any** item is unavailable → checkout **blocked**: nothing charged, nothing held, the customer sees which items to remove and can check out again. 4. Otherwise → **paid**: `web_order` (order ID) + `web_order_line` created; each item held at its supplying store (shelf − qty, reserved + qty), to be **transferred** to the pickup store if it is another store; the website number drops by each item at once. |
+| Customer checks out (before payment) | `checkout_attempt` + items | 1. **Pickup store** = the customer's choice from the options (default: the top option). 2. For each item, find a store whose **real** shelf stock covers the whole quantity: the pickup store first, then the others by distance; whoever checks out first gets the stock. 3. If **any** item is unavailable → checkout **blocked**: nothing charged, nothing held, the customer sees which items to remove and can check out again. 4. Otherwise → **paid**: `web_order` + `web_order_line` created; each item held at its supplying store (shelf − qty, reserved + qty), to be **transferred** to the pickup store if it is another store; the website number drops by each item at once. |
 
 ## 5. Stock definitions and rules
 
@@ -128,24 +124,24 @@ Checkout always checks real store stock before payment, so a paid order can alwa
 
 ### 5.4 Matching codes between systems
 
-Items need no mapping: every system uses the same item number. The warehouse accepts an item only once a data steward has added it to the warehouse **product list**. Store codes still differ per system and are mapped to the warehouse's store codes only through an approved mapping. Matching by name is never used. A record for an item not on the product list (or a store code with no approved mapping) is **rejected with a reason ("Unknown item"), not guessed**; the business transaction still completes in its own system, and the record loads into the warehouse as soon as the item is added.
+Each system's store and product codes are mapped to the warehouse's codes only through an approved mapping kept by a data steward. Matching by name is never used (names differ between systems). A record whose code has no approved mapping is **rejected with a reason, not guessed**; the business transaction still completes in its own system, and the record loads into the warehouse as soon as the mapping is approved.
 
 ## 6. The sync
 
-The sync runs **automatically every 3 minutes** (one configuration value, `SYNC_INTERVAL_SECONDS = 180`; the tutor asked for a few minutes rather than 30). It can also be run **on demand** ("run sync now": a single function, script command or button), so the presenter can make several changes and then show the website before and after; the scheduler can be stopped while recording.
+The sync is run **on demand** (a single function, script command or button), not on a timer, so the presenter can make several changes and then show the website before and after.
 
-Each run:
+When run, it:
 
 1. Asks the store system for the real shelf totals per product across all five stores.
 2. Updates the website number for every product, and logs before → after in the online store.
 
-The data warehouse does not set the website number — it is an analytical system. It receives the sync log through the ETL and records, for reporting: whether the sync was scheduled or manual, every website number the sync changed (before → after), the stock events since the previous sync and the store totals they changed, and whether the warehouse agrees with the store system.
+The data warehouse does not set the website number — it is an analytical system. It receives the sync log through the ETL and records, for reporting: every website number the sync changed (before → after), the stock events since the previous sync and the store totals they changed, and whether the warehouse agrees with the store system.
 
 ## 7. What the prototype demonstrates
 
 ### 7.1 Data flow
 
-Business action → source system (stock changes immediately) → ETL extracts the record in its source format, with its transaction ID → checks the item, maps the store code, converts units and time, validates → loads one stock event into the warehouse → reports read the warehouse. Separately, the sync copies the store system's shelf totals to the website every 3 minutes, and the warehouse records each sync for the staleness reports.
+Business action → source system (stock changes immediately) → ETL extracts the record in its source format → maps codes, converts units and time, validates → loads one stock event into the warehouse → reports read the warehouse. Separately, the sync copies the store system's shelf totals to the website, and the warehouse records each sync for the staleness reports.
 
 ### 7.2 Required reports
 
@@ -167,7 +163,7 @@ Additional reports: daily sales by store, channel (in store / online) and catego
 
 **Case 3: the sync corrects the website.** After sales and supplier deliveries, the website shows numbers that are too high or too low. Running the sync shows each product's old and new number and each store total that moved.
 
-**Case 4: unknown item.** A new cat tunnel (P019) is delivered and sold before the warehouse has added it to its product list. The stores work normally; the warehouse rejects the records as "Unknown item P019" and the reconciliation shows the gap until the item is added.
+**Case 4: unmatched new product.** A new cat tunnel (P019) is delivered and sold before the warehouse has approved its codes. The stores work normally; the warehouse rejects the records with a reason and the reconciliation shows the gap until the mapping is approved.
 
 ## 8. Word list
 
@@ -177,11 +173,9 @@ Additional reports: daily sales by store, channel (in store / online) and catego
 | Data warehouse | The integrated analytical database (`dw`) combining the three sources. |
 | ETL | Extract, transform, load: copying source records into staging, converting them, and loading them into the warehouse. |
 | Staging | ETL tables holding source records in their original format. |
-| Item number | The number that identifies a product (`P001`), the same in all three systems. The warehouse calls it `product_code`. |
-| Transaction ID | How a system identifies one of its own transactions: receipt number (in-store), order ID (online), supplier ID + supplier order number (supplier). |
-| Conformed code | The warehouse's own code for a store (`S01`), shared by all reports. |
+| Conformed code | The warehouse's own code for a store (`S01`) or product (`P001`), shared by all reports. |
 | Surrogate key | Integer key generated by the warehouse for a dimension row. |
 | Fact / dimension | Fact: a measured event (a stock change). Dimension: descriptive context (product, store, date). |
 | Grain | What one fact row represents: one stock change for one product at one store. |
-| Sync | The job that copies the store system's shelf totals to the website: every 3 minutes, or by hand. |
+| Sync | The manual job that copies the store system's shelf totals to the website. |
 | Reconciliation | Comparing warehouse totals with the store system's live stock. |

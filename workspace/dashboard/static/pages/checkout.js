@@ -1,10 +1,12 @@
-// Page C: Checkout & Fulfilment (required Report 3: items blocked at checkout) + open reservations.
+// Orders & lost sales (Report 3: items blocked at checkout) + open click & collect orders.
 
 import { get } from "../api.js";
 import { h, clear, fmt, badge, card, state, loading, field, select, table, tabs, kv, errorState, keepFocus } from "../components/ui.js";
 
 const sydneyDate = new Intl.DateTimeFormat("en-CA", { timeZone: "Australia/Sydney", year: "numeric", month: "2-digit", day: "2-digit" });
 const dayOf = (iso) => sydneyDate.format(new Date(iso));
+
+const REASON = { stale: "Website number was out of date", split: "No single store had enough" };
 
 const LINE_STATUS = {
   "waiting to be sent": { label: "Waiting to be sent", kind: "warning" },
@@ -57,12 +59,11 @@ export default {
       const tab = params.tab === "reservations" ? "reservations" : "blocked";
       root.append(h("div", { class: "page-head" },
         h("div", {},
-          h("h1", {}, "Checkout & Fulfilment"),
+          h("h1", {}, "Orders & lost sales"),
           h("p", { class: "subtitle" }, tab === "blocked"
-            ? "Bag items the website showed in stock but checkout blocked before payment, and why."
-            : "Click-and-collect order lines not yet collected, with transfers to the pickup store."),
-          h("span", { class: "report-id" }, tab === "blocked" ? "Required report 3 · Items blocked at checkout" : "Additional report · Open reservations"))));
-      root.append(tabs([{ value: "blocked", label: "Blocked items" }, { value: "reservations", label: "Open reservations" }], tab,
+            ? "Items customers tried to buy online that no store could supply. Nobody was charged."
+            : "Click & collect orders still waiting to be collected."))));
+      root.append(tabs([{ value: "blocked", label: "Lost sales" }, { value: "reservations", label: "Click & collect orders" }], tab,
         (v) => app.setParams({ tab: v === "blocked" ? "" : v }), "Checkout views"));
       if (tab === "blocked") drawBlocked(); else drawReservations();
     }
@@ -84,35 +85,34 @@ export default {
         field("To", h("input", { type: "date", "data-fk": "to", value: params.to || "", onchange: (e) => app.setParams({ to: e.target.value }) })),
         field("Product", select([{ value: "", label: "All products" }, ...products.map(([c, n]) => ({ value: c, label: `${c} · ${n}` }))], params.product || "", (v) => app.setParams({ product: v }), { "data-fk": "product" }), { wide: true }),
         field("Pickup store", select([{ value: "", label: "All pickup stores" }, ...stores.map(([c, n]) => ({ value: c, label: n.replace("PetHaven ", "") }))], params.pickup || "", (v) => app.setParams({ pickup: v }), { "data-fk": "pickup" })),
-        field("Reason", select([{ value: "", label: "Both reasons" }, { value: "stale", label: "Combined stock insufficient" }, { value: "split", label: "No single store could supply" }], params.reason || "", (v) => app.setParams({ reason: v }), { "data-fk": "reason" }), { wide: true }),
+        field("Why", select([{ value: "", label: "Any reason" }, { value: "stale", label: REASON.stale }, { value: "split", label: REASON.split }], params.reason || "", (v) => app.setParams({ reason: v }), { "data-fk": "reason" }), { wide: true }),
         any ? h("button", { class: "btn", type: "button", onclick: () => app.setParams({ from: "", to: "", product: "", pickup: "", reason: "" }) }, "Clear filters") : null));
 
       const selectedEvent = params.event;
-      root.append(h("p", { class: "lede" }, h("b", {}, `${rows.length} blocked item record${rows.length === 1 ? "" : "s"}`),
-        rows.length !== all.length ? ` (of ${all.length} recorded)` : "",
-        h("span", { class: "secondary" }, ". One record per unavailable item in one checkout attempt; nothing was charged or held.")));
+      const units = rows.reduce((n, r) => n + (r.requested || 0), 0);
+      root.append(h("p", { class: "lede" }, h("b", {}, `${rows.length} lost sale${rows.length === 1 ? "" : "s"}`),
+        ` · ${fmt.units(units)}`, rows.length !== all.length ? ` (of ${all.length} recorded)` : ""));
       if (params.attempt) root.append(attemptCard());
       root.append(card({
-        id: "blocked-table", title: "Blocked items",
-        subtitle: "Select a row to see the source checkout record.",
+        id: "blocked-table", title: "Lost sales",
+        subtitle: "Select a row to see the customer's checkout.",
         body: table({
           caption: "Items blocked at checkout before payment",
           columns: [
-            { label: "Attempted at", render: (r) => fmt.dateTime(r.attempted_at), sub: (r) => `Attempt ${r.attempt_no ?? "?"}` },
-            { label: "Basket", render: (r) => r.basket },
+            { label: "When", render: (r) => fmt.dateTime(r.attempted_at) },
             { label: "Product", render: (r) => r.product_name, sub: (r) => r.product_code },
-            { label: "Requested", num: true, render: (r) => fmt.num(r.requested) },
-            { label: "Website shown then", num: true, render: (r) => fmt.num(r.website_shown_then) },
-            { label: "Combined available then", num: true, render: (r) => fmt.num(r.combined_available_then) },
-            { label: "Pickup store", render: (r) => r.pickup_store.replace("PetHaven ", ""), sub: (r) => r.pickup_store_code },
-            { label: "Reason", render: (r) => badge(r.reason, r.reason_code === "stale" ? "warning" : "info") },
+            { label: "Wanted", num: true, render: (r) => fmt.num(r.requested) },
+            { label: "Website showed", num: true, render: (r) => fmt.num(r.website_shown_then) },
+            { label: "Stores had", num: true, render: (r) => fmt.num(r.combined_available_then) },
+            { label: "Pickup store", render: (r) => r.pickup_store.replace("PetHaven ", "") },
+            { label: "Why", render: (r) => badge(REASON[r.reason_code], r.reason_code === "stale" ? "warning" : "info") },
           ],
           rows, rowKey: (r) => r.event_id, selectedKey: selectedEvent,
           onSelect: (r) => app.setParams({ attempt: r.attempt_no, event: r.event_id }),
           empty: state("", "No blocked item records match these filters", "",
             any ? h("button", { class: "btn", type: "button", onclick: () => app.setParams({ from: "", to: "", product: "", pickup: "", reason: "" }) }, "Clear filters") : null),
         }),
-        foot: "Combined stock insufficient: all five stores together had fewer units than requested (the website number was stale). No single store could supply the quantity: enough in total, but split across stores; each item must come from one store, so a sync does not remove this cause. 'Website shown then' and 'Combined available then' are reconstructed from warehouse history.",
+        foot: "Website number was out of date: the stores together had fewer than the customer wanted. No single store had enough: there was enough in total, but each item must come from one store.",
       }));
     }
 
@@ -124,8 +124,8 @@ export default {
       const items = attempt.data.items;
       const differ = items.some((i) => i.website_values_differ);
       return card({
-        id: "attempt", title: `Source checkout record · attempt ${a.attempt_no}`,
-        subtitle: "As recorded by the online store. The website snapshot below was captured at checkout.",
+        id: "attempt", title: `Customer checkout (attempt ${a.attempt_no})`,
+        subtitle: "As recorded by the online store.",
         actions: close,
         body: h("div", {},
           h("div", { class: "card-body" },
@@ -140,7 +140,7 @@ export default {
           table({
             caption: "Items in this checkout attempt",
             columns: [
-              { label: "Item", render: (i) => i.title, sub: (i) => `${i.web_sku}${i.product_code ? ` · ${i.product_code}` : ""}` },
+              { label: "Item", render: (i) => i.title, sub: (i) => i.item_no },
               { label: "Requested", num: true, render: (i) => fmt.num(i.quantity) },
               { label: "Website snapshot (source)", num: true, render: (i) => fmt.num(i.website_qty_shown) },
               { label: "Report reconstruction", num: true, render: (i) => (i.report_website_shown === null ? "—" : fmt.num(i.report_website_shown)),
@@ -156,7 +156,7 @@ export default {
             `All attempts for bag ${a.basket_id}: `,
             attempt.data.basket_attempts.map((x, n) => [n ? ", " : "",
               x.attempt_no === a.attempt_no ? h("b", {}, `#${x.attempt_no} ${x.outcome}`) : h("button", { class: "btn-link", type: "button", onclick: () => app.setParams({ attempt: x.attempt_no, event: "" }) }, `#${x.attempt_no} ${x.outcome}`)])) : null,
-          h("div", { class: "table-note" }, "Report reconstruction uses warehouse events before the blocked event. The schema does not store per-store stock at each attempt.")),
+          null),
       });
     }
 
@@ -178,7 +178,7 @@ export default {
         h("label", { class: "check" }, h("input", { type: "checkbox", "data-fk": "overdue", checked: !!params.overdue, onchange: (e) => app.setParams({ overdue: e.target.checked ? "1" : "" }) }), "Overdue only"),
         any ? h("button", { class: "btn", type: "button", onclick: () => app.setParams({ rpickup: "", rsource: "", rstatus: "", overdue: "" }) }, "Clear filters") : null));
 
-      if (!all.length) { root.append(card({ id: "reservations", title: "Open reservations", body: state("", "No open reservations", "Every click-and-collect order has been collected or cancelled.") })); return; }
+      if (!all.length) { root.append(card({ id: "reservations", title: "Click & collect orders", body: state("", "No open orders", "Every click & collect order has been collected or cancelled.") })); return; }
       const orders = new Map();
       for (const r of rows) {
         if (!orders.has(r.order_no)) orders.set(r.order_no, []);
@@ -210,14 +210,14 @@ export default {
         }
       }
       root.append(card({
-        id: "reservations", title: "Open reservations",
-        subtitle: `${rows.length} of ${all.length} open lines in ${orders.size} order${orders.size === 1 ? "" : "s"}. Order ready is the report's whole-order result, even when filters hide some lines.`,
+        id: "reservations", title: "Click & collect orders",
+        subtitle: `${orders.size} open order${orders.size === 1 ? "" : "s"} (${rows.length} item line${rows.length === 1 ? "" : "s"}).`,
         body: rows.length ? h("div", { class: "table-wrap" }, h("table", {},
           h("caption", { class: "sr-only" }, "Open click-and-collect order lines grouped by order"),
           h("thead", {}, h("tr", {}, ["Order", "Product", "Units", "Source store", "Pickup store", "Line status", "Order ready", "Waiting time", "Overdue"]
             .map((c) => h("th", { scope: "col", class: c === "Units" || c === "Waiting time" ? "num" : "" }, c)))),
           tbody)) : state("", "No open lines match these filters", ""),
-        foot: "Overdue = more than 3 days since the order was placed (reserved). Lines taken from another store move: waiting to be sent → in transit → ready for collection. Lifecycle actions are in the business demo.",
+        foot: "Overdue = not collected within 3 days. Items from another store go: waiting to be sent → in transit → ready for collection.",
       }));
     }
 

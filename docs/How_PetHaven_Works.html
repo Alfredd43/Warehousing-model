@@ -31,7 +31,7 @@
 <body>
 
 <h1>How the PetHaven system works</h1>
-<p class="sub">PetHaven inventory prototype — a plain-language guide to what happens when customers buy in a shop or online</p>
+<p class="sub">PetHaven inventory prototype — a plain-language guide to what happens when customers buy in-store or online</p>
 
 <h2>The big picture</h2>
 <p>PetHaven has <b>five shops</b> in Sydney and an <b>online store</b>. Three separate computer systems run the business:</p>
@@ -40,20 +40,20 @@
   <li><b>The supplier delivery system</b> — records when suppliers drop off new stock at a shop.</li>
   <li><b>The online store</b> — the website. It shows customers <b>one number per product</b>: how many are available across all five shops combined.</li>
 </ol>
-<p>The catch is that the website's number isn't live. It only gets corrected when someone runs a <b>sync</b>. Between syncs it can be out of date ("stale").</p>
+<p>The catch is that the website's number isn't live. It only gets corrected by a <b>sync</b>, which runs automatically <b>every 3 minutes</b>. Between syncs it can be out of date ("stale").</p>
 <p>Behind all three systems sits a <b>data warehouse</b>: one central record of every stock movement in the business. It's the business's record book: it watches and writes everything down, and all the reports read from it. It doesn't run the shops or the website.</p>
-<p>Each system also uses its own codes. For example, the store system calls the dog food <i>9300601001019</i>, the supplier delivery system calls it <i>PF-DOG-ADT-3K</i> and the website calls it <i>WEB-10001</i>. The warehouse translates all of these into one code, <i>P001</i>, so everything lines up.</p>
+<p>All three systems know a product by the same <b>item number</b>: the dog food is <i>P001</i> in the shops, at the supplier and on the website. What differs is how each system numbers its own transactions: a shop sale has a <b>receipt number</b>, an online purchase has an <b>order ID</b>, and a delivery has a <b>supplier ID</b> and <b>supplier order number</b>. The warehouse keeps that number on every record, so anything can be traced back. The systems still name the shops differently (Parramatta is store 101 at the till, NSW-PARRA for deliveries and CP-PARRAMATTA online), so the warehouse translates those into one code, <i>S01</i>.</p>
 
-<h2>1. A customer buys in a shop</h2>
+<h2>1. A customer buys in-store</h2>
 <p class="example">Example: a customer at Parramatta buys 2 bags of dog food at the till.</p>
 <ol>
   <li><b>The shop's stock drops straight away.</b> Parramatta had 37 bags; now it has 35.</li>
   <li><b>The sale is copied to the warehouse automatically,</b> in the same instant:
     <ul>
-      <li><b>Copy:</b> the sale is copied exactly as the till recorded it, using the store's own codes.</li>
-      <li><b>Translate:</b> the store number and barcode are converted into the warehouse's codes (Parramatta becomes S01, the dog food becomes P001).</li>
-      <li><b>Check:</b> if a code isn't recognised (for example a brand-new product nobody has registered yet), the record is set aside with a note explaining why, instead of being guessed. It loads as soon as someone approves the new code.</li>
-      <li><b>Save:</b> the warehouse records "Parramatta, dog food, −2, at this time".</li>
+      <li><b>Copy:</b> the sale is copied exactly as the till recorded it, with its receipt number.</li>
+      <li><b>Translate:</b> the store number is converted into the warehouse's code (Parramatta becomes S01). The dog food is already P001 everywhere.</li>
+      <li><b>Check:</b> if the warehouse doesn't know the item yet (for example a brand-new product nobody has added to its product list), the record is set aside with the note "Unknown item", instead of being guessed. It loads as soon as someone adds the item.</li>
+      <li><b>Save:</b> the warehouse records "Parramatta, dog food, −2, at this time, receipt 29".</li>
     </ul>
   </li>
   <li><b>The website doesn't change.</b> It still says 183 available, even though there are really 181. This is the out-of-date number the project is about, and it stays that way until the next sync.</li>
@@ -103,26 +103,26 @@
 <p><b>Why this matters:</b> nobody is ever charged for something that can't be supplied. But the customer was still shown stock that didn't exist and walked away disappointed: a lost sale. That's the cost of the out-of-date number, and the reports measure it.</p>
 
 <h2>5. The sync puts the website right</h2>
-<p>Someone runs the sync whenever they want; it isn't automatic. When they do, it:</p>
+<p>The sync runs automatically every 3 minutes. (It can also be run by hand at any time, which is how the demonstration shows it on cue.) Each time, it:</p>
 <ol>
   <li>Asks the shops' system how many of each product are really on the shelves, across all five shops.</li>
   <li>Updates the website with those numbers.</li>
   <li>The warehouse then writes down what the sync did: a <b>before and after</b> for every number that changed (for example, <i>"aquarium kit: website 7 → 2"</i>), what was sold or delivered by suppliers since the last sync, and whether its records agree with every shop's own records.</li>
 </ol>
 <p>The website gets its number straight from the shops, not from the warehouse. The warehouse is the record book for reports; it doesn't run the business.</p>
-<p>Right after a sync the website is correct again, until the next shop sale or supplier delivery makes it stale.</p>
+<p>Right after a sync the website is correct again, until the next in-store sale or supplier delivery makes it stale — for at most 3 minutes.</p>
 
 <h2 class="page-break">In one line each</h2>
 <table>
   <tr><th>Situation</th><th>What happens</th></tr>
-  <tr><td>Shop sale</td><td>Shelf drops instantly, warehouse updated instantly, website unchanged until sync</td></tr>
+  <tr><td>In-store sale</td><td>Shelf drops instantly, warehouse updated instantly, website unchanged until sync</td></tr>
   <tr><td>Supplier delivery</td><td>Shelf rises instantly, warehouse updated instantly, website unchanged until sync</td></tr>
   <tr><td>Online order</td><td>Customer picks from the shops that have their items; real stock checked before payment; set aside; website drops instantly</td></tr>
   <tr><td>Items in different shops</td><td>Each item set aside where it's found, sent to the chosen shop, collected together once all have arrived</td></tr>
   <tr><td>Two customers, one item left</td><td>Whoever checks out first gets it; the other is stopped before payment and keeps it in their bag</td></tr>
   <tr><td>Not collected in 3 days</td><td>Cancelled by the overdue clean-up, items back on the shelf</td></tr>
   <tr><td>Website shows stock that's gone</td><td>Checkout blocked before payment, no charge, recorded as a lost sale in Report 3</td></tr>
-  <tr><td>Sync</td><td>Website corrected straight from the shops' shelf totals; the warehouse logs every change before → after</td></tr>
+  <tr><td>Sync (every 3 minutes, or by hand)</td><td>Website corrected straight from the shops' shelf totals; the warehouse logs every change before → after</td></tr>
 </table>
 
 </body>

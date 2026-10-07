@@ -3,17 +3,22 @@
 import { get } from "./api.js";
 import { h, clear, append, icon, fmt, announce } from "./components/ui.js";
 import { createDemo } from "./components/demo.js";
+import overview from "./pages/overview.js";
 import website from "./pages/website.js";
 import inventory from "./pages/inventory.js";
 import checkout from "./pages/checkout.js";
 import integration from "./pages/integration.js";
 
+// group: "main" pages are for running the business; "technical" shows how the
+// data gets there (evidence for the solution design).
 const PAGES = [
-  { id: "website", label: "Website & Sync", tag: "Report 2", icon: "website", module: website },
-  { id: "inventory", label: "Store Inventory", tag: "Report 1", icon: "inventory", module: inventory },
-  { id: "checkout", label: "Checkout & Fulfilment", tag: "Report 3", icon: "checkout", module: checkout },
-  { id: "integration", label: "Integration & Quality", tag: "", icon: "integration", module: integration },
+  { id: "overview", label: "Overview", icon: "overview", group: "main", module: overview },
+  { id: "website", label: "Website stock", icon: "website", group: "main", module: website },
+  { id: "inventory", label: "Store stock", icon: "inventory", group: "main", module: inventory },
+  { id: "checkout", label: "Orders & lost sales", icon: "checkout", group: "main", module: checkout },
+  { id: "integration", label: "Data & integration", icon: "integration", group: "technical", module: integration },
 ];
+const GROUPS = [["main", "Business"], ["technical", "Technical"]];
 
 const els = {
   shell: document.getElementById("shell"),
@@ -35,7 +40,7 @@ const els = {
 function parseHash() {
   const raw = location.hash.replace(/^#\/?/, "");
   const [path, qs] = raw.split("?");
-  const page = PAGES.find((p) => p.id === path) ? path : "website";
+  const page = PAGES.find((p) => p.id === path) ? path : "overview";
   const params = Object.fromEntries(new URLSearchParams(qs || ""));
   return { page, params };
 }
@@ -79,7 +84,7 @@ const app = {
   },
 
   markRead(meta) {
-    if (meta?.read_at) els.readAt.textContent = `Report read ${fmt.dateTimeSec(meta.read_at)}`;
+    if (meta?.read_at) els.readAt.textContent = `Updated ${fmt.time(meta.read_at)}`;
   },
 
   openDemo(section, prefill) { demo.open(section, prefill); },
@@ -121,17 +126,20 @@ function renderBanner() {
     if (q.rejected_rows) bits.push(`${q.rejected_rows} source record${q.rejected_rows === 1 ? "" : "s"} rejected by the ETL`);
     if (q.mismatched_pairs) bits.push(`${q.mismatched_pairs} store-product pair${q.mismatched_pairs === 1 ? "" : "s"} differ from the store system`);
     els.banner.append(h("div", { class: "banner warn", role: "status" },
-      h("div", {}, h("strong", {}, "Warehouse data may be incomplete. "),
-        h("a", { href: "#/integration" }, "Review Integration & Quality"), `. (${bits.join("; ")}.)`)));
+      h("div", {}, h("strong", {}, "Some records are missing from the reports. "),
+        h("a", { href: "#/integration" }, "See data checks"), ` (${bits.join("; ")}).`)));
   }
 }
 
 function renderNav() {
   clear(els.nav);
-  for (const p of PAGES) {
-    els.nav.append(h("li", {},
-      h("a", { href: `#/${p.id}`, "aria-current": p.id === current.page ? "page" : undefined },
-        icon(p.icon), h("span", {}, p.label), p.tag ? h("span", { class: "report-tag" }, p.tag) : null)));
+  for (const [group, title] of GROUPS) {
+    els.nav.append(h("li", { class: "nav-group", role: "presentation" }, title));
+    for (const p of PAGES.filter((x) => x.group === group)) {
+      els.nav.append(h("li", {},
+        h("a", { href: `#/${p.id}`, "aria-current": p.id === current.page ? "page" : undefined },
+          icon(p.icon), h("span", {}, p.label))));
+    }
   }
 }
 
@@ -145,7 +153,7 @@ function route() {
   current = { page, params, controller: null };
   const def = PAGES.find((p) => p.id === page);
   renderNav();
-  append(clear(els.crumb), [h("span", {}, def.label), def.tag ? h("span", { class: "muted" }, ` · ${def.tag}`) : null]);
+  append(clear(els.crumb), [h("span", {}, def.label)]);
   document.title = `${def.label} · PetHaven`;
   clear(els.page);
   const container = h("div");

@@ -1,4 +1,4 @@
-// Page B: Store Inventory (required Report 1: current stock by store) + optional sales history.
+// Store stock (Report 1: current stock by store) + sales history.
 
 import { get } from "../api.js";
 import { h, clear, fmt, badge, card, state, loading, field, select, segmented, table, pager, tabs, errorState, keepFocus } from "../components/ui.js";
@@ -70,10 +70,9 @@ export default {
       clear(root);
       root.append(h("div", { class: "page-head" },
         h("div", {},
-          h("h1", {}, "Store Inventory"),
-          h("p", { class: "subtitle" }, "Available and reserved units by store and product."),
-          h("span", { class: "report-id" }, "Required report 1 · Current stock by store"))));
-      root.append(tabs([{ value: "stock", label: "Current stock" }, { value: "sales", label: "Sales history" }],
+          h("h1", {}, "Store stock"),
+          h("p", { class: "subtitle" }, "What each store has on the shelf, and what is held for online orders."))));
+      root.append(tabs([{ value: "stock", label: "Current stock" }, { value: "sales", label: "Sales" }],
         params.view === "sales" ? "sales" : "stock", (v) => app.setParams({ view: v === "stock" ? "" : v }), "Inventory views"));
       if (params.view === "sales") return drawSales();
       if (stockErr) return root.append(card({ label: "Error", body: errorState(stockErr, () => loadStock().catch(() => {})) }));
@@ -109,18 +108,17 @@ export default {
         field("Product", search, { wide: true }),
         h("label", { class: "check" }, h("input", { type: "checkbox", "data-fk": "low", checked: !!params.low,
           onchange: (e) => app.setParams({ low: e.target.checked ? "1" : "" }) }), "Low stock only"),
-        segmented("Layout", [{ value: "table", label: "Table" }, { value: "matrix", label: "Matrix" }],
-          params.layout === "matrix" ? "matrix" : "table", (v) => app.setParams({ layout: v === "table" ? "" : v })),
-        any ? h("button", { class: "btn", type: "button", onclick: () => app.setParams({ store: "", cat: "", q: "", low: "" }) }, "Clear filters") : null,
-        h("span", { class: "chip", title: "Current stock has no date filter" }, "Current balance")));
+        segmented("View", [{ value: "matrix", label: "By store" }, { value: "table", label: "List" }],
+          params.layout === "table" ? "table" : "matrix", (v) => app.setParams({ layout: v === "matrix" ? "" : v })),
+        any ? h("button", { class: "btn", type: "button", onclick: () => app.setParams({ store: "", cat: "", q: "", low: "" }) }, "Clear filters") : null));
 
       if (params.product) root.append(productPanel(products));
       if (params.product && params.store_sel) root.append(historyCard());
 
-      if (params.layout === "matrix") root.append(matrixCard(rows));
+      if (params.layout !== "table") root.append(matrixCard(rows));
       else root.append(card({
         id: "stock-table", title: "Stock by store and product",
-        subtitle: `Showing ${rows.length} of ${all.length} store-product balances, including zero balances.`,
+        subtitle: `${rows.length} of ${all.length} store shelves.`,
         body: table({
           caption: "Available, reserved and on-hand units per store and product",
           columns: [
@@ -137,7 +135,7 @@ export default {
           onSelect: (r) => app.setParams({ product: r.product_code, store_sel: r.store_code, hoff: "", hfrom: "", hto: "" }),
           empty: state("", "No balances match these filters", "", h("button", { class: "btn", type: "button", onclick: () => app.setParams({ store: "", cat: "", q: "", low: "" }) }, "Clear filters")),
         }),
-        foot: "Available = on the shelf and free to sell. Reserved = held for click-and-collect orders at this store. On hand = available + reserved. Units in transit between stores belong to neither store. Low stock = 2 or fewer available (fixed prototype rule).",
+        foot: "Available = on the shelf, free to sell. Reserved = held for click & collect orders. Low stock = 2 or fewer available.",
       }));
     }
 
@@ -160,7 +158,7 @@ export default {
           ],
           rows, rowKey: (r) => r.store_code, selectedKey: params.store_sel,
           onSelect: (r) => app.setParams({ store_sel: r.store_code, hoff: "", hfrom: "", hto: "" }),
-        }) : state("", "This product is not in the warehouse", "It may have no approved mapping yet."),
+        }) : state("", "This product is not in the warehouse", "It may not be on the warehouse product list yet."),
       });
     }
 
@@ -180,15 +178,14 @@ export default {
           { label: "Units involved", num: true, render: (r) => fmt.num(r.units) },
           { label: "Order / basket", render: (r) => (r.order_ref ? (/^\d+$/.test(r.order_ref) ? `Order ${r.order_ref}` : r.order_ref) : "—"),
             sub: (r) => (r.pickup_store_code && r.pickup_store_code !== r.store_code ? `Pickup store ${r.pickup_store_code}` : (r.pickup_store_code ? "Pickup here" : "")) },
-          { label: "Source reference", render: (r) => h("span", {}, h("span", { class: "mono" }, r.source_ref), h("br"),
-              h("a", { href: `#/integration?trace_event=${encodeURIComponent(r.event_id)}` }, "View data trace")) },
+          { label: "", render: (r) => h("a", { href: `#/integration?trace_event=${encodeURIComponent(r.event_id)}` }, "Details") },
         ],
         rows: events.data.rows,
         empty: state("", "No events for this store and product", params.hfrom || params.hto ? "Try a wider date range." : ""),
       }), pager(events.data, (off) => app.setParams({ hoff: off ? String(off) : "" })));
       return card({
         id: "event-history", title: `Event history · ${params.product} at ${params.store_sel}`,
-        subtitle: "Every warehouse stock event behind this balance. The date range applies to this history only.",
+        subtitle: "Every sale, delivery and order that changed this store's stock.",
         actions: [field("From", from), field("To", to),
           params.hfrom || params.hto ? h("button", { class: "btn", type: "button", onclick: () => app.setParams({ hfrom: "", hto: "", hoff: "" }) }, "Clear dates") : null],
         body,
@@ -221,15 +218,15 @@ export default {
         tbody.append(tr);
       }
       return card({
-        id: "stock-matrix", title: "Stock matrix",
-        subtitle: "The same balances: products as rows, stores as columns. Select a product for its store detail.",
+        id: "stock-matrix", title: "Stock by store",
+        subtitle: "Select a product to see its detail and history.",
         actions: field("Measure", select([{ value: "available", label: "Available" }, { value: "reserved", label: "Reserved" }], measure,
           (v) => app.setParams({ measure: v === "available" ? "" : v }), { "data-fk": "measure" })),
         body: rows.length ? h("div", { class: "table-wrap" }, h("table", { class: "matrix" },
           h("caption", { class: "sr-only" }, `${measure} units per product and store`),
           h("thead", {}, h("tr", {}, h("th", { scope: "col" }, "Product"), stores.map(([sc, n]) => h("th", { scope: "col", class: "num" }, n.replace("PetHaven ", ""), h("span", { class: "cell-sub" }, sc))))),
           tbody)) : state("", "No balances match these filters", ""),
-        foot: measure === "available" ? "Red = out of stock (0). Amber = low stock (1–2). Hover a cell for its status." : "Units held for click-and-collect orders at each store.",
+        foot: measure === "available" ? "Red = out of stock. Amber = low (1–2 left)." : "Units held for click & collect orders at each store.",
       });
     }
 
@@ -246,31 +243,31 @@ export default {
         (!params.scat || r.category === params.scat));
       const days = new Map();
       for (const r of rows) {
-        const d = days.get(r.full_date) || { date: r.full_date, day: r.day_name, "in store": 0, online: 0 };
+        const d = days.get(r.full_date) || { date: r.full_date, day: r.day_name, "in-store": 0, online: 0 };
         d[r.channel] += r.units_sold;
         days.set(r.full_date, d);
       }
       const dayRows = [...days.values()].sort((a, b) => a.date.localeCompare(b.date));
-      const max = Math.max(1, ...dayRows.flatMap((d) => [d["in store"], d.online]));
+      const max = Math.max(1, ...dayRows.flatMap((d) => [d["in-store"], d.online]));
       const any = params.sfrom || params.sto || params.sstore || params.schan || params.scat;
       root.append(h("div", { class: "filters" },
         field("From", h("input", { type: "date", "data-fk": "sfrom", value: params.sfrom || "", onchange: (e) => app.setParams({ sfrom: e.target.value }) })),
         field("To", h("input", { type: "date", "data-fk": "sto", value: params.sto || "", onchange: (e) => app.setParams({ sto: e.target.value }) })),
         field("Store", select([{ value: "", label: "All stores" }, ...stores.map((s) => ({ value: s, label: s.replace("PetHaven ", "") }))], params.sstore || "", (v) => app.setParams({ sstore: v }), { "data-fk": "sstore" })),
-        field("Channel", select([{ value: "", label: "Both channels" }, { value: "in store", label: "In store" }, { value: "online", label: "Online" }], params.schan || "", (v) => app.setParams({ schan: v }), { "data-fk": "schan" })),
+        field("Channel", select([{ value: "", label: "Both channels" }, { value: "in-store", label: "In-store" }, { value: "online", label: "Online" }], params.schan || "", (v) => app.setParams({ schan: v }), { "data-fk": "schan" })),
         field("Category", select([{ value: "", label: "All categories" }, ...cats.map((c) => ({ value: c, label: c }))], params.scat || "", (v) => app.setParams({ scat: v }), { "data-fk": "scat" })),
         any ? h("button", { class: "btn", type: "button", onclick: () => app.setParams({ sfrom: "", sto: "", sstore: "", schan: "", scat: "" }) }, "Clear filters") : null));
       root.append(h("div", { class: "stack" },
         card({
-          id: "sales-days", title: "Units sold per day", subtitle: "In store = till sales. Online = paid click-and-collect items less cancellations, credited to the pickup store.",
+          id: "sales-days", title: "Units sold per day", subtitle: "In-store till sales and online orders (credited to the pickup store).",
           actions: h("div", { class: "legend" },
-            h("span", {}, h("i", { class: "swatch", style: "background:var(--chart-warehouse)" }), "In store"),
+            h("span", {}, h("i", { class: "swatch", style: "background:var(--chart-warehouse)" }), "In-store"),
             h("span", {}, h("i", { class: "swatch", style: "background:var(--chart-website)" }), "Online")),
           body: dayRows.length ? h("div", { class: "card-body" }, h("div", { class: "bars" }, dayRows.map((d) =>
             h("div", { class: "bar-row", style: "cursor:default" },
               h("span", { class: "bar-label" }, fmt.date(d.date), h("small", {}, d.day)),
               h("span", { class: "bar-pair" },
-                h("span", { class: "bar-line" }, h("span", { class: "bar wh", style: `width:${Math.max(0, d["in store"] / max * 100)}%` }), h("span", { class: "bar-val" }, `${fmt.num(d["in store"])} in store`)),
+                h("span", { class: "bar-line" }, h("span", { class: "bar wh", style: `width:${Math.max(0, d["in-store"] / max * 100)}%` }), h("span", { class: "bar-val" }, `${fmt.num(d["in-store"])} in-store`)),
                 h("span", { class: "bar-line" }, h("span", { class: "bar web", style: `width:${Math.max(0, d.online / max * 100)}%` }), h("span", { class: "bar-val" }, `${fmt.signed(d.online)} online`))))))) : state("", "No sales match these filters", ""),
         }),
         card({
@@ -280,14 +277,14 @@ export default {
             columns: [
               { label: "Date", render: (r) => fmt.date(r.full_date), sub: (r) => r.day_name },
               { label: "Store", render: (r) => r.store_name.replace("PetHaven ", "") },
-              { label: "Channel", render: (r) => (r.channel === "online" ? "Online" : "In store") },
+              { label: "Channel", render: (r) => (r.channel === "online" ? "Online" : "In-store") },
               { label: "Category", key: "category" },
               { label: "Units sold", num: true, render: (r) => fmt.signed(r.units_sold).replace(/^\+/, "") },
               { label: "Sales value at current price", num: true, render: (r) => `$${Number(r.sales_value_at_current_price).toFixed(2)}` },
             ],
             rows, empty: state("", "No sales match these filters", ""),
           }),
-          foot: "Sales value at current price is units × today's shelf price, not recorded revenue. Online units can be negative on a day with more cancellations than orders.",
+          foot: "Value = units × today's shelf price. Online can be negative on a day with more cancellations than orders.",
         })));
     }
 

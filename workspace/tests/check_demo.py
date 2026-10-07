@@ -41,34 +41,41 @@ def run(sql: str, params=None):
     return value
 
 
-# --- code translation (warehouse code -> each source's own code) -------------
-def code(kind: str, system: str, warehouse_code: str) -> str:
-    table, col = ("etl.store_xref", "store_code") if kind == "store" else ("etl.product_xref", "product_code")
-    return one(f"SELECT source_code FROM {table} WHERE source_system=%s AND {col}=%s", (system, warehouse_code))
+# --- store-code translation (warehouse store code -> each source's own code) --
+# Items need no translation: every system uses the same item number (P001).
+def code(system: str, store_code: str) -> str:
+    return one("SELECT source_code FROM etl.store_xref WHERE source_system=%s AND store_code=%s", (system, store_code))
 
 
-def bc(p): return code("product", "STORE", p)
-def sku(p): return code("product", "SUPPLY", p)
-def web(p): return code("product", "ONLINE", p)
-def sno(s): return code("store", "STORE", s)
-def loc(s): return code("store", "SUPPLY", s)
+def sno(s): return code("STORE", s)
+def loc(s): return code("SUPPLY", s)
 
 
 # --- state helpers -----------------------------------------------------------
-def in_store(store: str, product: str) -> int:
-    return one("SELECT in_store_quantity FROM store_ops.store_stock WHERE store_no=%s AND barcode=%s", (sno(store), bc(product)))
+def in_store(store: str, item: str) -> int:
+    return one("SELECT in_store_quantity FROM store_ops.store_stock WHERE store_no=%s AND item_no=%s", (sno(store), item))
 
 
-def reserved(store: str, product: str) -> int:
-    return one("SELECT reserved_quantity FROM store_ops.store_stock WHERE store_no=%s AND barcode=%s", (sno(store), bc(product)))
+def reserved(store: str, item: str) -> int:
+    return one("SELECT reserved_quantity FROM store_ops.store_stock WHERE store_no=%s AND item_no=%s", (sno(store), item))
 
 
-def online(product: str) -> int:
-    return one("SELECT available_quantity FROM online.online_stock WHERE web_sku=%s", (web(product),))
+def online(item: str) -> int:
+    return one("SELECT available_quantity FROM online.online_stock WHERE item_no=%s", (item,))
 
 
-def actual_total(product: str) -> int:
-    return one("SELECT sum(in_store_quantity)::int FROM store_ops.store_stock WHERE barcode=%s", (bc(product),))
+def actual_total(item: str) -> int:
+    return one("SELECT sum(in_store_quantity)::int FROM store_ops.store_stock WHERE item_no=%s", (item,))
+
+
+def new_refs(after_event_id: int) -> list[str]:
+    _, rows = db.query(conn, "SELECT source_ref FROM dw.fact_stock_event WHERE event_id > %s ORDER BY event_id",
+                       (after_event_id,))
+    return [r[0] for r in rows]
+
+
+def max_event() -> int:
+    return one("SELECT coalesce(max(event_id), 0) FROM dw.fact_stock_event")
 
 
 def events() -> int:
@@ -88,7 +95,7 @@ def not_matching() -> int:
 
 
 def sale(store: str, items: dict[str, int]) -> None:
-    run("SELECT store_ops.record_sale(%s, %s, %s)", (sno(store), [bc(p) for p in items], list(items.values())))
+    run("SELECT store_ops.record_sale(%s, %s, %s)", (sno(store), list(items), list(items.values())))
 
 
 def sell_all(store: str, product: str) -> None:
@@ -98,7 +105,7 @@ def sell_all(store: str, product: str) -> None:
 
 
 def cp(store: str) -> str:
-    return code("store", "ONLINE", store)
+    return code("ONLINE", store)
 
 
 def store_of_cp(cp_code: str) -> str:
@@ -115,9 +122,8 @@ def checkout(basket_id: int, pickup: str | None = None) -> tuple[int | None, str
          WHERE a.attempt_no=(SELECT max(attempt_no) FROM online.checkout_attempt WHERE basket_id=%s)""",
                       (basket_id,))[1][0][0]
     _, rows = db.query(conn, """
-        SELECT px.product_code, i.result, sx.store_code
+        SELECT i.item_no, i.result, sx.store_code
           FROM online.checkout_attempt_item i
-          JOIN etl.product_xref px ON px.source_system='ONLINE' AND px.source_code=i.web_sku
           LEFT JOIN etl.store_xref sx ON sx.source_system='ONLINE' AND sx.source_code=i.source_cp_code
          WHERE i.attempt_no=(SELECT max(attempt_no) FROM online.checkout_attempt WHERE basket_id=%s)""",
                        (basket_id,))
@@ -127,7 +133,7 @@ def checkout(basket_id: int, pickup: str | None = None) -> tuple[int | None, str
 def bag(postcode: str, items: dict[str, int]) -> int:
     basket_id = run("SELECT online.create_basket(%s)", (postcode,))
     for product, qty in items.items():
-        run("SELECT online.add_to_basket(%s, %s, %s), 1", (basket_id, web(product), qty))
+        run("SELECT online.add_to_basket(%s, %s, %s), 1", (basket_id, product, qty))
     return basket_id
 
 
@@ -159,14 +165,18 @@ def main() -> int:
           one("SELECT count(*)::int FROM pg_namespace WHERE nspname IN ('store_ops','supply','online','etl','dw')"))
     check("R1 5 stores", 5, one("SELECT count(*)::int FROM store_ops.store"))
     check("R1 every mapped product stocked at every store", 90, one("SELECT count(*)::int FROM store_ops.store_stock"))
-    check("R2 each source uses its own code for P001", 3,
-          one("SELECT count(DISTINCT source_code)::int FROM etl.product_xref WHERE product_code='P001'"))
-    check("R2 each source uses its own code for S01", 3,
+    check("R2 all three systems use the same item number (P001)", 3,
+          one("""SELECT (SELECT count(*) FROM store_ops.product WHERE item_no='P001')
+                      + (SELECT count(*) FROM supply.item WHERE item_no='P001')
+                      + (SELECT count(*) FROM online.product WHERE item_no='P001')"""))
+    check("R2 the warehouse product_code is the item number", "P001",
+          one("SELECT product_code FROM dw.dim_product WHERE product_code='P001'"))
+    check("R2 each source uses its own store code for S01", 3,
           one("SELECT count(DISTINCT source_code)::int FROM etl.store_xref WHERE store_code='S01'"))
     check("R2 barcode check digit enforced", "refused", _refused(
-        "INSERT INTO store_ops.product VALUES ('9300601001010','Bad barcode','Toys',1)"))
+        "INSERT INTO store_ops.product VALUES ('P099','9300601001010','Bad barcode','Toys',1)"))
     check("R12 dim_store = 5 stores + online", 6, one("SELECT count(*)::int FROM dw.dim_store"))
-    check("R12 dim_product excludes unmapped P019", 18, one("SELECT count(*)::int FROM dw.dim_product"))
+    check("R12 dim_product excludes P019 (not on the product list)", 18, one("SELECT count(*)::int FROM dw.dim_product"))
     check("R11 seed: items available at checkout are skipped with a reason", 9,
           one("SELECT count(*)::int FROM etl.stg_checkout_item WHERE load_status='skipped' AND note IS NOT NULL"))
     check("R13 seed: every fact traces to one loaded staging row", events(),
@@ -197,26 +207,34 @@ def main() -> int:
     print("\n-- In-store sale: one receipt, several items")
     before = {p: in_store("S01", p) for p in ("P003", "P005", "P009")}
     before_online = online("P003")
-    n = events()
+    n, last = events(), max_event()
     sale("S01", {"P003": 2, "P005": 1, "P009": 1})
+    receipt = one("SELECT max(sale_no) FROM store_ops.sale")
     check("R3 shelf stock drops immediately", [before["P003"] - 2, before["P005"] - 1, before["P009"] - 1],
           [in_store("S01", p) for p in ("P003", "P005", "P009")])
     check("R3 one receipt, three lines", 3,
           one("SELECT count(*)::int FROM store_ops.sale_line WHERE sale_no=(SELECT max(sale_no) FROM store_ops.sale)"))
     check("R10 three store_sale facts loaded at once", 3, events() - n)
+    check("R27 each sale fact traces to its receipt number",
+          [f"STORE:receipt {receipt} line {i}" for i in (1, 2, 3)], new_refs(last))
     check("R3 website number unchanged", before_online, online("P003"))
 
     print("\n-- Receipt with one item short is refused entirely")
     n, p3 = events(), in_store("S01", "P003")
     check("R3 receipt refused", "refused", _refused(
-        "SELECT store_ops.record_sale(%s, %s, %s)", (sno("S01"), [bc("P003"), bc("P013")], [1, 99])))
+        "SELECT store_ops.record_sale(%s, %s, %s)", (sno("S01"), ["P003", "P013"], [1, 99])))
     check("R3 nothing deducted, no facts", (p3, n), (in_store("S01", "P003"), events()))
 
     print("\n-- Supplier delivery in cartons, UTC time")
     before_s02, before_online = in_store("S02", "P001"), online("P001")
-    upc = one("SELECT units_per_carton FROM supply.item WHERE supplier_sku=%s", (sku("P001"),))
-    run("""SELECT supply.record_supplier_delivery(%s, 'Check Supplier', %s, '{2}',
-                                         ((current_date - 1) + time '15:30')::timestamp)""", (loc("S02"), [sku("P001")]))
+    upc = one("SELECT units_per_carton FROM supply.item WHERE item_no='P001'")
+    last = max_event()
+    run("""SELECT supply.record_supplier_delivery(%s, 'SUP-01', 'PO-CHECK-1', '{P001}', '{2}',
+                                         ((current_date - 1) + time '15:30')::timestamp)""", (loc("S02"),))
+    check("R27 the supplier delivery traces to supplier ID + supplier order number",
+          ["SUPPLY:supplier SUP-01 order PO-CHECK-1 line 1"], new_refs(last))
+    check("R27 a supplier order number is unique per supplier", "refused",
+          _refused("SELECT supply.record_supplier_delivery(%s, 'SUP-01', 'PO-CHECK-1', '{P001}', '{1}')", (loc("S02"),)))
     check("R9 cartons converted to units on the shelf", before_s02 + 2 * upc, in_store("S02", "P001"))
     check("R9 fact units = cartons x units per carton", 2 * upc,
           one("SELECT units FROM dw.fact_stock_event WHERE event_type='supplier_delivery' ORDER BY event_id DESC LIMIT 1"))
@@ -225,8 +243,10 @@ def main() -> int:
     check("R4 website number unchanged", before_online, online("P001"))
 
     print("\n-- Online order held at the closest store")
-    shown = online("P001")
+    shown, last = online("P001"), max_event()
     _, order_no, pickup, lines = order("2150", {"P001": 2})
+    check("R27 the order's hold traces to the order ID", ([f"STORE:order {order_no} line 1 held"], str(order_no)),
+          (new_refs(last), one("SELECT order_ref FROM dw.fact_stock_event ORDER BY event_id DESC LIMIT 1")))
     check("R8 pickup = closest store, paid and held there", (True, "S01", ("available", "S01")),
           (order_no is not None, pickup, lines["P001"]))
     check("R6 website number lowered immediately", shown - 2, online("P001"))
@@ -239,6 +259,8 @@ def main() -> int:
     sale("S03", {"P006": in_store("S03", "P006") - 10})
     run("SELECT online.sync_website_stock()")
     check("R17 website shows 10 after sync", 10, online("P006"))
+    check("R17 a sync run by hand is recorded as manual", "manual",
+          one("SELECT triggered_by FROM dw.sync_run ORDER BY sync_id DESC LIMIT 1"))
     bag_a = bag("2067", {"P006": 7})                     # customer A: 7 in the bag, does not check out yet
     check("R6 adding to a bag does not change the website number", 10, online("P006"))
     _, order_no, _, lines = order("2067", {"P006": 7})   # customer B checks out first
@@ -248,7 +270,7 @@ def main() -> int:
           one("SELECT status FROM dw.rpt_online_vs_actual WHERE product_code='P006'"))
     basket_id = run("SELECT online.create_basket('2067')")
     check("R7 cannot add 7 to the bag (website shows 3)", "refused",
-          _refused("SELECT online.add_to_basket(%s, %s, 7)", (basket_id, web("P006"))))
+          _refused("SELECT online.add_to_basket(%s, %s, 7)", (basket_id, "P006")))
     a_order, _, a_lines = checkout(bag_a)
     check("R25 first to check out wins: A is blocked, item stays in A's bag",
           (None, ("unavailable", None), "open", 1, 3),
@@ -312,7 +334,7 @@ def main() -> int:
     check("R16 blocked item recorded with reason: split across stores",
           (True, "enough stock in total but no single store had enough"),
           (p13_total >= 2, one("SELECT reason FROM dw.rpt_checkout_blocked WHERE basket=%s", (f"basket {basket_id}",))))
-    run("SELECT online.remove_from_basket(%s, %s), 1", (basket_id, web("P013")))
+    run("SELECT online.remove_from_basket(%s, %s), 1", (basket_id, "P013"))
     order_no, pickup, lines = checkout(basket_id)
     check("R22 after removing the beds: paid, duck collected at Bondi", (True, "S02", ("available", "S02")),
           (order_no is not None, pickup, lines["P009"]))
@@ -336,8 +358,12 @@ def main() -> int:
     for store in ("S01", "S02", "S03", "S04", "S05"):
         sell_all(store, "P017")
     shown = online("P017")
+    last = max_event()
     basket_id, order_no, _, _ = order("2067", {"P017": 1})
+    attempt = one("SELECT max(attempt_no) FROM online.checkout_attempt WHERE basket_id=%s", (basket_id,))
     check("R16 website still showed stock, so the item went in the bag", True, shown >= 1)
+    check("R27 a blocked checkout has no order ID; it traces to the checkout attempt",
+          [f"ONLINE:checkout attempt {attempt} item P017"], new_refs(last))
     check("R23 checkout blocked: no order, no payment", None, order_no)
     check("R16 checkout_blocked fact at the pickup store (Chatswood)", "S03",
           one("SELECT s.store_code FROM dw.fact_stock_event f JOIN dw.dim_store s USING (store_key) "
@@ -349,27 +375,27 @@ def main() -> int:
     n = events()
     basket_id = bag("2000", {"P001": 1})
     check("R7 adding more than the website shows is refused", "refused",
-          _refused("SELECT online.add_to_basket(%s, %s, %s)", (basket_id, web("P018"), online("P018") + 1)))
+          _refused("SELECT online.add_to_basket(%s, %s, %s)", (basket_id, "P018", online("P018") + 1)))
     check("R11 adding to a bag writes no stock event", n, events())
 
-    print("\n-- Data quality: unmapped new product")
-    tunnel = "9300601001194"
+    print("\n-- Data quality: unknown item (not on the warehouse product list)")
     n = events()
-    run("SELECT supply.record_supplier_delivery(%s, 'PlayPets Wholesale', '{PP-CAT-TUNNEL}', '{2}')", (loc("S01"),))
-    run("SELECT store_ops.record_sale(%s, %s, '{1}')", (sno("S01"), [tunnel]))
-    check("R14 store system works with the new product", 7,
-          one("SELECT in_store_quantity FROM store_ops.store_stock WHERE store_no=%s AND barcode=%s", (sno("S01"), tunnel)))
+    run("SELECT supply.record_supplier_delivery(%s, 'SUP-02', 'PO-CHECK-2', '{P019}', '{2}')", (loc("S01"),))
+    run("SELECT store_ops.record_sale(%s, '{P019}', '{1}')", (sno("S01"),))
+    check("R14 store system works with the new item", 7,
+          one("SELECT in_store_quantity FROM store_ops.store_stock WHERE store_no=%s AND item_no='P019'", (sno("S01"),)))
     check("R14 both rows rejected, not loaded", (2, n),
           (one("SELECT count(*)::int FROM etl.v_data_quality"), events()))
-    check("R14 reason names the missing mapping", True,
-          one("SELECT bool_and(reject_reason LIKE 'No approved % product mapping for code %') FROM etl.v_data_quality"))
-    check("R19 reconciliation flags the gap", "not in warehouse - unmapped code",
-          one("SELECT status FROM dw.rpt_reconciliation WHERE barcode=%s", (tunnel,)))
+    check("R14 reason: unknown item", True,
+          one("SELECT bool_and(reject_reason LIKE 'Unknown item P019%') FROM etl.v_data_quality"))
+    check("R19 reconciliation flags the gap", "not in warehouse - unknown item",
+          one("SELECT status FROM dw.rpt_reconciliation WHERE item_no='P019'"))
     check("R14 staleness report counts it", 2, one("SELECT source_rows_not_loaded::int FROM dw.rpt_online_staleness"))
-    run("SELECT etl.approve_product_mapping('STORE', %s, 'P019'), 1", (tunnel,))
-    run("SELECT etl.approve_product_mapping('SUPPLY', 'PP-CAT-TUNNEL', 'P019'), 1")
+    check("R14 an item not in the store catalogue cannot be added", "refused", _refused("SELECT etl.add_item('P999')"))
+    run("SELECT etl.add_item('P019'), 1")
+    check("R14 an item cannot be added twice", "refused", _refused("SELECT etl.add_item('P019')"))
     run("SELECT etl.run_etl()")
-    check("R14 after approval both rows load", (0, n + 2),
+    check("R14 after adding the item both rows load", (0, n + 2),
           (one("SELECT count(*)::int FROM etl.v_data_quality"), events()))
     check("R12 P019 added to dim_product", 19, one("SELECT count(*)::int FROM dw.dim_product"))
 
@@ -389,8 +415,8 @@ def main() -> int:
     sync_no = run("SELECT online.sync_website_stock()")
     sync_id = one("SELECT sync_id FROM dw.sync_run WHERE source_sync_no=%s", (sync_no,))
     check("R17 the sync set the website from the store system's shelf totals", 0,
-          one("""SELECT count(*)::int FROM online.online_stock s JOIN online.product p USING (web_sku)
-                  LEFT JOIN store_ops.shelf_totals() t ON t.barcode = p.pos_barcode
+          one("""SELECT count(*)::int FROM online.online_stock s
+                  LEFT JOIN store_ops.shelf_totals() t ON t.item_no = s.item_no
                  WHERE s.available_quantity <> coalesce(t.in_store_total, 0)"""))
     check("R17 the warehouse recorded the sync (lineage to the online sync log)", True, sync_id is not None)
     check("R17 events processed = events pending", pending,
@@ -408,7 +434,7 @@ def main() -> int:
           one("SELECT count(*)::int FROM etl.v_staging WHERE load_status='loaded'"))
     check("R18 daily sales report uses dim_date", True,
           one("SELECT count(*) > 0 FROM dw.rpt_daily_sales WHERE full_date = current_date"))
-    check("R18 daily sales include both channels", ["in store", "online"],
+    check("R18 daily sales include both channels", ["in-store", "online"],
           [r[0] for r in db.query(conn, "SELECT DISTINCT channel FROM dw.rpt_daily_sales ORDER BY 1")[1]])
 
     conn.close()

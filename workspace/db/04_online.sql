@@ -4,35 +4,36 @@
 -- Design ref: docs/Architecture_and_Data_Model.md section 4.3.
 -- Prerequisites: 02_store_ops.sql (checkout checks and holds real stock
 --                through the store system's find_stock / reserve_stock).
--- Own identifiers: web_sku ('WEB-10001'), collection point code
---                  ('CP-PARRAMATTA'), basket_id, order_no.
+-- Identifiers: item_no ('P001'), the item number shared by all three
+--   systems; cp_code ('CP-PARRAMATTA'), this system's own store code;
+--   basket_id. Transaction ID: order_no, the order ID.
 -- Outputs: product, online_stock (combined quantity, refreshed by the sync),
 --          collection_point, postcode_location, basket + basket_item,
 --          checkout_attempt + checkout_attempt_item, web_order +
 --          web_order_line, and create_basket(), add_to_basket(),
 --          remove_from_basket(), pickup_options(), checkout(),
---          place_online_order() (shortcut), stock_sync + stock_sync_line
---          and sync_website_stock() ("run sync now").
+--          place_online_order() (shortcut), stock_sync + stock_sync_line,
+--          sync_website_stock() (run by the scheduler every
+--          SYNC_INTERVAL_SECONDS, or by hand: "run sync now") and
+--          sync_schedule (the scheduler's registration and heartbeat).
 -- =============================================================================
 
 CREATE TABLE online.product (
-    web_sku      text          NOT NULL,
+    item_no      text          NOT NULL,
     title        text          NOT NULL,
     web_price    numeric(10,2) NOT NULL,
-    pos_barcode  text          NOT NULL,
-    CONSTRAINT pk_online_product PRIMARY KEY (web_sku),
+    CONSTRAINT pk_online_product PRIMARY KEY (item_no),
     CONSTRAINT ck_online_product_price CHECK (web_price >= 0)
 );
 COMMENT ON TABLE online.product IS 'Web catalogue. Titles are written for the website and differ from store descriptions.';
-COMMENT ON COLUMN online.product.pos_barcode IS
-'Barcode the store system needs when the website asks it to hold stock. Operational routing only; the warehouse does not use it for integration.';
+COMMENT ON COLUMN online.product.item_no IS 'Item number: the same in the store system, the supplier delivery system and the online store.';
 
 CREATE TABLE online.online_stock (
-    web_sku             text        NOT NULL,
+    item_no             text        NOT NULL,
     available_quantity  integer     NOT NULL DEFAULT 0,
     last_synced_at      timestamptz,
-    CONSTRAINT pk_online_stock PRIMARY KEY (web_sku),
-    CONSTRAINT fk_online_stock_product FOREIGN KEY (web_sku) REFERENCES online.product (web_sku),
+    CONSTRAINT pk_online_stock PRIMARY KEY (item_no),
+    CONSTRAINT fk_online_stock_product FOREIGN KEY (item_no) REFERENCES online.product (item_no),
     CONSTRAINT ck_online_stock_available CHECK (available_quantity >= 0)
 );
 COMMENT ON TABLE online.online_stock IS
@@ -77,13 +78,13 @@ COMMENT ON TABLE online.basket IS 'A customer''s bag. open = still shopping (or 
 
 CREATE TABLE online.basket_item (
     basket_id            bigint      NOT NULL,
-    web_sku              text        NOT NULL,
+    item_no              text        NOT NULL,
     quantity             integer     NOT NULL,
     website_qty_at_add   integer     NOT NULL,
     added_at             timestamptz NOT NULL,
-    CONSTRAINT pk_basket_item PRIMARY KEY (basket_id, web_sku),
+    CONSTRAINT pk_basket_item PRIMARY KEY (basket_id, item_no),
     CONSTRAINT fk_basket_item_basket FOREIGN KEY (basket_id) REFERENCES online.basket (basket_id),
-    CONSTRAINT fk_basket_item_product FOREIGN KEY (web_sku) REFERENCES online.product (web_sku),
+    CONSTRAINT fk_basket_item_product FOREIGN KEY (item_no) REFERENCES online.product (item_no),
     CONSTRAINT ck_basket_item_quantity CHECK (quantity > 0)
 );
 COMMENT ON TABLE online.basket_item IS 'One product in a bag. website_qty_at_add = the (possibly stale) website number the customer saw when adding it.';
@@ -109,14 +110,14 @@ COMMENT ON TABLE online.checkout_attempt IS
 
 CREATE TABLE online.checkout_attempt_item (
     attempt_no          bigint  NOT NULL,
-    web_sku             text    NOT NULL,
+    item_no             text    NOT NULL,
     quantity            integer NOT NULL,
     website_qty_shown   integer NOT NULL,
     result              text    NOT NULL,
     source_cp_code      text,
-    CONSTRAINT pk_checkout_attempt_item PRIMARY KEY (attempt_no, web_sku),
+    CONSTRAINT pk_checkout_attempt_item PRIMARY KEY (attempt_no, item_no),
     CONSTRAINT fk_checkout_attempt_item_attempt FOREIGN KEY (attempt_no) REFERENCES online.checkout_attempt (attempt_no),
-    CONSTRAINT fk_checkout_attempt_item_product FOREIGN KEY (web_sku) REFERENCES online.product (web_sku),
+    CONSTRAINT fk_checkout_attempt_item_product FOREIGN KEY (item_no) REFERENCES online.product (item_no),
     CONSTRAINT fk_checkout_attempt_item_source FOREIGN KEY (source_cp_code) REFERENCES online.collection_point (cp_code),
     CONSTRAINT ck_checkout_attempt_item_result CHECK (result IN ('available', 'unavailable')),
     CONSTRAINT ck_checkout_attempt_item_source CHECK ((result = 'available') = (source_cp_code IS NOT NULL))
@@ -143,19 +144,20 @@ CREATE TABLE online.web_order (
 );
 COMMENT ON TABLE online.web_order IS
 'A paid click-and-collect order, collected at pickup_cp_code (the collection point closest to the customer). Every line was checked against real store stock before payment. Collection and cancellation are tracked by the store system''s reservations.';
+COMMENT ON COLUMN online.web_order.order_no IS 'Order ID: the online transaction ID. The store system''s reservations and every warehouse order event carry it.';
 
 CREATE TABLE online.web_order_line (
     order_no              bigint  NOT NULL,
     line_no               integer NOT NULL,
-    web_sku               text    NOT NULL,
+    item_no               text    NOT NULL,
     quantity              integer NOT NULL,
     website_qty_shown     integer NOT NULL,
     source_cp_code        text    NOT NULL,
     store_reservation_no  bigint  NOT NULL,
     CONSTRAINT pk_web_order_line PRIMARY KEY (order_no, line_no),
-    CONSTRAINT uq_web_order_line_sku UNIQUE (order_no, web_sku),
+    CONSTRAINT uq_web_order_line_item UNIQUE (order_no, item_no),
     CONSTRAINT fk_web_order_line_order FOREIGN KEY (order_no) REFERENCES online.web_order (order_no),
-    CONSTRAINT fk_web_order_line_product FOREIGN KEY (web_sku) REFERENCES online.product (web_sku),
+    CONSTRAINT fk_web_order_line_product FOREIGN KEY (item_no) REFERENCES online.product (item_no),
     CONSTRAINT fk_web_order_line_source FOREIGN KEY (source_cp_code) REFERENCES online.collection_point (cp_code),
     CONSTRAINT ck_web_order_line_quantity CHECK (quantity > 0)
 );
@@ -192,9 +194,9 @@ $$;
 
 -- Add (or change the quantity of) an item. The product page only lets the
 -- customer add what the website number says is in stock - and that number
--- may be stale. Example: SELECT online.add_to_basket(1, 'WEB-10001', 2);
+-- may be stale. Example: SELECT online.add_to_basket(1, 'P001', 2);
 CREATE FUNCTION online.add_to_basket(
-    p_basket_id bigint, p_web_sku text, p_quantity integer, p_at timestamptz DEFAULT now()
+    p_basket_id bigint, p_item_no text, p_quantity integer, p_at timestamptz DEFAULT now()
 ) RETURNS void
 LANGUAGE plpgsql AS $$
 DECLARE
@@ -206,32 +208,32 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM online.basket WHERE basket_id = p_basket_id AND status = 'open') THEN
         RAISE EXCEPTION 'Basket % is not open', p_basket_id;
     END IF;
-    SELECT available_quantity INTO v_shown FROM online.online_stock WHERE web_sku = p_web_sku;
+    SELECT available_quantity INTO v_shown FROM online.online_stock WHERE item_no = p_item_no;
     IF NOT FOUND THEN
-        RAISE EXCEPTION 'Unknown web SKU %', p_web_sku;
+        RAISE EXCEPTION 'Item % is not sold online', p_item_no;
     END IF;
     IF v_shown < p_quantity THEN
-        RAISE EXCEPTION 'Website shows only % of % in stock', v_shown, p_web_sku;
+        RAISE EXCEPTION 'Website shows only % of % in stock', v_shown, p_item_no;
     END IF;
 
-    INSERT INTO online.basket_item (basket_id, web_sku, quantity, website_qty_at_add, added_at)
-    VALUES (p_basket_id, p_web_sku, p_quantity, v_shown, p_at)
-    ON CONFLICT (basket_id, web_sku) DO UPDATE
+    INSERT INTO online.basket_item (basket_id, item_no, quantity, website_qty_at_add, added_at)
+    VALUES (p_basket_id, p_item_no, p_quantity, v_shown, p_at)
+    ON CONFLICT (basket_id, item_no) DO UPDATE
        SET quantity = EXCLUDED.quantity,
            website_qty_at_add = EXCLUDED.website_qty_at_add,
            added_at = EXCLUDED.added_at;
 END;
 $$;
 
--- Example: SELECT online.remove_from_basket(1, 'WEB-10013');
-CREATE FUNCTION online.remove_from_basket(p_basket_id bigint, p_web_sku text)
+-- Example: SELECT online.remove_from_basket(1, 'P013');
+CREATE FUNCTION online.remove_from_basket(p_basket_id bigint, p_item_no text)
 RETURNS void
 LANGUAGE plpgsql AS $$
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM online.basket WHERE basket_id = p_basket_id AND status = 'open') THEN
         RAISE EXCEPTION 'Basket % is not open', p_basket_id;
     END IF;
-    DELETE FROM online.basket_item WHERE basket_id = p_basket_id AND web_sku = p_web_sku;
+    DELETE FROM online.basket_item WHERE basket_id = p_basket_id AND item_no = p_item_no;
 END;
 $$;
 
@@ -260,14 +262,13 @@ LANGUAGE sql STABLE AS $$
          WHERE b.basket_id = p_basket_id
     ), item_store AS (
         -- For each bag item: the stores that have the whole quantity.
-        SELECT i.web_sku, s.store_no
+        SELECT i.item_no, s.store_no
           FROM online.basket_item i
-          JOIN online.product p ON p.web_sku = i.web_sku
-          CROSS JOIN LATERAL store_ops.stores_with_stock(p.pos_barcode, i.quantity) AS s (store_no)
+          CROSS JOIN LATERAL store_ops.stores_with_stock(i.item_no, i.quantity) AS s (store_no)
          WHERE i.basket_id = p_basket_id
     ), totals AS (
         SELECT count(*)::integer AS n_items,
-               count(*) FILTER (WHERE NOT EXISTS (SELECT 1 FROM item_store x WHERE x.web_sku = i.web_sku))::integer AS n_unavailable
+               count(*) FILTER (WHERE NOT EXISTS (SELECT 1 FROM item_store x WHERE x.item_no = i.item_no))::integer AS n_unavailable
           FROM online.basket_item i WHERE i.basket_id = p_basket_id
     ), per_cp AS (
         SELECT cp.cp_code, cp.cp_name,
@@ -300,7 +301,7 @@ $$;
 --      supplying store (store_ops.reserve_stock; items from another store are
 --      later transferred to the pickup store), website number lowered. The
 --      website number changes only here, never when items go into a bag.
--- Returns the order number, or NULL when blocked.
+-- Returns the order ID (order_no), or NULL when blocked.
 -- Examples: SELECT online.checkout(9);                       -- top option
 --           SELECT online.checkout(9, 'CP-CHATSWOOD');       -- customer's choice
 -- -----------------------------------------------------------------------------
@@ -361,8 +362,8 @@ BEGIN
      GROUP BY pk.store_no;
 
     PERFORM 1 FROM online.online_stock s
-      JOIN online.basket_item i ON i.web_sku = s.web_sku AND i.basket_id = p_basket_id
-     ORDER BY s.web_sku
+      JOIN online.basket_item i ON i.item_no = s.item_no AND i.basket_id = p_basket_id
+     ORDER BY s.item_no
        FOR UPDATE OF s;
 
     INSERT INTO online.checkout_attempt (basket_id, pickup_cp_code, attempted_at, outcome)
@@ -371,18 +372,17 @@ BEGIN
 
     -- 2. Real stock check for every item (fixed order avoids lock deadlocks).
     FOR v_item IN
-        SELECT i.web_sku, i.quantity, p.pos_barcode, s.available_quantity AS shown
+        SELECT i.item_no, i.quantity, s.available_quantity AS shown
           FROM online.basket_item i
-          JOIN online.product p ON p.web_sku = i.web_sku
-          JOIN online.online_stock s ON s.web_sku = i.web_sku
+          JOIN online.online_stock s ON s.item_no = i.item_no
          WHERE i.basket_id = p_basket_id
-         ORDER BY i.web_sku
+         ORDER BY i.item_no
     LOOP
-        v_source_store := store_ops.find_stock(v_item.pos_barcode, v_item.quantity, v_store_order);
+        v_source_store := store_ops.find_stock(v_item.item_no, v_item.quantity, v_store_order);
         INSERT INTO online.checkout_attempt_item
-            (attempt_no, web_sku, quantity, website_qty_shown, result, source_cp_code)
+            (attempt_no, item_no, quantity, website_qty_shown, result, source_cp_code)
         VALUES
-            (v_attempt_no, v_item.web_sku, v_item.quantity, v_item.shown,
+            (v_attempt_no, v_item.item_no, v_item.quantity, v_item.shown,
              CASE WHEN v_source_store IS NULL THEN 'unavailable' ELSE 'available' END,
              (SELECT cp_code FROM online.collection_point WHERE store_no = v_source_store));
         IF v_source_store IS NULL THEN
@@ -402,28 +402,27 @@ BEGIN
     VALUES (v_order_no, p_basket_id, b.customer_postcode, v_pickup_cp, p_at);
 
     FOR v_item IN
-        SELECT a.web_sku, a.quantity, a.website_qty_shown, a.source_cp_code, cp.store_no, p.pos_barcode
+        SELECT a.item_no, a.quantity, a.website_qty_shown, a.source_cp_code, cp.store_no
           FROM online.checkout_attempt_item a
           JOIN online.collection_point cp ON cp.cp_code = a.source_cp_code
-          JOIN online.product p ON p.web_sku = a.web_sku
          WHERE a.attempt_no = v_attempt_no
-         ORDER BY a.web_sku
+         ORDER BY a.item_no
     LOOP
         v_line_no := v_line_no + 1;
-        v_res_no := store_ops.reserve_stock(v_item.store_no, v_item.pos_barcode, v_item.quantity,
+        v_res_no := store_ops.reserve_stock(v_item.store_no, v_item.item_no, v_item.quantity,
                                             v_order_no::text, v_line_no, v_pickup_store, p_at);
         IF v_res_no IS NULL THEN   -- cannot happen: the rows are locked by find_stock
-            RAISE EXCEPTION 'Stock for % changed during checkout', v_item.web_sku;
+            RAISE EXCEPTION 'Stock for % changed during checkout', v_item.item_no;
         END IF;
         INSERT INTO online.web_order_line
-            (order_no, line_no, web_sku, quantity, website_qty_shown, source_cp_code, store_reservation_no)
+            (order_no, line_no, item_no, quantity, website_qty_shown, source_cp_code, store_reservation_no)
         VALUES
-            (v_order_no, v_line_no, v_item.web_sku, v_item.quantity, v_item.website_qty_shown,
+            (v_order_no, v_line_no, v_item.item_no, v_item.quantity, v_item.website_qty_shown,
              v_item.source_cp_code, v_res_no);
         -- The website deducts its own sale immediately (never below zero).
         UPDATE online.online_stock
            SET available_quantity = greatest(available_quantity - v_item.quantity, 0)
-         WHERE web_sku = v_item.web_sku;
+         WHERE item_no = v_item.item_no;
     END LOOP;
 
     UPDATE online.checkout_attempt SET outcome = 'paid', order_no = v_order_no WHERE attempt_no = v_attempt_no;
@@ -437,11 +436,11 @@ $$;
 -- chosen pickup store, or the top option if none is given).
 -- Returns the order number, or NULL if checkout was blocked (the bag is left
 -- open; see online.checkout_attempt for which items were unavailable).
--- Example: SELECT online.place_online_order('2026', ARRAY['WEB-10003','WEB-10013'], ARRAY[2,2]);
+-- Example: SELECT online.place_online_order('2026', ARRAY['P003','P013'], ARRAY[2,2]);
 -- -----------------------------------------------------------------------------
 CREATE FUNCTION online.place_online_order(
     p_postcode        text,
-    p_web_skus        text[],
+    p_item_nos        text[],
     p_quantities      integer[],
     p_ordered_at      timestamptz DEFAULT now(),
     p_pickup_cp_code  text DEFAULT NULL
@@ -451,82 +450,111 @@ DECLARE
     v_basket_id bigint;
     v_item      record;
 BEGIN
-    IF coalesce(array_length(p_web_skus, 1), 0) = 0
-       OR array_length(p_web_skus, 1) <> coalesce(array_length(p_quantities, 1), 0) THEN
-        RAISE EXCEPTION 'Give one quantity per web SKU';
+    IF coalesce(array_length(p_item_nos, 1), 0) = 0
+       OR array_length(p_item_nos, 1) <> coalesce(array_length(p_quantities, 1), 0) THEN
+        RAISE EXCEPTION 'Give one quantity per item';
     END IF;
     v_basket_id := online.create_basket(p_postcode, p_ordered_at);
-    FOR v_item IN SELECT * FROM unnest(p_web_skus, p_quantities) AS i (web_sku, quantity) LOOP
-        PERFORM online.add_to_basket(v_basket_id, v_item.web_sku, v_item.quantity, p_ordered_at);
+    FOR v_item IN SELECT * FROM unnest(p_item_nos, p_quantities) AS i (item_no, quantity) LOOP
+        PERFORM online.add_to_basket(v_basket_id, v_item.item_no, v_item.quantity, p_ordered_at);
     END LOOP;
     RETURN online.checkout(v_basket_id, p_pickup_cp_code, p_ordered_at);
 END;
 $$;
 
--- One-product form. Example: SELECT online.place_online_order('2026', 'WEB-10001', 2);
+-- One-product form. Example: SELECT online.place_online_order('2026', 'P001', 2);
 CREATE FUNCTION online.place_online_order(
     p_postcode    text,
-    p_web_sku     text,
+    p_item_no     text,
     p_quantity    integer,
     p_ordered_at  timestamptz DEFAULT now()
 ) RETURNS bigint
 LANGUAGE sql AS $$
-    SELECT online.place_online_order(p_postcode, ARRAY[p_web_sku], ARRAY[p_quantity], p_ordered_at);
+    SELECT online.place_online_order(p_postcode, ARRAY[p_item_no], ARRAY[p_quantity], p_ordered_at);
 $$;
 
 
 -- -----------------------------------------------------------------------------
--- Website stock sync (operational, run on demand: "run sync now").
+-- Website stock sync (operational).
 -- The website asks the store system for the real shelf totals and replaces
--- its own numbers with them. The data warehouse is NOT involved in setting
--- the number; it only receives a copy of the sync log for reporting.
+-- its own numbers with them. It runs every SYNC_INTERVAL_SECONDS (180) from
+-- the scheduler (scripts/sync_scheduler.py), and can also be run by hand
+-- ("run sync now"). The data warehouse is NOT involved in setting the
+-- number; it only receives a copy of the sync log for reporting.
 -- -----------------------------------------------------------------------------
 CREATE TABLE online.stock_sync (
     sync_no           bigint      GENERATED ALWAYS AS IDENTITY,
     run_at            timestamptz NOT NULL,
+    triggered_by      text        NOT NULL DEFAULT 'manual',
     status            text        NOT NULL DEFAULT 'running',
     products_changed  integer,
     CONSTRAINT pk_stock_sync PRIMARY KEY (sync_no),
+    CONSTRAINT ck_stock_sync_trigger CHECK (triggered_by IN ('scheduled', 'manual', 'seed')),
     CONSTRAINT ck_stock_sync_status CHECK (status IN ('running', 'done'))
 );
 COMMENT ON TABLE online.stock_sync IS 'One run of the website stock sync (the online store''s own log).';
+COMMENT ON COLUMN online.stock_sync.triggered_by IS 'scheduled = the sync scheduler; manual = "run sync now"; seed = the sample data.';
 
 CREATE TABLE online.stock_sync_line (
     sync_no     bigint  NOT NULL,
-    web_sku     text    NOT NULL,
+    item_no     text    NOT NULL,
     before_qty  integer NOT NULL,
     after_qty   integer NOT NULL,
-    CONSTRAINT pk_stock_sync_line PRIMARY KEY (sync_no, web_sku),
+    CONSTRAINT pk_stock_sync_line PRIMARY KEY (sync_no, item_no),
     CONSTRAINT fk_stock_sync_line_sync FOREIGN KEY (sync_no) REFERENCES online.stock_sync (sync_no),
-    CONSTRAINT fk_stock_sync_line_product FOREIGN KEY (web_sku) REFERENCES online.product (web_sku)
+    CONSTRAINT fk_stock_sync_line_product FOREIGN KEY (item_no) REFERENCES online.product (item_no)
 );
 COMMENT ON TABLE online.stock_sync_line IS 'Website number for one product before and after a sync.';
 
+-- The scheduler registers here while it runs. The interval is set in the
+-- scheduler's configuration (SYNC_INTERVAL_SECONDS in scripts/pethaven_db.py);
+-- this row only records the value in use, so reports and the dashboard can
+-- show it. Nothing in SQL decides when a sync runs.
+CREATE TABLE online.sync_schedule (
+    schedule_id       integer     NOT NULL DEFAULT 1,
+    interval_seconds  integer     NOT NULL,
+    status            text        NOT NULL,
+    started_at        timestamptz NOT NULL,
+    heartbeat_at      timestamptz NOT NULL,
+    next_sync_at      timestamptz,
+    stopped_at        timestamptz,
+    CONSTRAINT pk_sync_schedule PRIMARY KEY (schedule_id),
+    CONSTRAINT ck_sync_schedule_single CHECK (schedule_id = 1),
+    CONSTRAINT ck_sync_schedule_interval CHECK (interval_seconds > 0),
+    CONSTRAINT ck_sync_schedule_status CHECK (status IN ('running', 'stop_requested', 'stopped'))
+);
+COMMENT ON TABLE online.sync_schedule IS
+'The sync scheduler''s registration: the interval it uses, when it started, its heartbeat (refreshed every few seconds) and when the next sync is due. stop_requested asks it to stop. Empty if the scheduler has never run on this database.';
+
 -- Example: SELECT online.sync_website_stock();
--- p_at lets the seed script record a sync in the past.
-CREATE FUNCTION online.sync_website_stock(p_at timestamptz DEFAULT now())
-RETURNS bigint
+-- p_at lets the seed script record a sync in the past; p_triggered_by says
+-- who started it (the scheduler passes 'scheduled').
+CREATE FUNCTION online.sync_website_stock(
+    p_at            timestamptz DEFAULT now(),
+    p_triggered_by  text        DEFAULT 'manual'
+) RETURNS bigint
 LANGUAGE plpgsql AS $$
 DECLARE
     v_sync_no bigint;
 BEGIN
     -- Hold checkouts on these numbers until the sync is done.
-    PERFORM 1 FROM online.online_stock ORDER BY web_sku FOR UPDATE;
+    PERFORM 1 FROM online.online_stock ORDER BY item_no FOR UPDATE;
 
-    INSERT INTO online.stock_sync (run_at) VALUES (p_at) RETURNING sync_no INTO v_sync_no;
+    INSERT INTO online.stock_sync (run_at, triggered_by) VALUES (p_at, p_triggered_by)
+    RETURNING sync_no INTO v_sync_no;
 
-    -- Real shelf totals from the store system, matched by the store barcode.
-    INSERT INTO online.stock_sync_line (sync_no, web_sku, before_qty, after_qty)
-    SELECT v_sync_no, p.web_sku, s.available_quantity, coalesce(t.in_store_total, 0)
+    -- Real shelf totals from the store system, matched by item number.
+    INSERT INTO online.stock_sync_line (sync_no, item_no, before_qty, after_qty)
+    SELECT v_sync_no, p.item_no, s.available_quantity, coalesce(t.in_store_total, 0)
       FROM online.product p
-      JOIN online.online_stock s ON s.web_sku = p.web_sku
-      LEFT JOIN store_ops.shelf_totals() t ON t.barcode = p.pos_barcode;
+      JOIN online.online_stock s ON s.item_no = p.item_no
+      LEFT JOIN store_ops.shelf_totals() t ON t.item_no = p.item_no;
 
     UPDATE online.online_stock s
        SET available_quantity = l.after_qty,
            last_synced_at     = p_at
       FROM online.stock_sync_line l
-     WHERE l.sync_no = v_sync_no AND l.web_sku = s.web_sku;
+     WHERE l.sync_no = v_sync_no AND l.item_no = s.item_no;
 
     -- Marking the run done hands the log to the ETL (07_sync.sql).
     UPDATE online.stock_sync

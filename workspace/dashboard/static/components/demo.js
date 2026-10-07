@@ -1,4 +1,4 @@
-// Business demo workspace: small forms that call the existing business functions
+// Demo actions workspace: small forms that call the existing business functions
 // (writes to the configured database). Opening the panel changes nothing.
 
 import { get, post } from "../api.js";
@@ -6,11 +6,11 @@ import { h, clear, fmt, badge, table, keepFocus, announce, icon } from "./ui.js"
 
 const SECTIONS = [
   ["scenario", "Scenario: stale website stock", "A"],
-  ["sale", "Record store sale", ""],
+  ["sale", "Record in-store sale", ""],
   ["supplier_delivery", "Record supplier delivery", ""],
   ["bag", "Online bag and checkout", ""],
-  ["sync", "Sync website stock", ""],
-  ["mapping", "Approve code mapping and run ETL", "C"],
+  ["sync", "Sync website stock now", "manual"],
+  ["mapping", "Add item to product list and run ETL", "C"],
   ["orders", "Order lifecycle", "optional"],
 ];
 
@@ -22,10 +22,10 @@ export function createDemo(panel, app, { onToggle }) {
     pending: {},
     results: {},
     sale: { store: "S01", lines: [{ product: "P001", qty: 1 }] },
-    supplier_delivery: { location: "NSW-CHATS", supplier: "Pawfect Foods", sku: "PF-DOG-ADT-3K", cartons: 5 },
+    supplier_delivery: { location: "NSW-CHATS", supplier: "", order: "", product: "P001", cartons: 5 },
     bag: { postcode: "2026", basket: null, product: "", qty: 1, options: null, pickup: "", loadId: "" },
     scenario: { product: "P018", preview: null },
-    mapping: { system: "SUPPLY", code: "", product: "", reviewing: false },
+    mapping: { item: "", reviewing: false },
     orders: { no: "" },
   };
 
@@ -50,7 +50,7 @@ export function createDemo(panel, app, { onToggle }) {
     }
     if (result.kind !== "error" && result.kind !== "refused" && result.write !== false) {
       const ok = await app.afterWrite();
-      if (!ok) result.refreshNote = "Action completed; report refresh failed. Use Refresh reports to try again.";
+      if (!ok) result.refreshNote = "Action completed; report refresh failed. Use Refresh to try again.";
       await loadCatalogue(true);
     }
     st.results[key] = result;
@@ -106,9 +106,9 @@ export function createDemo(panel, app, { onToggle }) {
     return table({
       caption: "Store system shelf total and website number",
       columns: [
-        { label: "Product", render: (r) => r.product_code || r.barcode },
+        { label: "Item", render: (r) => r.item_no },
         { label: "Shelf, all stores", render: (r) => fmt.num(r.shelf_total_all_stores) },
-        { label: "Website shows", render: (r) => (r.web_sku ? fmt.num(r.website_shown) : "Not sold online") },
+        { label: "Website shows", render: (r) => (r.sold_online ? fmt.num(r.website_shown) : "Not sold online") },
       ],
       rows,
     });
@@ -116,11 +116,11 @@ export function createDemo(panel, app, { onToggle }) {
 
   // ---------- options ----------
   const storeOptions = () => cat.stores.map((s) => h("option", { value: s.store_code }, `${s.store_code} · ${s.store_name.replace("PetHaven ", "")} (store ${s.store_no})`));
-  const productOptions = () => cat.store_products.map((p) => p.product_code
-    ? h("option", { value: p.product_code }, `${p.product_code} · ${p.description}`)
-    : h("option", { value: p.barcode }, `${p.barcode} · ${p.description} (not mapped)`));
-  const webOptions = () => cat.web_products.map((p) => h("option", { value: p.product_code || p.web_sku },
-    `${p.product_code || p.web_sku} · ${p.title} — website shows ${p.website_shown}`));
+  const notListed = " (not on warehouse product list)";
+  const productOptions = () => cat.store_products.map((p) =>
+    h("option", { value: p.item_no }, `${p.item_no} · ${p.description}${p.product_code ? "" : notListed}`));
+  const webOptions = () => cat.web_products.map((p) => h("option", { value: p.item_no },
+    `${p.item_no} · ${p.title} — website shows ${p.website_shown}`));
   const sel = (fk, value, options, onchange, attrs = {}) => {
     const el = h("select", { "data-fk": fk, ...attrs }, options);
     el.value = value ?? "";
@@ -198,11 +198,11 @@ export function createDemo(panel, app, { onToggle }) {
     const r = await post("/demo/sync", {});
     const d = r.data;
     return {
-      kind: "ok", title: `Online sync ${d.source_sync_no} → warehouse sync ${d.warehouse_sync?.sync_id ?? "?"}:`, message: d.message,
+      kind: "ok", title: `Manual sync ${d.source_sync_no} → warehouse sync ${d.warehouse_sync?.sync_id ?? "?"}:`, message: d.message,
       body: d.website_changes.length ? table({
         caption: "Website quantities changed by this sync",
         columns: [
-          { label: "Product", render: (c) => (c.product_code === highlight ? h("b", {}, c.product_code) : c.product_code || c.web_sku) },
+          { label: "Item", render: (c) => (c.item_no === highlight ? h("b", {}, c.item_no) : c.item_no) },
           { label: "Before", render: (c) => fmt.num(c.before_qty) },
           { label: "After", render: (c) => fmt.num(c.after_qty) },
           { label: "Change", render: (c) => fmt.signed(c.change) },
@@ -218,7 +218,7 @@ export function createDemo(panel, app, { onToggle }) {
     return h("div", { class: "form" },
       lbl("Store", sel("sale-store", s.store, storeOptions(), (v) => { s.store = v; })),
       s.lines.map((line, i) => h("div", { class: "row2" },
-        lbl(i ? `Product ${i + 1}` : "Product", sel(`sale-p${i}`, line.product, productOptions(), (v) => { line.product = v; })),
+        lbl(i ? `Item ${i + 1}` : "Item", sel(`sale-p${i}`, line.product, productOptions(), (v) => { line.product = v; })),
         lbl("Units", num(`sale-q${i}`, line.qty, (v) => { line.qty = v; }, `Units of product ${i + 1}`)),
         s.lines.length > 1 ? h("button", { class: "btn", type: "button", "aria-label": `Remove product ${i + 1}`, onclick: () => { s.lines.splice(i, 1); render(); } }, icon("close")) : h("span"))),
       h("div", {}, h("button", { class: "btn btn-small", type: "button", onclick: () => { s.lines.push({ product: "P005", qty: 1 }); render(); } }, "Add another product")),
@@ -226,7 +226,7 @@ export function createDemo(panel, app, { onToggle }) {
         const r = await post("/demo/sales", { store: s.store, items: s.lines.map((l) => ({ product: l.product, quantity: l.qty })) });
         const d = r.data;
         const firstProduct = d.staging.find((x) => x.product_code)?.product_code;
-        return { kind: "ok", title: `Receipt ${d.sale_no}:`, message: d.message,
+        return { kind: "ok", title: `Receipt number ${d.sale_no}:`, message: d.message,
           body: [stagingTable(d.staging), shelfTable(d.website_vs_shelf)],
           links: [firstProduct ? ["View affected report", "inventory", { product: firstProduct, store_sel: s.store }] : ["View rejected records", "integration", {}], traceLink(d.staging)].filter(Boolean) };
       })),
@@ -237,20 +237,26 @@ export function createDemo(panel, app, { onToggle }) {
     const s = st.supplier_delivery;
     return h("div", { class: "form" },
       lbl("Supplier delivery location", sel("del-loc", s.location, cat.locations.map((l) => h("option", { value: l.location_code }, `${l.location_code} · ${l.location_name.replace(" (store receiving dock)", "")}`)), (v) => { s.location = v; })),
-      lbl("Supplier name", h("input", { type: "text", "data-fk": "del-sup", list: "supplier-list", value: s.supplier, maxlength: "80", oninput: (e) => { s.supplier = e.target.value; } }),
-        null),
-      h("datalist", { id: "supplier-list" }, cat.suppliers.map((x) => h("option", { value: x }))),
       h("div", { class: "row2", style: "grid-template-columns:minmax(0,1fr) 90px" },
-        lbl("Supplier SKU", sel("del-sku", s.sku, cat.supplier_items.map((i) => h("option", { value: i.supplier_sku },
-          `${i.supplier_sku} · ${i.item_description} · ${i.units_per_carton}/carton${i.product_code ? "" : " (not mapped)"}`)), (v) => { s.sku = v; })),
+        lbl("Item", sel("del-item", s.product, cat.supplier_items.map((i) => h("option", { value: i.item_no },
+          `${i.item_no} · ${i.item_description} · ${i.units_per_carton}/carton · ${i.supplier_id}${i.product_code ? "" : notListed}`)), (v) => { s.product = v; })),
         lbl("Cartons", num("del-cartons", s.cartons, (v) => { s.cartons = v; }, "Cartons"))),
-      h("p", { class: "hint" }, "Quantities are in cartons and the supplier delivery time is recorded in UTC, as the supplier delivery system does. The ETL converts both."),
+      h("div", { class: "row2", style: "grid-template-columns:minmax(0,1fr) minmax(0,1fr)" },
+        lbl("Supplier ID", sel("del-sup", s.supplier, [h("option", { value: "" }, "The item's supplier"),
+          ...cat.suppliers.map((x) => h("option", { value: x.supplier_id }, `${x.supplier_id} · ${x.supplier_name}`))], (v) => { s.supplier = v; })),
+        lbl("Supplier order number", h("input", { type: "text", "data-fk": "del-order", value: s.order, maxlength: "30", placeholder: "Numbered automatically",
+          oninput: (e) => { s.order = e.target.value.trim(); } }))),
+      h("p", { class: "hint" }, "Quantities are in cartons and the supplier delivery time is recorded in UTC, as the supplier delivery system does. The ETL converts both. The supplier ID and supplier order number identify the delivery in the warehouse."),
       h("div", {}, button("supplier_delivery", "Record supplier delivery", async () => {
-        const r = await post("/demo/supplier-deliveries", { location: s.location, supplier_name: s.supplier, items: [{ sku: s.sku, cartons: s.cartons }] });
+        const body = { location: s.location, items: [{ product: s.product, cartons: s.cartons }] };
+        if (s.supplier) body.supplier_id = s.supplier;
+        if (s.order) body.supplier_order_no = s.order;
+        const r = await post("/demo/supplier-deliveries", body);
+        s.order = "";
         const d = r.data;
         const l = d.lines[0];
         const st0 = d.staging[0];
-        return { kind: "ok", title: `Supplier delivery ${d.delivery_no}:`, message: d.message,
+        return { kind: "ok", title: `Supplier ${d.supplier_id}, order ${d.supplier_order_no}:`, message: d.message,
           body: [h("div", {}, `${l.cartons} cartons × ${l.units_per_carton} units/carton = ${l.units} units. Recorded at UTC ${l.delivered_at_utc} (Sydney ${fmt.dateTimeSec(l.delivered_at_sydney)}).`),
             stagingTable(d.staging), shelfTable(d.website_vs_shelf)],
           links: [st0?.product_code ? ["View affected report", "inventory", { product: st0.product_code, store_sel: st0.store_code }] : ["View rejected records", "integration", {}], traceLink(d.staging)].filter(Boolean) };
@@ -284,21 +290,21 @@ export function createDemo(panel, app, { onToggle }) {
       parts.push(h("div", { class: "bag" },
         h("div", {}, h("strong", {}, `Bag ${b.basket_id}`), ` · ${b.customer_postcode} ${b.suburb} · `, badge(openBag ? "Open" : "Checked out", openBag ? "info" : "success")),
         b.items.length ? h("ul", {}, b.items.map((i) => h("li", {},
-          h("span", {}, `${i.quantity} × ${i.product_code || i.web_sku} ${i.title}`, h("span", { class: "cell-sub" }, `website showed ${i.website_qty_at_add} when added; shows ${i.website_shown_now} now`)),
-          openBag ? h("button", { class: "btn btn-small", type: "button", "data-fk": `rm-${i.web_sku}`, disabled: st.pending.bag || undefined,
+          h("span", {}, `${i.quantity} × ${i.item_no} ${i.title}`, h("span", { class: "cell-sub" }, `website showed ${i.website_qty_at_add} when added; shows ${i.website_shown_now} now`)),
+          openBag ? h("button", { class: "btn btn-small", type: "button", "data-fk": `rm-${i.item_no}`, disabled: st.pending.bag || undefined,
             onclick: () => run("bag", async () => {
-              const r = await post(`/demo/baskets/${b.basket_id}/remove-item`, { product: i.web_sku });
+              const r = await post(`/demo/baskets/${b.basket_id}/remove-item`, { product: i.item_no });
               s.basket = r.data.basket; s.options = null;
               return { kind: "ok", write: false, message: r.data.message };
             }) }, "Remove") : null))) : h("p", { class: "hint" }, "The bag is empty."),
-        b.attempts.length ? h("p", { class: "hint", style: "margin-top:6px" }, "Checkout attempts: ", b.attempts.map((a, n) => `${n ? ", " : ""}#${a.attempt_no} ${a.outcome}${a.order_no ? ` (order ${a.order_no})` : ""}`).join("")) : null));
+        b.attempts.length ? h("p", { class: "hint", style: "margin-top:6px" }, "Checkout attempts: ", b.attempts.map((a, n) => `${n ? ", " : ""}#${a.attempt_no} ${a.outcome}${a.order_no ? ` (order ID ${a.order_no})` : ""}`).join("")) : null));
       if (openBag) {
         parts.push(
           h("div", { class: "row2" },
-            lbl("Product", sel("bag-product", s.product, webOptions(), (v) => { s.product = v; })),
+            lbl("Item", sel("bag-product", s.product, webOptions(), (v) => { s.product = v; })),
             lbl("Units", num("bag-qty", s.qty, (v) => { s.qty = v; }, "Units in bag")),
             button("bag", "Set quantity in bag", async () => {
-              const r = await post(`/demo/baskets/${b.basket_id}/items`, { product: s.product || cat.web_products[0].web_sku, quantity: s.qty });
+              const r = await post(`/demo/baskets/${b.basket_id}/items`, { product: s.product || cat.web_products[0].item_no, quantity: s.qty });
               s.basket = r.data.basket; s.options = null;
               return { kind: "ok", write: false, message: r.data.message };
             }, "btn")),
@@ -327,7 +333,7 @@ export function createDemo(panel, app, { onToggle }) {
             s.basket = d.basket; s.options = null;
             const ev = firstEvent(d.staging);
             return { kind: d.outcome === "blocked" ? "blocked" : "ok", title: `Attempt ${d.attempt_no}:`, message: d.message,
-              body: d.outcome === "blocked" ? h("div", {}, "Unavailable: ", d.unavailable_items.map((i) => `${i.quantity} × ${i.product_code || i.web_sku} (website showed ${i.website_qty_shown})`).join(", "), ". Remove them and check out again.") : null,
+              body: d.outcome === "blocked" ? h("div", {}, "Unavailable: ", d.unavailable_items.map((i) => `${i.quantity} × ${i.item_no} (website showed ${i.website_qty_shown})`).join(", "), ". Remove them and check out again.") : null,
               links: d.outcome === "blocked"
                 ? [["View blocked item", "checkout", { attempt: d.attempt_no, event: ev || "" }], ev ? ["View data trace", "integration", { trace_event: ev }] : null].filter(Boolean)
                 : [["View open reservations", "checkout", { tab: "reservations" }], ["View website comparison", "website", {}]] };
@@ -340,25 +346,18 @@ export function createDemo(panel, app, { onToggle }) {
 
   function syncSection() {
     return h("div", { class: "form" },
-      h("p", { class: "hint" }, "The online store reads the real shelf totals from the store system and replaces its website numbers. The warehouse records the before and after values for reporting; it does not set them. Refresh reports never runs this."),
-      h("div", {}, button("sync", "Sync website stock", () => doSync("sync"))),
+      h("p", { class: "hint" }, "The online store reads the real shelf totals from the store system and replaces its website numbers. While the scheduler runs, this happens automatically at the interval shown on Website stock; this button runs it now, as a manual sync. The warehouse records the before and after values for reporting; it does not set them. Refresh reports never runs this."),
+      h("div", {}, button("sync", "Sync website stock now", () => doSync("sync"))),
       resultBox("sync"));
   }
 
   function mappingSection() {
     const s = st.mapping;
-    const unmapped = [
-      ...cat.store_products.filter((p) => !p.product_code).map((p) => ({ system: "STORE", code: p.barcode, name: p.description })),
-      ...cat.supplier_items.filter((p) => !p.product_code).map((p) => ({ system: "SUPPLY", code: p.supplier_sku, name: p.item_description })),
-      ...cat.web_products.filter((p) => !p.product_code).map((p) => ({ system: "ONLINE", code: p.web_sku, name: p.title })),
-    ];
-    if (!unmapped.find((u) => u.system === s.system && u.code === s.code)) {
-      const first = unmapped.find((u) => u.system === s.system) || unmapped[0];
-      if (first) { s.system = first.system; s.code = first.code; } else s.code = "";
-    }
-    const chosen = unmapped.find((u) => u.system === s.system && u.code === s.code);
+    const unlisted = cat.store_products.filter((p) => !p.product_code);
+    if (!unlisted.find((u) => u.item_no === s.item)) s.item = unlisted[0]?.item_no || "";
+    const chosen = unlisted.find((u) => u.item_no === s.item);
     const etl = h("div", { class: "form", style: "border-top:1px dashed var(--border);margin-top:4px;padding-top:12px" },
-      h("p", { class: "hint" }, "Approving a mapping does not load anything by itself. Run the ETL to retry the waiting records."),
+      h("p", { class: "hint" }, "Adding an item does not load anything by itself. Run the ETL to retry the waiting records."),
       h("div", {}, button("etl", "Run ETL", async () => {
         const r = await post("/demo/etl", {});
         const d = r.data;
@@ -370,33 +369,29 @@ export function createDemo(panel, app, { onToggle }) {
           links: [["View integration and quality", "integration", {}], d.handled?.[0]?.event_id ? ["View data trace", "integration", { trace_event: d.handled[0].event_id }] : null].filter(Boolean) };
       }, "btn")),
       resultBox("etl"));
-    if (!unmapped.length) {
+    if (!unlisted.length) {
       return h("div", { class: "form" },
         h("div", { class: "result" }, h("strong", {}, "Already prepared or completed."),
-          "Every source product code has an approved mapping, so there is nothing to approve. For a fresh rejection demonstration, rebuild the database manually with scripts/build.py (see the dashboard runbook). Approved mappings are never deleted automatically."),
+          "Every item in the store catalogue is on the warehouse product list, so there is nothing to add. For a fresh rejection demonstration, rebuild the database manually with scripts/build.py (see the dashboard runbook). Items are never removed from the list automatically."),
         resultBox("mapping"), etl);
     }
     return h("div", { class: "form" },
-      h("p", { class: "hint" }, "Data-steward step. A source code without an approved mapping is rejected by the ETL with a reason — never guessed from its name. Enter the warehouse product code it represents."),
-      lbl("Unmapped source code", sel("map-code", `${s.system}|${s.code}`, unmapped.map((u) => h("option", { value: `${u.system}|${u.code}` }, `${u.system} · ${u.code} · ${u.name}`)),
-        (v) => { const [sys, code] = v.split("|"); s.system = sys; s.code = code; s.reviewing = false; render(); })),
-      lbl("Warehouse product code", h("input", { type: "text", "data-fk": "map-product", value: s.product, placeholder: "P019", maxlength: "4", pattern: "P[0-9]{3}",
-        oninput: (e) => { s.product = e.target.value.trim().toUpperCase(); if (s.reviewing) { s.reviewing = false; render(); } } }),
-        "Format P000. The product's other codes are listed on Integration & Quality → Code mappings."),
+      h("p", { class: "hint" }, "Data-steward step. Every system uses the same item number, but the warehouse only accepts items on its product list. Records for any other item are rejected as \u201cUnknown item\u201d — never guessed — until the item is added."),
+      lbl("Item not on the warehouse product list", sel("map-code", s.item, unlisted.map((u) => h("option", { value: u.item_no }, `${u.item_no} · ${u.description}`)),
+        (v) => { s.item = v; s.reviewing = false; render(); })),
       !s.reviewing
         ? h("div", {}, h("button", { class: "btn", type: "button", "data-fk": "map-review", onclick: () => {
-            if (!/^P\d{3}$/.test(s.product)) { st.results.mapping = { kind: "refused", message: "Enter a warehouse product code such as P019." }; render(); return; }
             s.reviewing = true; delete st.results.mapping; render();
             panel.querySelector('[data-fk="act-mapping"]')?.focus();
-          } }, "Review mapping"))
+          } }, "Review"))
         : h("div", { class: "result refused" },
-            h("strong", {}, "Review before approving"),
-            h("div", {}, `Map ${s.system} code ${s.code} (“${chosen?.name}”) to warehouse product ${s.product}. From now on the ETL will load every record with this code as ${s.product}.`),
+            h("strong", {}, "Review before adding"),
+            h("div", {}, `Add item ${s.item} (\u201c${chosen?.description}\u201d) to the warehouse product list. From now on the ETL loads every record for ${s.item}.`),
             h("div", { class: "links" },
-              button("mapping", "Approve mapping", async () => {
-                const r = await post("/demo/mappings/approve", { source_system: s.system, source_code: s.code, product_code: s.product });
+              button("mapping", "Add to product list", async () => {
+                const r = await post("/demo/items/add", { item_no: s.item });
                 s.reviewing = false;
-                return { kind: "ok", message: r.data.message, links: [["View code mappings", "integration", { tab: "mappings" }]] };
+                return { kind: "ok", message: r.data.message, links: [["View item list", "integration", { tab: "mappings" }]] };
               }),
               h("button", { class: "btn", type: "button", onclick: () => { s.reviewing = false; render(); } }, "Cancel"))),
       resultBox("mapping"), etl);
@@ -405,13 +400,13 @@ export function createDemo(panel, app, { onToggle }) {
   function ordersSection() {
     const s = st.orders;
     const step = (name, label) => button(`order-${name}`, label, async () => {
-      if (!/^\d+$/.test(s.no)) return { kind: "refused", message: "Enter an order number from the open reservations report." };
+      if (!/^\d+$/.test(s.no)) return { kind: "refused", message: "Enter an order ID from the open reservations report." };
       const r = await post(`/demo/orders/${s.no}/${name}`, name === "cancel" ? { reason: "Customer cancelled" } : {});
       return { kind: "ok", message: r.data.message, links: [["View open reservations", "checkout", { tab: "reservations" }]] };
     }, "btn btn-small");
     return h("div", { class: "form" },
-      h("p", { class: "hint" }, "Optional. Take order numbers from Checkout & Fulfilment → Open reservations. Refused steps (for example collecting before transfers arrive) show the store system's reason."),
-      lbl("Order number", h("input", { type: "text", inputmode: "numeric", "data-fk": "order-no", value: s.no, oninput: (e) => { s.no = e.target.value.trim(); } })),
+      h("p", { class: "hint" }, "Optional. Take order IDs from Orders & lost sales → Click & collect orders. Refused steps (for example collecting before transfers arrive) show the store system's reason."),
+      lbl("Order ID", h("input", { type: "text", inputmode: "numeric", "data-fk": "order-no", value: s.no, oninput: (e) => { s.no = e.target.value.trim(); } })),
       h("div", { class: "links", style: "display:flex;gap:8px;flex-wrap:wrap" },
         step("dispatch", "Send transfers"), step("receive", "Receive transfers"), step("collect", "Customer collects"), step("cancel", "Cancel order")),
       ["dispatch", "receive", "collect", "cancel"].map((n) => resultBox(`order-${n}`)),
@@ -428,8 +423,8 @@ export function createDemo(panel, app, { onToggle }) {
     clear(panel);
     panel.append(h("div", { class: "demo-head" },
       h("div", { class: "row" },
-        h("h2", { id: "demo-title", tabindex: "-1" }, "Business demo"),
-        h("button", { class: "btn btn-small", type: "button", onclick: close }, h("span", { class: "btn-label-long" }, "Close"), h("span", { class: "sr-only" }, " business demo"), " ×")),
+        h("h2", { id: "demo-title", tabindex: "-1" }, "Demo actions"),
+        h("button", { class: "btn btn-small", type: "button", onclick: close }, h("span", { class: "btn-label-long" }, "Close"), h("span", { class: "sr-only" }, " Demo actions panel"), " ×")),
       h("p", { class: "warn-line" }, h("strong", {}, "Writes to the database. "), "Each action records real business events in the source systems. Opening this panel changes nothing.")));
     const body = h("div", { class: "demo-body" });
     if (catErr) body.append(h("div", { class: "result error", role: "alert" }, catErr.message, h("button", { class: "btn btn-small", type: "button", onclick: () => loadCatalogue(true) }, "Retry")));
@@ -464,7 +459,7 @@ export function createDemo(panel, app, { onToggle }) {
     open(section, prefill) {
       if (section) st.opened.add(section);
       if (section === "mapping" && prefill) {
-        st.mapping.system = prefill.source_system; st.mapping.code = prefill.source_code; st.mapping.reviewing = false;
+        st.mapping.item = prefill.item_no; st.mapping.reviewing = false;
       }
       const wasOpen = open;
       open = true;

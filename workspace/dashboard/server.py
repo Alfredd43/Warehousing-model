@@ -51,6 +51,7 @@ DATABASE = os.environ.get("DASHBOARD_DB", db.DEMO_DATABASE)
 GET_ROUTES = [
     (r"/api/health", queries.health),
     (r"/api/status", queries.status),
+    (r"/api/overview", queries.overview),
     (r"/api/catalogue", queries.catalogue),
     (r"/api/website-stock", queries.website_stock),
     (r"/api/sync/latest", queries.sync_latest),
@@ -81,7 +82,7 @@ POST_ROUTES = [
     (r"/api/demo/baskets/(\d+)/remove-item", actions.remove_basket_item),
     (r"/api/demo/baskets/(\d+)/checkout", actions.checkout),
     (r"/api/demo/sync", actions.sync),
-    (r"/api/demo/mappings/approve", actions.approve_mapping),
+    (r"/api/demo/items/add", actions.add_item),
     (r"/api/demo/etl", actions.run_etl),
     (r"/api/demo/orders/(\d+)/(dispatch|receive|collect|cancel)", actions.order_step),
     (r"/api/demo/cancel-overdue", actions.cancel_overdue),

@@ -6,9 +6,10 @@
 -- Outputs: dim_product, dim_store, dim_date (populated), fact_stock_event,
 --          sync_run, sync_change, indexes.
 -- Keys: every dimension has a warehouse surrogate key (integer) and a
---       conformed business code (P001, S01) that belongs to the warehouse,
---       not to any source. etl.product_xref / etl.store_xref map each
---       source's own codes to these conformed codes.
+--       business code. dim_product.product_code IS the item number (P001),
+--       which all three source systems share. dim_store.store_code (S01)
+--       is the warehouse's own store code; etl.store_xref maps each
+--       source's store code to it, because store codes still differ.
 -- =============================================================================
 
 CREATE TABLE dw.dim_product (
@@ -21,7 +22,8 @@ CREATE TABLE dw.dim_product (
     CONSTRAINT uq_dim_product_code UNIQUE (product_code)
 );
 COMMENT ON TABLE dw.dim_product IS
-'Conformed product dimension, one row per product. Attributes come from the store catalogue (system of record), overwritten on change (SCD type 1).';
+'Conformed product dimension, one row per item on the warehouse product list (etl.item_list). Attributes come from the store catalogue (system of record), overwritten on change (SCD type 1).';
+COMMENT ON COLUMN dw.dim_product.product_code IS 'The item number (P001...), the same in all three source systems. Named product_code in the warehouse; it holds the item_no unchanged.';
 
 CREATE TABLE dw.dim_store (
     store_key   integer GENERATED ALWAYS AS IDENTITY,
@@ -110,10 +112,10 @@ COMMENT ON COLUMN dw.fact_stock_event.event_type IS 'store_sale, supplier_delive
 COMMENT ON COLUMN dw.fact_stock_event.quantity_change IS 'Signed change to in-store (shelf) stock.';
 COMMENT ON COLUMN dw.fact_stock_event.reserved_change IS 'Signed change to reserved stock (held for an online order, at the pickup store or waiting to be sent there). Units in transit between stores are in no store.';
 COMMENT ON COLUMN dw.fact_stock_event.units IS 'Units involved, always positive. For checkout_blocked: units in the bag that no single store could supply.';
-COMMENT ON COLUMN dw.fact_stock_event.order_ref IS 'Degenerate dimension: online order number for order events (reservation, transfer_out, transfer_in, collection, cancellation); "basket <id>" for checkout_blocked.';
+COMMENT ON COLUMN dw.fact_stock_event.order_ref IS 'Degenerate dimension: the order ID for order events (reservation, transfer_out, transfer_in, collection, cancellation); "basket <id>" for checkout_blocked.';
 COMMENT ON COLUMN dw.fact_stock_event.store_key IS 'Store where the stock changed. For checkout_blocked: the pickup store the customer would have collected from.';
 COMMENT ON COLUMN dw.fact_stock_event.pickup_store_key IS 'Role-playing store dimension: the store where the customer collects the order. Differs from store_key when the stock comes from another store and is transferred.';
-COMMENT ON COLUMN dw.fact_stock_event.source_ref IS 'Lineage: source system and record, e.g. STORE:sale 12 line 1. Unique, so a source record is never loaded twice.';
+COMMENT ON COLUMN dw.fact_stock_event.source_ref IS 'Lineage: the source system and its transaction ID. STORE:receipt 12 line 1 (receipt number), SUPPLY:supplier SUP-01 order PO-1001 line 1 (supplier ID + supplier order number), STORE:order 5 line 2 held (order ID, for each step of an online order line), ONLINE:checkout attempt 9 item P018 (a blocked checkout has no order ID). Unique, so a source record is never loaded twice.';
 COMMENT ON COLUMN dw.fact_stock_event.etl_run_id IS 'ETL run that loaded this row (etl.etl_run).';
 
 CREATE INDEX ix_fact_product_store ON dw.fact_stock_event (product_key, store_key);
@@ -125,6 +127,7 @@ CREATE TABLE dw.sync_run (
     sync_id           integer     GENERATED ALWAYS AS IDENTITY,
     source_sync_no    bigint      NOT NULL,
     run_at            timestamptz NOT NULL,
+    triggered_by      text        NOT NULL,
     from_event_id     bigint      NOT NULL,
     to_event_id       bigint      NOT NULL,
     events_processed  integer     NOT NULL,
@@ -137,6 +140,7 @@ CREATE TABLE dw.sync_run (
 COMMENT ON TABLE dw.sync_run IS
 'Warehouse record of one website stock sync (run by the online store, online.sync_website_stock). The stock events between this sync and the previous one are from_event_id < event_id <= to_event_id. Analytical only: the warehouse does not set the website number.';
 COMMENT ON COLUMN dw.sync_run.source_sync_no IS 'Lineage: online.stock_sync.sync_no.';
+COMMENT ON COLUMN dw.sync_run.triggered_by IS 'scheduled (the sync scheduler), manual ("run sync now") or seed (sample data).';
 COMMENT ON COLUMN dw.sync_run.numbers_changed IS 'Store and online numbers this sync changed (rows in sync_change with changed = true).';
 COMMENT ON COLUMN dw.sync_run.store_mismatches IS 'Reconciliation: store/product pairs where the warehouse differs from the live store system (see dw.rpt_reconciliation). Expected 0.';
 

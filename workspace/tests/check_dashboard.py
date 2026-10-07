@@ -101,6 +101,24 @@ def main() -> int:
     check("D1 open reservations equal dw.rpt_open_reservations row count",
           sql("SELECT count(*) FROM dw.rpt_open_reservations")[0][0], len(r["data"]["rows"]))
 
+    s, o = get("/overview")
+    ov = o["data"]
+    check("D8 overview: website accuracy equals dw.rpt_online_vs_actual",
+          (sql("SELECT count(*) FROM dw.rpt_online_vs_actual")[0][0],
+           sql("SELECT count(*) FROM dw.rpt_online_vs_actual WHERE status <> 'in sync'")[0][0]),
+          (ov["website"]["products"], ov["website"]["out_of_date"]))
+    check("D8 overview: stock alerts equal dw.rpt_current_stock_by_store",
+          tuple(sql("""SELECT count(*) FILTER (WHERE in_store_quantity = 0),
+                              count(*) FILTER (WHERE in_store_quantity BETWEEN 1 AND 2)
+                         FROM dw.rpt_current_stock_by_store""")[0]),
+          (ov["stock"]["out_of_stock"], ov["stock"]["low_stock"]))
+    check("D8 overview: open and overdue orders equal dw.rpt_open_reservations",
+          tuple(sql("""SELECT count(DISTINCT order_no), count(DISTINCT order_no) FILTER (WHERE overdue)
+                         FROM dw.rpt_open_reservations""")[0]),
+          (ov["orders"]["open_orders"], ov["orders"]["overdue"]))
+    check("D8 overview: scheduler state comes from the staleness report",
+          sql("SELECT scheduler_status FROM dw.rpt_online_staleness")[0][0], ov["sync"]["scheduler_status"])
+
     # --- 2. validation and refusals ------------------------------------------------
     check("D2 bad product code is refused", 400, get("/stock/events?product=P001;drop")[0])
     check("D2 unknown staging table is refused", 400, get("/integration/staging?table=pg_user")[0])
@@ -118,14 +136,28 @@ def main() -> int:
     before = {x["product_code"]: x for x in get("/website-stock")[1]["data"]["comparison"]}["P001"]
     s, r = post("/demo/sales", {"store": "S01", "items": [{"product": "P001", "quantity": 1}]})
     check("D3 sale returns its receipt and a loaded fact", (200, "loaded"), (s, r["data"]["staging"][0]["load_status"]))
+    check("D3 store code S01 is mapped to the store system's store number", "101", r["data"]["store_no"])
+    check("D5 the sale fact traces to its receipt number", f"STORE:receipt {r['data']['sale_no']} line 1",
+          r["data"]["staging"][0]["source_ref"])
+    check("D2 an unmapped store code is refused", 404,
+          post("/demo/sales", {"store": "S09", "items": [{"product": "P001", "quantity": 1}]})[0])
+    check("D2 an unknown item number is refused", 404,
+          post("/demo/sales", {"store": "S01", "items": [{"product": "P999", "quantity": 1}]})[0])
     after = {x["product_code"]: x for x in get("/website-stock")[1]["data"]["comparison"]}["P001"]
     check("D3 sale leaves the website number unchanged", before["online_shown"], after["online_shown"])
     check("D3 sale lowers warehouse available by 1", before["actual_in_store"] - 1, after["actual_in_store"])
 
-    s, r = post("/demo/supplier-deliveries", {"location": "S03", "supplier_name": "Pawfect Foods",
-                                     "items": [{"sku": "PF-DOG-ADT-3K", "cartons": 5}]})
+    s, r = post("/demo/supplier-deliveries", {"location": "S03", "items": [{"product": "P001", "cartons": 5}]})
     line = r["data"]["lines"][0]
     check("D3 supplier delivery converts cartons to units", (5, 4, 20), (line["cartons"], line["units_per_carton"], line["units"]))
+    check("D3 store code S03 is mapped to the supplier system's location, default supplier is the item's",
+          ("NSW-CHATS", "SUP-01"), (r["data"]["location_code"], r["data"]["supplier_id"]))
+    check("D5 the delivery traces to supplier ID + supplier order number",
+          f"SUPPLY:supplier SUP-01 order {r['data']['supplier_order_no']} line 1", r["data"]["staging"][0]["source_ref"])
+    s2, _ = post("/demo/supplier-deliveries", {"location": "S03", "supplier_id": "SUP-01",
+                                              "supplier_order_no": r["data"]["supplier_order_no"],
+                                              "items": [{"product": "P001", "cartons": 1}]})
+    check("D2 a supplier order number cannot be delivered twice", 409, s2)
     ev = r["data"]["staging"][0]["event_id"]
     s, t = get(f"/integration/trace?event_id={ev}")
     tr = t["data"]
@@ -168,7 +200,11 @@ def main() -> int:
     check("D4 a checked-out bag refuses changes", 409, s)
 
     # --- sync ---------------------------------------------------------------------
+    sched = get("/status")[1]["data"]["schedule"]
+    check("D7 status reports the automatic sync (not started in the check database)",
+          ("never started", None), (sched["scheduler_status"], sched["interval_seconds"]))
     s, r = post("/demo/sync", {})
+    check("D7 the dashboard's sync button is a manual sync", "manual", r["data"]["warehouse_sync"]["triggered_by"])
     changes = {x["product_code"]: (x["before_qty"], x["after_qty"]) for x in r["data"]["website_changes"]}
     check("D1 sync corrects P018 to zero", 0, changes.get("P018", (None, None))[1])
     s, y = get("/sync/latest")
@@ -185,31 +221,31 @@ def main() -> int:
     s, ss = get("/integration/sync-staging?limit=200")
     check("D5 sync records link to their warehouse sync", True, all(x["warehouse_sync_id"] for x in ss["data"]["rows"]))
 
-    # --- 5. unmapped product: rejection and recovery --------------------------------
-    s, r = post("/demo/supplier-deliveries", {"location": "NSW-PARRA", "supplier_name": "PlayPets Wholesale",
-                                     "items": [{"sku": "PP-CAT-TUNNEL", "cartons": 2}]})
+    # --- 5. unknown item: rejection and recovery -------------------------------------
+    s, r = post("/demo/supplier-deliveries", {"location": "NSW-PARRA", "supplier_id": "SUP-02",
+                                              "supplier_order_no": "PO-DASH-1",
+                                              "items": [{"product": "P019", "cartons": 2}]})
     stg = r["data"]["staging"][0]
-    check("D5 unmapped supplier delivery succeeds in its source but is rejected by the ETL", (200, "rejected"), (s, stg["load_status"]))
+    check("D5 delivery of an unknown item succeeds in its source but is rejected by the ETL", (200, "rejected"), (s, stg["load_status"]))
+    check("D5 reject reason: unknown item", True, (stg["note"] or "").startswith("Unknown item P019"))
     s, t = get(f"/integration/trace?table={stg['stg_table']}&id={stg['stg_id']}")
     check("D5 rejected trace has no warehouse row", (None, None), (t["data"]["warehouse"], t["data"]["transform"]["product"]["warehouse_code"]))
-    post("/demo/sales", {"store": "S01", "items": [{"product": "9300601001194", "quantity": 1}]})
+    post("/demo/sales", {"store": "S01", "items": [{"product": "P019", "quantity": 1}]})
     q = get("/integration/quality")[1]["data"]
     check("D5 quality shows rejections and the reconciliation gap", (2, 1), (len(q["rejected"]), q["summary"]["mismatched_pairs"]))
     check("D5 status warns that the warehouse may be incomplete", True, get("/status")[1]["data"]["quality"]["incomplete"])
-    check("D5 mapping approval needs an existing source code", 404,
-          post("/demo/mappings/approve", {"source_system": "SUPPLY", "source_code": "NOPE", "product_code": "P019"})[0])
-    for system, code in (("SUPPLY", "PP-CAT-TUNNEL"), ("STORE", "9300601001194")):
-        check(f"D5 approve {system} mapping", 200,
-              post("/demo/mappings/approve", {"source_system": system, "source_code": code, "product_code": "P019"})[0])
-    check("D5 an approved code cannot be re-approved here", 409,
-          post("/demo/mappings/approve", {"source_system": "STORE", "source_code": "9300601001194", "product_code": "P019"})[0])
+    check("D5 the item list shows P019 not on the warehouse product list", ["P019"],
+          [x["item_no"] for x in get("/integration/mappings")[1]["data"]["items_not_on_list"]])
+    check("D5 adding an item needs an item in the store catalogue", 404, post("/demo/items/add", {"item_no": "P999"})[0])
+    check("D5 add P019 to the warehouse product list", 200, post("/demo/items/add", {"item_no": "P019"})[0])
+    check("D5 an item already on the list cannot be added again", 409, post("/demo/items/add", {"item_no": "P019"})[0])
     s, e1 = post("/demo/etl", {})
     check("D5 ETL loads the waiting rows", (2, 0), (e1["data"]["run"]["rows_loaded"], e1["data"]["run"]["rows_rejected"]))
     s, e2 = post("/demo/etl", {})
     check("D5 a second ETL pass has nothing to do", None, e2["data"]["etl_run_id"])
     check("D5 no duplicate facts for the recovered records", 2, sql(
         "SELECT count(*) FROM dw.fact_stock_event WHERE source_ref IN (%s, %s)",
-        (stg["source_ref"], "STORE:sale %s line 1" % sql("SELECT max(sale_no) FROM store_ops.sale")[0][0]))[0][0])
+        (stg["source_ref"], "STORE:receipt %s line 1" % sql("SELECT max(sale_no) FROM store_ops.sale")[0][0]))[0][0])
     q = get("/integration/quality")[1]["data"]["summary"]
     check("D5 reconciliation matches again", (0, 0), (q["rejected_rows"], q["mismatched_pairs"]))
 

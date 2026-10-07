@@ -4,7 +4,9 @@
 --          (POS tills, stock screens, click-and-collect counter, transfers).
 -- Design ref: docs/Architecture_and_Data_Model.md section 4.1.
 -- Prerequisites: 01_schemas.sql.
--- Own identifiers: store_no ('101'..'105'), barcode (EAN-13).
+-- Identifiers: item_no ('P001'), the item number shared by all three systems;
+--   store_no ('101'..'105'), this system's own store code. Transaction ID:
+--   sale_no, the receipt number. The EAN-13 barcode is a product attribute.
 -- Outputs: store, product, store_stock, sale, sale_line, reservation and the
 --          store system's operations:
 --            record_sale()              till sale of one or more items
@@ -41,26 +43,31 @@ CREATE TABLE store_ops.store (
 COMMENT ON TABLE store_ops.store IS 'One physical PetHaven store, identified by its three-digit store number.';
 
 CREATE TABLE store_ops.product (
+    item_no      text          NOT NULL,
     barcode      text          NOT NULL,
     description  text          NOT NULL,
     category     text          NOT NULL,
     shelf_price  numeric(10,2) NOT NULL,
-    CONSTRAINT pk_product PRIMARY KEY (barcode),
+    CONSTRAINT pk_product PRIMARY KEY (item_no),
+    CONSTRAINT uq_product_barcode UNIQUE (barcode),
+    CONSTRAINT ck_product_item_no CHECK (item_no ~ '^P[0-9]{3}$'),
     CONSTRAINT ck_product_barcode CHECK (store_ops.is_valid_ean13(barcode)),
     CONSTRAINT ck_product_price CHECK (shelf_price >= 0)
 );
 COMMENT ON TABLE store_ops.product IS
-'Store product catalogue, identified by EAN-13 barcode (check digit enforced). System of record for product descriptions, categories and prices.';
+'Store product catalogue, keyed on the item number shared by every system (P001...). System of record for product descriptions, categories and prices.';
+COMMENT ON COLUMN store_ops.product.item_no IS 'Item number: the same in the store system, the supplier delivery system and the online store.';
+COMMENT ON COLUMN store_ops.product.barcode IS 'EAN-13 barcode printed on the pack (check digit enforced). An attribute the till scans, not a key between systems.';
 
 CREATE TABLE store_ops.store_stock (
     store_no           text        NOT NULL,
-    barcode            text        NOT NULL,
+    item_no            text        NOT NULL,
     in_store_quantity  integer     NOT NULL DEFAULT 0,
     reserved_quantity  integer     NOT NULL DEFAULT 0,
     updated_at         timestamptz NOT NULL DEFAULT now(),
-    CONSTRAINT pk_store_stock PRIMARY KEY (store_no, barcode),
+    CONSTRAINT pk_store_stock PRIMARY KEY (store_no, item_no),
     CONSTRAINT fk_store_stock_store FOREIGN KEY (store_no) REFERENCES store_ops.store (store_no),
-    CONSTRAINT fk_store_stock_product FOREIGN KEY (barcode) REFERENCES store_ops.product (barcode),
+    CONSTRAINT fk_store_stock_product FOREIGN KEY (item_no) REFERENCES store_ops.product (item_no),
     CONSTRAINT ck_store_stock_in_store CHECK (in_store_quantity >= 0),
     CONSTRAINT ck_store_stock_reserved CHECK (reserved_quantity >= 0)
 );
@@ -79,16 +86,17 @@ CREATE TABLE store_ops.sale (
     CONSTRAINT fk_sale_store FOREIGN KEY (store_no) REFERENCES store_ops.store (store_no)
 );
 COMMENT ON TABLE store_ops.sale IS 'One completed till transaction (receipt). Never updated.';
+COMMENT ON COLUMN store_ops.sale.sale_no IS 'Receipt number: the in-store transaction ID.';
 
 CREATE TABLE store_ops.sale_line (
     sale_no     bigint        NOT NULL,
     line_no     integer       NOT NULL,
-    barcode     text          NOT NULL,
+    item_no     text          NOT NULL,
     quantity    integer       NOT NULL,
     unit_price  numeric(10,2) NOT NULL,
     CONSTRAINT pk_sale_line PRIMARY KEY (sale_no, line_no),
     CONSTRAINT fk_sale_line_sale FOREIGN KEY (sale_no) REFERENCES store_ops.sale (sale_no),
-    CONSTRAINT fk_sale_line_product FOREIGN KEY (barcode) REFERENCES store_ops.product (barcode),
+    CONSTRAINT fk_sale_line_product FOREIGN KEY (item_no) REFERENCES store_ops.product (item_no),
     CONSTRAINT ck_sale_line_quantity CHECK (quantity > 0)
 );
 COMMENT ON TABLE store_ops.sale_line IS
@@ -98,7 +106,7 @@ CREATE TABLE store_ops.reservation (
     reservation_no   bigint      GENERATED ALWAYS AS IDENTITY,
     store_no         text        NOT NULL,
     pickup_store_no  text        NOT NULL,
-    barcode          text        NOT NULL,
+    item_no          text        NOT NULL,
     quantity         integer     NOT NULL,
     web_order_ref    text        NOT NULL,
     web_line_no      integer     NOT NULL,
@@ -110,7 +118,7 @@ CREATE TABLE store_ops.reservation (
     cancel_reason    text,
     CONSTRAINT pk_reservation PRIMARY KEY (reservation_no),
     CONSTRAINT uq_reservation_order_line UNIQUE (web_order_ref, web_line_no),
-    CONSTRAINT fk_reservation_stock FOREIGN KEY (store_no, barcode) REFERENCES store_ops.store_stock (store_no, barcode),
+    CONSTRAINT fk_reservation_stock FOREIGN KEY (store_no, item_no) REFERENCES store_ops.store_stock (store_no, item_no),
     CONSTRAINT fk_reservation_pickup FOREIGN KEY (pickup_store_no) REFERENCES store_ops.store (store_no),
     CONSTRAINT ck_reservation_quantity CHECK (quantity > 0),
     CONSTRAINT ck_reservation_status CHECK (status IN ('held', 'in_transit', 'arrived', 'collected', 'cancelled')),
@@ -120,7 +128,7 @@ CREATE TABLE store_ops.reservation (
 );
 COMMENT ON TABLE store_ops.reservation IS
 'Stock held for one online order line. store_no = store the units were taken from; pickup_store_no = store where the customer collects. Same store: held -> collected/cancelled. Different store (transfer): held -> in_transit -> arrived -> collected/cancelled.';
-COMMENT ON COLUMN store_ops.reservation.web_order_ref IS 'Online store order number, as text. The store system does not validate it.';
+COMMENT ON COLUMN store_ops.reservation.web_order_ref IS 'Order ID of the online order (online.web_order.order_no), as text. The store system does not validate it.';
 
 
 -- -----------------------------------------------------------------------------
@@ -140,11 +148,11 @@ BEGIN
        SET in_store_quantity = in_store_quantity - NEW.quantity,
            updated_at        = v_sold_at
      WHERE store_no = v_store_no
-       AND barcode = NEW.barcode
+       AND item_no = NEW.item_no
        AND in_store_quantity >= NEW.quantity;
     IF NOT FOUND THEN
         RAISE EXCEPTION 'Store % does not have % unit(s) of % on the shelf',
-            v_store_no, NEW.quantity, NEW.barcode;
+            v_store_no, NEW.quantity, NEW.item_no;
     END IF;
     RETURN NEW;
 END;
@@ -155,10 +163,11 @@ BEFORE INSERT ON store_ops.sale_line
 FOR EACH ROW EXECUTE FUNCTION store_ops.apply_sale_line();
 
 -- Till sale of one or more items, saved as one receipt in one transaction.
--- Example: SELECT store_ops.record_sale('101', ARRAY['9300601001019','9300601001057'], ARRAY[2,1]);
+-- Example: SELECT store_ops.record_sale('101', ARRAY['P001','P005'], ARRAY[2,1]);
+-- Returns the receipt number (sale_no).
 CREATE FUNCTION store_ops.record_sale(
     p_store_no    text,
-    p_barcodes    text[],
+    p_item_nos    text[],
     p_quantities  integer[],
     p_sold_at     timestamptz DEFAULT now(),
     p_till_no     integer DEFAULT 1
@@ -167,23 +176,23 @@ LANGUAGE plpgsql AS $$
 DECLARE
     v_sale_no bigint;
 BEGIN
-    IF coalesce(array_length(p_barcodes, 1), 0) = 0
-       OR array_length(p_barcodes, 1) <> coalesce(array_length(p_quantities, 1), 0) THEN
-        RAISE EXCEPTION 'Give one quantity per barcode';
+    IF coalesce(array_length(p_item_nos, 1), 0) = 0
+       OR array_length(p_item_nos, 1) <> coalesce(array_length(p_quantities, 1), 0) THEN
+        RAISE EXCEPTION 'Give one quantity per item';
     END IF;
-    IF EXISTS (SELECT 1 FROM unnest(p_barcodes) AS b (barcode)
-                WHERE NOT EXISTS (SELECT 1 FROM store_ops.product p WHERE p.barcode = b.barcode)) THEN
-        RAISE EXCEPTION 'Unknown barcode in %', p_barcodes;
+    IF EXISTS (SELECT 1 FROM unnest(p_item_nos) AS b (item_no)
+                WHERE NOT EXISTS (SELECT 1 FROM store_ops.product p WHERE p.item_no = b.item_no)) THEN
+        RAISE EXCEPTION 'Unknown item number in %', p_item_nos;
     END IF;
 
     INSERT INTO store_ops.sale (store_no, till_no, sold_at)
     VALUES (p_store_no, p_till_no, p_sold_at)
     RETURNING sale_no INTO v_sale_no;
 
-    INSERT INTO store_ops.sale_line (sale_no, line_no, barcode, quantity, unit_price)
-    SELECT v_sale_no, i.n, i.barcode, i.quantity, p.shelf_price
-      FROM unnest(p_barcodes, p_quantities) WITH ORDINALITY AS i (barcode, quantity, n)
-      JOIN store_ops.product p ON p.barcode = i.barcode
+    INSERT INTO store_ops.sale_line (sale_no, line_no, item_no, quantity, unit_price)
+    SELECT v_sale_no, i.n, i.item_no, i.quantity, p.shelf_price
+      FROM unnest(p_item_nos, p_quantities) WITH ORDINALITY AS i (item_no, quantity, n)
+      JOIN store_ops.product p ON p.item_no = i.item_no
      ORDER BY i.n;
 
     RETURN v_sale_no;
@@ -196,12 +205,12 @@ $$;
 -- The first supplier delivery of a product to a store creates its stock row.
 -- -----------------------------------------------------------------------------
 CREATE FUNCTION store_ops.receive_goods(
-    p_store_no text, p_barcode text, p_units integer, p_received_at timestamptz
+    p_store_no text, p_item_no text, p_units integer, p_received_at timestamptz
 ) RETURNS void
 LANGUAGE sql AS $$
-    INSERT INTO store_ops.store_stock (store_no, barcode, in_store_quantity, reserved_quantity, updated_at)
-    VALUES (p_store_no, p_barcode, p_units, 0, p_received_at)
-    ON CONFLICT (store_no, barcode) DO UPDATE
+    INSERT INTO store_ops.store_stock (store_no, item_no, in_store_quantity, reserved_quantity, updated_at)
+    VALUES (p_store_no, p_item_no, p_units, 0, p_received_at)
+    ON CONFLICT (store_no, item_no) DO UPDATE
        SET in_store_quantity = store_ops.store_stock.in_store_quantity + EXCLUDED.in_store_quantity,
            updated_at        = EXCLUDED.updated_at;
 $$;
@@ -212,11 +221,11 @@ $$;
 -- summed over all stores. Reserved units are not available, so not counted.
 -- -----------------------------------------------------------------------------
 CREATE FUNCTION store_ops.shelf_totals()
-RETURNS TABLE (barcode text, in_store_total integer)
+RETURNS TABLE (item_no text, in_store_total integer)
 LANGUAGE sql STABLE AS $$
-    SELECT barcode, sum(in_store_quantity)::integer
+    SELECT item_no, sum(in_store_quantity)::integer
       FROM store_ops.store_stock
-     GROUP BY barcode;
+     GROUP BY item_no;
 $$;
 
 
@@ -224,11 +233,11 @@ $$;
 -- Interface used by Source 3 to offer pickup stores: which stores have the
 -- whole quantity on the shelf right now? Read-only, no locks.
 -- -----------------------------------------------------------------------------
-CREATE FUNCTION store_ops.stores_with_stock(p_barcode text, p_quantity integer)
+CREATE FUNCTION store_ops.stores_with_stock(p_item_no text, p_quantity integer)
 RETURNS SETOF text
 LANGUAGE sql STABLE AS $$
     SELECT store_no FROM store_ops.store_stock
-     WHERE barcode = p_barcode AND in_store_quantity >= p_quantity;
+     WHERE item_no = p_item_no AND in_store_quantity >= p_quantity;
 $$;
 
 
@@ -240,20 +249,20 @@ $$;
 -- the answer stays true while the website takes payment and holds the stock.
 -- -----------------------------------------------------------------------------
 CREATE FUNCTION store_ops.find_stock(
-    p_barcode text, p_quantity integer, p_store_nos text[]
+    p_item_no text, p_quantity integer, p_store_nos text[]
 ) RETURNS text
 LANGUAGE plpgsql AS $$
 DECLARE
     v_store_no text;
 BEGIN
     PERFORM 1 FROM store_ops.store_stock
-     WHERE barcode = p_barcode AND store_no = ANY (p_store_nos)
+     WHERE item_no = p_item_no AND store_no = ANY (p_store_nos)
      ORDER BY store_no
        FOR UPDATE;
 
     SELECT s.store_no INTO v_store_no
       FROM unnest(p_store_nos) WITH ORDINALITY AS u (store_no, n)
-      JOIN store_ops.store_stock s ON s.store_no = u.store_no AND s.barcode = p_barcode
+      JOIN store_ops.store_stock s ON s.store_no = u.store_no AND s.item_no = p_item_no
      WHERE s.in_store_quantity >= p_quantity
      ORDER BY u.n
      LIMIT 1;
@@ -269,7 +278,7 @@ $$;
 -- this store does not have the whole quantity on the shelf.
 -- -----------------------------------------------------------------------------
 CREATE FUNCTION store_ops.reserve_stock(
-    p_store_no text, p_barcode text, p_quantity integer,
+    p_store_no text, p_item_no text, p_quantity integer,
     p_web_order_ref text, p_web_line_no integer,
     p_pickup_store_no text, p_reserved_at timestamptz
 ) RETURNS bigint
@@ -282,16 +291,16 @@ BEGIN
            reserved_quantity = reserved_quantity + p_quantity,
            updated_at        = p_reserved_at
      WHERE store_no = p_store_no
-       AND barcode = p_barcode
+       AND item_no = p_item_no
        AND in_store_quantity >= p_quantity;
     IF NOT FOUND THEN
         RETURN NULL;
     END IF;
 
     INSERT INTO store_ops.reservation
-        (store_no, pickup_store_no, barcode, quantity, web_order_ref, web_line_no, reserved_at)
+        (store_no, pickup_store_no, item_no, quantity, web_order_ref, web_line_no, reserved_at)
     VALUES
-        (p_store_no, p_pickup_store_no, p_barcode, p_quantity, p_web_order_ref, p_web_line_no, p_reserved_at)
+        (p_store_no, p_pickup_store_no, p_item_no, p_quantity, p_web_order_ref, p_web_line_no, p_reserved_at)
     RETURNING reservation_no INTO v_reservation_no;
     RETURN v_reservation_no;
 END;
@@ -321,7 +330,7 @@ BEGIN
         UPDATE store_ops.store_stock
            SET reserved_quantity = reserved_quantity - r.quantity,
                updated_at        = p_dispatched_at
-         WHERE store_no = r.store_no AND barcode = r.barcode;
+         WHERE store_no = r.store_no AND item_no = r.item_no;
         UPDATE store_ops.reservation
            SET status = 'in_transit', dispatched_at = p_dispatched_at
          WHERE reservation_no = r.reservation_no;
@@ -345,9 +354,9 @@ BEGIN
          ORDER BY web_line_no
            FOR UPDATE
     LOOP
-        INSERT INTO store_ops.store_stock (store_no, barcode, in_store_quantity, reserved_quantity, updated_at)
-        VALUES (r.pickup_store_no, r.barcode, 0, r.quantity, p_arrived_at)
-        ON CONFLICT (store_no, barcode) DO UPDATE
+        INSERT INTO store_ops.store_stock (store_no, item_no, in_store_quantity, reserved_quantity, updated_at)
+        VALUES (r.pickup_store_no, r.item_no, 0, r.quantity, p_arrived_at)
+        ON CONFLICT (store_no, item_no) DO UPDATE
            SET reserved_quantity = store_ops.store_stock.reserved_quantity + EXCLUDED.reserved_quantity,
                updated_at        = EXCLUDED.updated_at;
         UPDATE store_ops.reservation
@@ -387,7 +396,7 @@ BEGIN
         UPDATE store_ops.store_stock
            SET reserved_quantity = reserved_quantity - r.quantity,
                updated_at        = p_collected_at
-         WHERE store_no = r.pickup_store_no AND barcode = r.barcode;
+         WHERE store_no = r.pickup_store_no AND item_no = r.item_no;
         UPDATE store_ops.reservation
            SET status = 'collected', closed_at = p_collected_at
          WHERE reservation_no = r.reservation_no;
@@ -429,7 +438,7 @@ BEGIN
            SET reserved_quantity = reserved_quantity - r.quantity,
                in_store_quantity = in_store_quantity + r.quantity,
                updated_at        = p_cancelled_at
-         WHERE store_no = v_where AND barcode = r.barcode;
+         WHERE store_no = v_where AND item_no = r.item_no;
         UPDATE store_ops.reservation
            SET status = 'cancelled', closed_at = p_cancelled_at, cancel_reason = p_reason
          WHERE reservation_no = r.reservation_no;

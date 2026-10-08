@@ -20,7 +20,7 @@ docker exec -i student-postgres psql -U student -d pethaven_demo < workspace/dem
 | Behaviour checks (`check_demo.py`) | 104 / 104 PASS, exit code 0 |
 | Scheduler checks (`check_scheduler.py`, 2 s test interval) | 17 / 17 PASS; scheduled syncs 2.0 s apart |
 | Dashboard API checks (`check_dashboard.py`) | 67 / 67 PASS |
-| Demo script (`cloudbeaver_demo.sql`) | Runs top to bottom; the only error is the deliberate one in step 3c (collecting before a transfer arrives is refused) |
+| Demo script (`cloudbeaver_demo.sql`) | Runs top to bottom; the only error is the deliberate one in Part B step 3c (collecting before a transfer arrives is refused) |
 | Seed result | 155 source records staged → 146 fact rows loaded, 9 skipped, 0 rejected; 7 paid orders, 1 checkout blocked before payment; 2 syncs; 0 events pending |
 | Reconciliation after seed and after every sync | 90 / 90 store-product pairs match; `store_mismatches = 0` |
 | ETL pass duration (CDC, one till sale) | about 5 ms average, under 10 ms for a whole sale |
@@ -47,7 +47,7 @@ docker exec -i student-postgres psql -U student -d pethaven_demo < workspace/dem
 | Pickup at a store holding none of the items | Only stores holding at least one item are offered (Spec 4.3) | Everything would have to be transferred; not offered |
 | Scheduled overdue cancellation | `cancel_overdue_orders` is run on demand (only the website sync is scheduled) | Overdue orders stay held until someone runs it |
 | Transit time and courier | Dispatch and receive are recorded steps only | No supplier delivery estimate for transferred lines |
-| Automatic start of the scheduler | Started deliberately with `demo.py scheduler start` (not when the containers start), so a demonstration can keep a stale state on screen | After `docker compose up` or a `python` container restart, the website is synced only by hand until the scheduler is started; the dashboard shows "not started" / "not running" |
+| Automatic start of the scheduler | Started deliberately with `demo.py scheduler start` (not when the containers start), so a demonstration can keep a stale state on screen | After `docker compose up` or a `python` container restart, the website is synced only by hand until the scheduler is started; the dashboard shows "Automatic sync: not running" |
 | One store code in every system | Store codes still differ per system (pending confirmation with the tutor) | Store codes are mapped through `etl.store_xref` |
 | Online order status after placement | The store system owns the transfer/collection/cancellation lifecycle | `web_order.status` stays the outcome at placement; current state is in `store_ops.reservation` and `dw.rpt_open_reservations` |
 | SCD type 2 history for prices | Prices are not part of the problem | `rpt_daily_sales` values sales at the current price |

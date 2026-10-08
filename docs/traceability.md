@@ -37,7 +37,7 @@ Each rule from the [Spec](../00_req_feedback/Assignment2_Spec.md) and the [archi
 
 | Required report (Spec 7) | View | Shown in |
 | --- | --- | --- |
-| Current stock by store (in-store vs reserved) | `dw.rpt_current_stock_by_store` | `demo.py report stock`; demo script step 8 |
-| Online staleness: sync interval, time since sync, next sync, pending events, before/after | `dw.rpt_online_staleness`, `dw.rpt_online_vs_actual`, `dw.rpt_last_sync_changes` | `demo.py report staleness`, `online`, `sync`, `scheduler status`; dashboard Website & Sync; demo script steps 4 and 9 |
-| Items blocked at checkout (lost sales from stale data) and their pickup store | `dw.rpt_checkout_blocked` | `demo.py report blocked`; demo script steps 3b and 5 |
-| Additional: daily sales, open reservations, reconciliation and data quality | `dw.rpt_daily_sales`, `dw.rpt_open_reservations`, `dw.rpt_reconciliation`, `etl.v_data_quality` | `demo.py report sales / reservations / reconciliation`; demo script steps 6–8 |
+| Current stock by store (in-store vs reserved) | `dw.rpt_current_stock_by_store` | `demo.py report stock`; demo script step B8 |
+| Online staleness: sync interval, time since sync, next sync, pending events, before/after | `dw.rpt_online_staleness`, `dw.rpt_online_vs_actual`, `dw.rpt_last_sync_changes` | `demo.py report staleness`, `online`, `sync`, `scheduler status`; dashboard Website stock; demo script video steps A3–A5 and step B4 |
+| Items blocked at checkout (lost sales from stale data) and their pickup store | `dw.rpt_checkout_blocked` | `demo.py report blocked`; demo script steps B3b and B5 |
+| Additional: daily sales, open reservations, reconciliation and data quality | `dw.rpt_daily_sales`, `dw.rpt_open_reservations`, `dw.rpt_reconciliation`, `etl.v_data_quality` | `demo.py report sales / reservations / reconciliation`; demo script steps B6–B8 |

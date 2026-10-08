@@ -6,7 +6,7 @@
 
 This guide defines the business problem, the three source systems, the business actions that create their records, and the stock rules the prototype follows. The solution design that implements it is in [docs/Architecture_and_Data_Model.md](../docs/Architecture_and_Data_Model.md).
 
-**What changed from v5.** Following the tutor's 29 Sep feedback (focus on one problem: inventory not syncing between in-store and online sales), the case was simplified: five stores instead of thirty, no distribution centre or inter-store transfers, supplier deliveries go straight to stores, and the website shows one combined number per product that is refreshed by a manual sync instead of an overnight snapshot and 5 am copy. The three sources are now the **store system**, the **supplier delivery system** and the **online store**.
+**What changed from v5.** Following the tutor's 29 Sep feedback (focus on one problem: inventory not syncing between in-store and online sales), the case was simplified: five stores instead of thirty, no distribution centre or bulk inter-store transfers (only click-and-collect lines are moved between stores), supplier deliveries go straight to stores, and the website shows one combined number per product that is refreshed by a sync (manual in v5–v6, every 3 minutes since v7) instead of an overnight snapshot and 5 am copy. The three sources are now the **store system**, the **supplier delivery system** and the **online store**.
 
 PetHaven is fictional. Its size, operating arrangements and update rules below are fixed definitions for this project.
 

@@ -51,7 +51,7 @@ PGHOST=localhost python workspace/dashboard/server.py --port 8080
 
 **Refresh** only reads the reports again. It never runs the sync or the ETL. Filters and selections are kept in the URL, so a reload or a shared link shows the same view.
 
-**Automatic sync.** The status line on Website stock shows "Automatic sync: every 3 min · next in …" while the scheduler runs (started with `docker compose exec python python /workspace/scripts/demo.py scheduler start`), or "not started / stopped (manual sync only)". When a scheduled sync is due, the page re-reads its reports a moment later, so the website numbers update on screen; the dashboard itself never runs the scheduled sync. The **Sync website stock now** button in the Demo actions is the manual sync.
+**Automatic sync.** The status line on Website stock shows "Automatic sync: every 3 min · next in …" while the scheduler runs (started with `docker compose exec python python /workspace/scripts/demo.py scheduler start`), or "Automatic sync: not running — the website only updates on a manual sync". When a scheduled sync is due, the page re-reads its reports a moment later, so the website numbers update on screen; the dashboard itself never runs the scheduled sync. The **Sync website stock now** button in the Demo actions is the manual sync.
 
 ## 3. Demonstration (about 10 minutes)
 
@@ -63,9 +63,9 @@ Every write happens in the **Demo actions** panel, which is labelled "Writes to 
 | --- | --- | --- | --- |
 | 0:00 | Website stock | Start on the Overview (all tiles green apart from stock alerts), then Website stock: automatic sync status, last sync time, "The website matches the stores for all 18 products" | The website shows one combined number per product. It changes only on a sync (every 3 minutes, or by hand) or the website's own sales. Keep the scheduler stopped for this walkthrough so the stale state stays on screen. |
 | 1:00 | Demo → Scenario A, step 1 | Product P018 → **Preview store stock** | The real free units per store (2 after a clean build) and the website number. |
-| 1:45 | Step 2 | **Sell remaining available units** | One till receipt per store. The report refreshes: P018 is "Website higher +2", and the stock events since the last sync go up. |
+| 1:45 | Step 2 | **Sell remaining available units** | One till receipt per store. The report refreshes: P018 is "Website too high" by 2, and the stock events since the last sync go up. |
 | 2:45 | Step 3 | **Create bag, add 1 unit, check out** | The bag accepts the item (the stale website shows 2), but checkout checks real stock first: **blocked**, nothing charged or held. Follow **View blocked item**. |
-| 3:45 | Orders & lost sales | The new blocked item record and its source checkout record | Website snapshot from the source next to the report's reconstruction. Reason: "Combined stock insufficient". |
+| 3:45 | Orders & lost sales | The new blocked item record and its source checkout record | Website snapshot from the source next to the report's reconstruction. Reason: "Website number was out of date". |
 | 4:30 | Demo → Scenario A, step 4 | **Sync website stock** (manual) | Website 2 → 0. On Website stock the latest sync lists the correction; the collapsed section shows the store balance changes it recorded. |
 | 5:15 | Step 5 | **Try adding 1 unit to a new bag** | Refused by the product page: this is the fix working, not another blocked checkout. |
 | 6:00 | Demo → Record supplier delivery | Location NSW-CHATS, item P001, 5 cartons (supplier: the item's, SUP-01; order number automatic or typed) | "5 cartons × 4 units/carton = 20 units", UTC → Sydney time; the staged reference names the supplier ID and supplier order number. **View data trace** shows source → staging → transformation → warehouse. |
@@ -103,7 +103,7 @@ All runs used the isolated `pethaven_check` database; the dashboard's write test
 - the Sydney business date and the history date filter;
 - the 503 response when the database cannot be reached.
 
-Browser checks were done at 1440 × 900, 1280 px, 768 px and 375 px on all four pages and the demo panel. Scenario A was run through the demo panel; scenarios B and C were run through the same endpoints. At 375 px nothing wider than the screen exists outside the tab strip and the architecture diagram, which scroll within their own containers. Text colours were checked for contrast: the spec's `--text-muted` (#777168) measured 4.3:1 on the page background, so it was darkened to #6F695F (4.9:1).
+Browser checks were done at 1440 × 900, 1280 px, 768 px and 375 px on all five pages and the demo panel. Scenario A was run through the demo panel; scenarios B and C were run through the same endpoints. At 375 px nothing wider than the screen exists outside the tab strip and the architecture diagram, which scroll within their own containers. Text colours were checked for contrast: the spec's `--text-muted` (#777168) measured 4.3:1 on the page background, so it was darkened to #6F695F (4.9:1).
 
 ## 5. Limitations
 

@@ -24,7 +24,7 @@ Documentation:
 - Business case and rules: [00_req_feedback/Assignment2_Spec.md](00_req_feedback/Assignment2_Spec.md)
 - Solution design (architecture, conceptual/logical models, ETL, rationale, trade-offs): [docs/Architecture_and_Data_Model.md](docs/Architecture_and_Data_Model.md)
 - Rule → SQL → check mapping: [docs/traceability.md](docs/traceability.md)
-- Demonstration script and Q&A: [docs/demo_runbook.md](docs/demo_runbook.md)
+- Demonstration script and Q&A: [demo/demo_runbook.md](demo/demo_runbook.md)
 - Dashboard (start, demonstrate, verify): [docs/dashboard_runbook.md](docs/dashboard_runbook.md); its brief: [docs/Dashboard_Implementation_Spec.md](docs/Dashboard_Implementation_Spec.md)
 - Verification results and limitations: [docs/implementation_notes.md](docs/implementation_notes.md)
 
@@ -95,7 +95,7 @@ Safe to rerun at any time. Only `pethaven_demo` and `pethaven_check` are ever dr
 
 ### Step 5: Run the demo
 
-**In CloudBeaver** (easiest): open <http://localhost:8978>, add a PostgreSQL connection (host `postgres`, port `5432`, database **`pethaven_demo`**, user/password `student`/`student`), then open [workspace/demo/cloudbeaver_demo.sql](workspace/demo/cloudbeaver_demo.sql) and run it one statement at a time. Reconnect after every rebuild.
+**In CloudBeaver** (easiest): open <http://localhost:8978>, add a PostgreSQL connection (host `postgres`, port `5432`, database **`pethaven_demo`**, user/password `student`/`student`), then open [demo/vedio_demo_script.sql](demo/vedio_demo_script.sql) and run it one statement at a time. Reconnect after every rebuild.
 
 **Start the automatic sync** (every 3 minutes) when you want it; it keeps running in the background until you stop it or the containers stop:
 
@@ -125,7 +125,7 @@ docker compose exec python python /workspace/scripts/demo.py scheduler start
 | `codes` | The item list and each store's code in every system |
 | `report stock [S01]` / `staleness` / `blocked` / `sales` / `reservations` / `reconciliation` / `all` | Reports 1–6 |
 
-The full 10-minute demonstration, with what to say at each step, is in [docs/demo_runbook.md](docs/demo_runbook.md).
+The full 10-minute demonstration, with what to say at each step, is in [demo/demo_runbook.md](demo/demo_runbook.md).
 
 **In the dashboard** (web app over the same database):
 
@@ -196,7 +196,6 @@ workspace/
   scripts/build.py                     rebuild pethaven_demo
   scripts/demo.py                      demo commands (incl. scheduler start / stop / status)
   scripts/sync_scheduler.py            runs the website sync every SYNC_INTERVAL_SECONDS
-  demo/cloudbeaver_demo.sql            the demonstration as SQL statements
   tests/check_demo.py                  104 behaviour checks
   tests/check_scheduler.py             17 automatic-sync checks
   tests/check_dashboard.py             67 dashboard API checks
@@ -204,7 +203,11 @@ workspace/
   dashboard/queries.py, actions.py     read queries over the report views / demo actions calling source functions
   dashboard/static/                    dashboard pages (HTML, CSS, JavaScript modules)
   dashboard/compose.dashboard.yml      optional Compose overlay that runs the dashboard on port 8080
-docs/                                  design, traceability, demo runbook, implementation notes
+demo/                                  demo runbook and CloudBeaver demo SQL
+  demo_runbook.md                      demonstration runbook
+  vedio_demo_script.sql                recorded end-to-end test video: runbook steps + SQL + PASS/FAIL summary
+  demoSQL_sections_3_4.sql             read-only queries for runbook sections 3 & 4 (ETL, warehouse)
+docs/                                  design, traceability, dashboard runbook, implementation notes
 00_req_feedback/                       brief, Spec, tutor feedback, subject notes
 data/                                  lab database files created by Docker (not in Git)
 ```

@@ -5,7 +5,7 @@ This document is the solution design behind the prototype in `workspace/`. It co
 - Business rules and scope: [Spec](../00_req_feedback/Assignment2_Spec.md)
 - Rule → SQL → check mapping: [traceability.md](traceability.md)
 - Verification results and limitations: [implementation_notes.md](implementation_notes.md)
-- Live demonstration script: [demo_runbook.md](demo_runbook.md)
+- Live demonstration script: [demo_runbook.md](../demo/demo_runbook.md)
 
 ## 1. Problem in one paragraph
 
@@ -461,7 +461,7 @@ Times are relative to the build day, so "time since sync" and "overdue" are alwa
 | vi.b Integrated data warehouse (≥ 1) | `workspace/db/05_warehouse.sql` (+ `07_sync.sql`) |
 | vi.c SQL scripts: create, extract, transform, load, synthetic data | `01_schemas.sql`; `06_etl.sql` (extract → transform → validate → load); `seed/01_reference_data.sql`, `seed/02_business_history.sql` |
 | vi.d Reports (≥ 3) | `workspace/db/08_reports.sql` (6 reports) |
-| vi.e End-to-end testing | `workspace/tests/check_demo.py` (104 checks), `check_scheduler.py` (17), `check_dashboard.py` (67), `workspace/demo/cloudbeaver_demo.sql`, [demo_runbook.md](demo_runbook.md) |
+| vi.e End-to-end testing | `workspace/tests/check_demo.py` (104 checks), `check_scheduler.py` (17), `check_dashboard.py` (67), `demo/vedio_demo_script.sql`, [demo_runbook.md](../demo/demo_runbook.md) |
 
 ### File map
 
@@ -480,7 +480,7 @@ workspace/scripts/pethaven_db.py        shared settings, incl. SYNC_INTERVAL_SEC
 workspace/scripts/build.py              rebuild pethaven_demo
 workspace/scripts/demo.py               demo commands (incl. scheduler start / stop / status)
 workspace/scripts/sync_scheduler.py     runs the website sync every SYNC_INTERVAL_SECONDS
-workspace/demo/cloudbeaver_demo.sql     the same demo as SQL statements
+demo/vedio_demo_script.sql              recorded end-to-end test demo (steps + SQL)
 workspace/tests/check_demo.py           104 behaviour checks on pethaven_check
 workspace/tests/check_scheduler.py      17 checks that the scheduler syncs at its interval
 workspace/tests/check_dashboard.py      67 dashboard API checks

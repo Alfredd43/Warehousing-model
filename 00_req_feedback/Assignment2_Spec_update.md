@@ -2,7 +2,7 @@
 
 12 Oct 2026 · Group 3 · Internal guide, not a submission
 
-This guide defines the business problem, the three source systems, the business actions that create their records, the stock rules, the integration and warehouse layer, the dashboard's four data use cases, and how the working prototype is tested end to end in the recorded demo video. The solution design that implements it is in [docs/Architecture_and_Data_Model.md](../docs/Architecture_and_Data_Model.md). The demo is scripted in [demo/demo_runbook.md](../demo/demo_runbook.md) and [demo/vedio_demo_script.sql](../demo/vedio_demo_script.sql).
+This guide defines the business problem, the three source systems, the business actions that create their records, the stock rules, the integration and warehouse layer, the dashboard's four data use cases, and how the working prototype is tested end to end in the recorded demo video. The solution design that implements it is in [docs/Architecture_and_Data_Model.md](../docs/Architecture_and_Data_Model.md). The demo is scripted in [demo/demo_runbook.md](../demo/demo_runbook.md).
 
 PetHaven is fictional. Its size, operating arrangements and update rules below are fixed definitions for this project.
 
@@ -316,7 +316,7 @@ These are in the seed history and support the reports and use cases:
 | vi.b Integrated data warehouse (≥ 1) | `dw` (`workspace/db/05_warehouse.sql`) |
 | vi.c Commented SQL scripts with synthetic data, ETL | `workspace/db/01`–`08`, `workspace/db/seed/` |
 | vi.d Reports and dashboard per data use case (≥ 3) | Four data use cases Q1–Q4 (section 9), Reports 1–6 (`08_reports.sql`), dashboard (`workspace/dashboard/`) |
-| vi.e End-to-end testing and recorded demo video | `demo/demo_runbook.md`, `demo/vedio_demo_script.sql`, `workspace/tests/` |
+| vi.e End-to-end testing and recorded demo video | `demo/demo_runbook.md`, `workspace/tests/` |
 
 ## 12. Word list
 

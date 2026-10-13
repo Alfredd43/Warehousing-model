@@ -1,448 +1,253 @@
-# PetHaven Data Warehouse Prototype — Demo Runbook
+# PetHaven Data Warehouse Prototype: End-to-End Test and Demo Runbook
 
-## Demo Objective
-
-This demonstration shows how PetHaven integrates fragmented inventory data from its **Supplier, Store, and Online systems** into a **Data Warehouse** through ETL and data transformation, and then uses a **Dashboard** to support inventory analysis and business decision-making.
-
-The main story is:
-
-```text
-Operational Symptom
-        ↓
-Website inventory can become stale between synchronisations
-        ↓
-Data / Analytical Problem
-        ↓
-Inventory data is fragmented across Supplier, Store, and Online systems
-        ↓
-ETL + Data Transformation
-        ↓
-Integrated Data Warehouse
-        ↓
-Dashboard
-        ↓
-Cross-system inventory insights
-```
-
----
-
-# 1. Business Problem
-
-PetHaven sells pet products through five Sydney stores and an online store.
-
-Its inventory activities are distributed across three operational systems:
-
-- **Supplier System** — deliveries and replenishment data
-- **Store System** — shelf stock, sales, reservations, and stock movements
-- **Online System** — website stock, synchronisation, checkout attempts, and online orders
-
-An operational symptom is that **website inventory can become stale between synchronisations**, potentially causing blocked checkouts or obscuring available stock.
-
-However, the main problem addressed by this project is a **data and analytical problem**:
-
-> **Inventory data is fragmented across Supplier, Store, and Online systems, making it difficult to obtain an integrated view, measure stock discrepancies, and understand their business impact.**
-
-Our prototype addresses this problem by using:
-
-- ETL
-- data validation and transformation
-- approved mappings
-- a Data Warehouse
-- analytical reports
-- a management Dashboard
-
-### Demo Message
-
-> “The Data Warehouse does not perform the operational checkout or stock synchronisation. Its role is to integrate data from multiple systems so PetHaven can analyse inventory from one consistent view.”
-
----
-
-# 2. Show the Three Source Systems
-
-Briefly introduce the three source systems.
-
-## Supplier System
-
-Show example data such as:
-
-- supplier delivery
-- quantity in cartons
-- supplier/location codes
-- UTC timestamp
-
-## Store System
-
-Show example data such as:
-
-- store
-- product
-- shelf stock
-- reserved stock
-- store sales
-
-## Online System
-
-Show example data such as:
-
-- website-displayed stock
-- checkout attempts
-- online orders
-- stock synchronisation information
-
-### Key Point
-
-The data belongs to the same inventory process, but it is stored separately and follows different structures and business rules.
+This runbook is the script for the recorded end-to-end testing video (brief item vi.e). It drives one scenario through the three source systems and follows it through ETL, the data warehouse and the dashboard. It ends with an automatic PASS/FAIL summary.
 
 ```text
 Supplier ─┐
-Store ────┼──→ Fragmented inventory data
-Online ───┘
+Store ────┼──→ ETL (staging → validation → transformation) ──→ Data Warehouse ──→ Dashboard
+Online ───┘                                                                        ├─ Q1 Stock position
+                                                                                   ├─ Q4 Low-stock stores
+                                                                                   ├─ Q2 Website stock discrepancy
+                                                                                   └─ Q3 Business impact
 ```
 
-Do not spend significant time demonstrating the complete customer transaction flow.
+**Key message:** the data warehouse does not run checkout or the website sync. Its job is to integrate data from the three systems so PetHaven can analyse inventory from one consistent view.
 
----
+## Test scenario
 
-# 3. Show ETL and Data Transformation
+| Step | System | Action | What it proves |
+|---|---|---|---|
+| 1 | Supplier | SUP-01, order PO-3001: 5 cartons of P001 delivered to Chatswood (`NSW-CHATS`) | Cartons → units, UTC → Sydney time, location code → store `S03` |
+| 2 | Store | The last aquarium kit (P018) sold at Newtown and at Penrith | Store sales reach the warehouse at once; the website becomes stale |
+| 3 | Online | A customer tries to buy 1 × P018 while the website still shows 2 | Checkout is blocked before payment, and the event is captured for analysis |
+| 4 | Online | Run the website sync | The website is corrected, and the warehouse records the correction |
 
-Demonstrate how source data is prepared for integration.
+## Before recording
 
-Use one or two clear examples.
+1. Start the lab and check that all automated tests pass (`FAIL 0`):
+   ```bash
+   docker compose up -d
+   docker compose exec python python /workspace/tests/check_demo.py
+   docker compose exec python python /workspace/tests/check_scheduler.py
+   docker compose exec python python /workspace/tests/check_dashboard.py
+   ```
+2. Build a clean database before **every** take, then reconnect CloudBeaver to `pethaven_demo`:
+   ```bash
+   docker compose exec python python /workspace/scripts/build.py
+   ```
+3. Open the dashboard at <http://localhost:8080>. Do **not** start the automatic sync, because it would fix the website before the stale number is shown.
+4. Check the starting point:
+   ```sql
+   SELECT current_database()                                              AS db,
+          (SELECT scheduler_status FROM dw.rpt_online_staleness)          AS scheduler,
+          (SELECT pending_events   FROM dw.rpt_online_staleness)          AS pending,
+          (SELECT count(*) FROM dw.rpt_reconciliation WHERE status <> 'match') AS gaps,
+          (SELECT count(*) FROM supply.supplier_delivery WHERE supplier_order_no = 'PO-3001') AS po_used;
+   ```
+   Expected: `pethaven_demo | never started | 0 | 0 | 0`. If anything differs, rebuild.
 
-## Example 1 — Supplier Delivery
+Run each SQL block in CloudBeaver one statement at a time. Steps marked **WRITE** change data; everything else is read-only.
 
-Show the original supplier record:
+## 1. Business problem (1:00)
 
-```text
-Quantity: 5 cartons
-Time: UTC
-Location: source-specific code
+**Screen:** Dashboard → Overview.
+
+**Say:** "PetHaven sells through five Sydney stores and a website. Its inventory data is split across three systems: Supplier, Store and Online. The visible symptom is that website stock can be stale between syncs. The real problem is that the data is fragmented, so there is no single view of stock, its discrepancies or their impact. We now test the prototype end to end."
+
+## 2. Three source systems (1:00)
+
+**Screen:** CloudBeaver. **Say:** "One process, three systems, three formats."
+
+```sql
+-- Store system: shelf and reserved stock per store number
+SELECT store_no, item_no, in_store_quantity AS shelf, reserved_quantity AS reserved
+  FROM store_ops.store_stock WHERE item_no IN ('P001', 'P018') ORDER BY item_no, store_no;
+
+-- Online system: one combined website number per product
+SELECT item_no, available_quantity AS website_shows FROM online.online_stock
+ WHERE item_no IN ('P001', 'P018') ORDER BY item_no;
 ```
 
-Then show the transformed warehouse-ready values:
+Expected: P001 shelf 37/27/53/20/46 (total 183); P018 only 1 at Newtown (104) and 1 at Penrith (105). Website: P001 183, P018 2.
 
-```text
-Quantity: 20 units
-Time: Sydney business time
-Location: approved PetHaven store mapping
+## 3. ETL and data transformation (2:00)
+
+**Example 1: supplier delivery.**
+
+```sql
+-- WRITE (Supplier): 5 cartons of P001 to Chatswood
+SELECT supply.record_supplier_delivery('NSW-CHATS', 'SUP-01', 'PO-3001', ARRAY['P001'], ARRAY[5]);
+
+-- Before / after: staging keeps the source format; the rules give the warehouse values
+SELECT s.cartons, s.units_per_carton, s.cartons * s.units_per_carton AS units,
+       s.location_code, x.store_code,
+       s.delivered_at_utc,
+       (s.delivered_at_utc AT TIME ZONE 'UTC') AT TIME ZONE 'Australia/Sydney' AS sydney_time,
+       s.load_status, s.source_ref
+  FROM etl.stg_supplier_delivery_line s
+  LEFT JOIN etl.store_xref x ON x.source_system = 'SUPPLY' AND x.source_code = s.location_code
+ WHERE s.supplier_order_no = 'PO-3001';
+
+-- Approved mapping: one warehouse store code for three operational codes
+SELECT store_code, store_name, store_no, location_code, cp_code FROM etl.v_store_codes ORDER BY store_code;
 ```
 
-Explain the transformations:
+Expected: 5 cartons × 4 = **20 units**, `NSW-CHATS` → **S03**, UTC + 11 h = Sydney time, `loaded`.
 
-- cartons → units
-- UTC → Sydney business time
-- source code → approved warehouse mapping
-- validation before loading
+**Say:** "Cartons become units, UTC becomes Sydney time, and the location code is mapped through an approved mapping before loading."
 
-## Example 2 — Store / Online Events
+**Example 2: store and online events.**
 
-Briefly show how store and online events are also mapped into a common analytical structure.
+```sql
+-- WRITE (Store): the last P018 sells at Newtown and at Penrith
+SELECT store_ops.record_sale('104', ARRAY['P018'], ARRAY[1]);
+SELECT store_ops.record_sale('105', ARRAY['P018'], ARRAY[1]);
 
-### Demo Message
+-- WRITE (Online): a customer tries to buy 1 x P018; the website still shows 2
+SELECT online.place_online_order('2026', 'P018', 1);
 
-> “The ETL layer standardises data from different operational systems so the records can be reliably combined and analysed.”
-
-If staging tables are shown, explain that they provide traceability between source records and warehouse records.
-
----
-
-# 4. Show the Integrated Data Warehouse
-
-Open the warehouse tables/views and briefly demonstrate that data from different systems now appears in a common analytical model.
-
-For example, show:
-
-- `dw.fact_stock_event`
-- relevant dimensions
-- analytical/reporting views
-- ETL audit or reconciliation information where useful
-
-Conceptually:
-
-```text
-Supplier events ─┐
-Store events ────┼──→ Integrated Data Warehouse
-Online events ───┘
-                         │
-                         ├── Store
-                         ├── Product
-                         ├── Event
-                         └── Date / business context
+-- ETL audit: each source change triggered an ETL run automatically
+SELECT etl_run_id, trigger_source, rows_read, rows_loaded, rows_rejected
+  FROM etl.etl_run ORDER BY etl_run_id DESC LIMIT 4;
 ```
 
-Select a small number of rows rather than scrolling through large tables.
+Expected: two receipt numbers; the order returns **NULL** (blocked before payment); four new ETL runs with 0 rejected.
 
-### Demo Message
+## 4. Integrated data warehouse (1:00)
 
-> “The warehouse provides a consistent analytical layer across the three source systems. This is what allows the dashboard to answer cross-system inventory questions.”
-
----
-
-# 5. Dashboard Demonstration
-
-The Dashboard is the main business-facing output of the prototype.
-
-Use it to answer four simple business questions.
-
-```text
-                     DATA WAREHOUSE
-                           │
-                           ▼
-                       DASHBOARD
-                           │
-        ┌──────────────────┼──────────────────┐
-        │                  │                  │
-        ▼                  ▼                  ▼
- Inventory position   Store comparison   Cross-system issues
-        │                                     │
-   Q1 + Q4                              Q2 + Q3
+```sql
+-- One fact table: events from all three systems in one model
+SELECT f.event_id, f.source_system, f.event_type, s.store_code, p.product_code,
+       f.quantity_change AS shelf_change, f.units, f.source_ref
+  FROM dw.fact_stock_event f
+  JOIN dw.dim_store s   ON s.store_key = f.store_key
+  JOIN dw.dim_product p ON p.product_key = f.product_key
+ ORDER BY f.event_id DESC LIMIT 4;
 ```
 
----
+Expected (newest first): ONLINE `checkout_blocked` S02 P018; STORE `store_sale` S05 P018 −1; STORE `store_sale` S04 P018 −1; SUPPLY `supplier_delivery` S03 P001 +20.
 
-## Q1. Where is stock available or reserved?
+**Say:** "The warehouse gives one consistent analytical layer across the three systems, and every row keeps its source reference."
 
-### Business Question
+## 5. Dashboard: four business questions (3:30)
 
-> **Where is stock available or reserved across PetHaven stores?**
+Show the dashboard page first, then the view behind it.
 
-Open the **Store Stock** dashboard view.
+**Q1. Where is stock available or reserved?** Dashboard → Store stock (product P001).
 
-Show inventory by store/product, focusing on:
-
-- Shelf Stock
-- Reserved Stock
-- Available Stock, according to the implemented inventory definition
-
-Use a product filter if helpful.
-
-Example presentation:
-
-```text
-Store             Shelf       Reserved       Available
--------------------------------------------------------
-Parramatta          25            5              ...
-Chatswood           18            2              ...
-Newtown             12            3              ...
+```sql
+SELECT store_name, in_store_quantity AS available, reserved_quantity AS reserved, total_on_hand
+  FROM dw.rpt_current_stock_by_store WHERE product_code = 'P001' ORDER BY store_code;
 ```
 
-### What This Shows
+Expected: Chatswood **73** (53 + 20 from PO-3001). Shelf stock is already the available stock, so it is not reduced again by reserved units.
 
-Management can see the integrated stock position rather than looking at individual operational transactions.
+**Q4. Which stores have lower stock?** Dashboard → Store stock, comparing the five stores.
 
-### Demo Message
-
-> “This view brings shelf and reservation information together so managers can understand the stock position across stores.”
-
----
-
-## Q4. Which stores have lower stock levels?
-
-### Business Question
-
-> **Which stores have lower stock levels and may require replenishment?**
-
-Use the **Store Stock** dashboard to compare stock across all five stores:
-
-- Parramatta
-- Bondi Junction
-- Chatswood
-- Newtown
-- Penrith
-
-Prefer a simple **Available Stock by Store** bar chart or ranked store view.
-
-Example:
-
-```text
-Available Stock by Store
-
-Parramatta       █████████████
-Chatswood        ██████████
-Newtown          ████████
-Bondi Junction   ██████
-Penrith          ███
-                  ↑
-             Lower stock
+```sql
+SELECT store_name, in_store_quantity AS available
+  FROM dw.rpt_current_stock_by_store WHERE product_code = 'P001' ORDER BY in_store_quantity;
 ```
 
-If filters are available, select one product to make the comparison clearer.
+Expected: Newtown 20 (lowest), Bondi 27, Parramatta 37, Penrith 46, Chatswood 73. The dashboard flags low stock; it does not decide replenishment.
 
-### What This Shows
+**Q2. How inaccurate is website stock?** Dashboard → Website stock.
 
-Management can quickly compare locations and identify stores with relatively lower inventory that may need attention or replenishment.
+```sql
+SELECT product_code, online_shown AS website, actual_in_store AS actual, overstated_by AS discrepancy, status
+  FROM dw.rpt_online_vs_actual WHERE status <> 'in sync' ORDER BY product_code;
 
-### Demo Message
+-- WRITE (Online): the operational sync corrects the website
+SELECT online.sync_website_stock();
 
-> “The integrated view also allows managers to compare inventory across locations and quickly identify stores with lower stock levels.”
-
-### Important Scope
-
-The Dashboard identifies lower inventory levels. It does **not** automatically decide or execute replenishment.
-
----
-
-## Q2. How inaccurate is website stock?
-
-### Business Question
-
-> **How inaccurate is website stock compared with real store stock?**
-
-Open the **Website Stock** dashboard view.
-
-Show:
-
-- Website Stock
-- Real / Actual Store Stock
-- Difference or discrepancy
-- Sync correction information
-
-Use a clear example where website stock differs from actual store stock.
-
-Conceptually:
-
-```text
-Website Stock        5
-Actual Store Stock   2
-                    ──
-Discrepancy          3
+SELECT product_code, before_qty, after_qty
+  FROM dw.rpt_last_sync_changes WHERE measure = 'online_available' ORDER BY product_code;
 ```
 
-If appropriate, show the latest synchronisation correction.
+Expected before sync: P001 183 vs 203 (understated, −20); P018 2 vs 0 (overstated, +2). Sync: P001 183 → 203, P018 2 → 0.
 
-### What This Shows
+**Say:** "The sync corrects the website; the warehouse measures and records the discrepancy."
 
-This analysis combines information from the Online and Store systems.
+**Q3. What is the business impact?** Dashboard → Orders & lost sales.
 
-It allows PetHaven to identify cases where customer-facing stock information does not match operational inventory.
-
-### Demo Message
-
-> “The warehouse allows PetHaven to measure the stock discrepancy across systems. The operational sync corrects the website stock; the warehouse records and analyses the discrepancy.”
-
----
-
-## Q3. What is the business impact?
-
-### Business Question
-
-> **What is the business impact of inventory discrepancies?**
-
-Open the **Orders / Lost Sales / Checkout** analytical view.
-
-Show:
-
-- blocked checkout attempts
-- product involved
-- failure reason
-- website stock at the time of the attempt, where available
-- actual or reconstructed stock information
-
-Use one clear blocked-checkout example.
-
-Conceptually:
-
-```text
-Website shows stock
-        ↓
-Customer attempts checkout
-        ↓
-Real stock is insufficient
-        ↓
-Checkout blocked
-        ↓
-Event captured for analysis
+```sql
+SELECT basket, product_code, quantity_in_bag, pickup_store, website_showed,
+       actual_combined_at_checkout AS actual, reason
+  FROM dw.rpt_checkout_blocked ORDER BY attempted_at DESC LIMIT 1;
 ```
 
-### What This Shows
+Expected: P018, website showed 2, actual 0, reason *stock sold since last sync - online number was stale*.
 
-The warehouse can connect inventory information with checkout outcomes to help management understand the customer impact of inventory issues.
+**Say:** "The online system blocks the checkout; the warehouse lets us analyse it with inventory data. A blocked checkout is a potential lost sale, not a confirmed one."
 
-### Demo Message
+## 6. Traceability (1:00)
 
-> “The Data Warehouse does not block the checkout. The operational system does that. The warehouse allows PetHaven to analyse the resulting checkout events together with inventory information.”
+Dashboard → Data & integration, then trace the Q3 result back to its source.
 
-Avoid claiming that every blocked checkout is a confirmed lost sale unless the data specifically proves that.
-
----
-
-# 6. Show Data Integration / Traceability
-
-After answering the four business questions, briefly return to the technical side.
-
-Use the **Data & Integration** view, ETL audit, staging records, or reconciliation information available in the prototype.
-
-Show that a dashboard result can be traced back through the warehouse pipeline.
-
-```text
-Source Record
-     ↓
-Staging / ETL
-     ↓
-Validation + Transformation
-     ↓
-Data Warehouse
-     ↓
-Report / Dashboard
+```sql
+SELECT r.basket, f.event_id, f.source_ref, s.stg_id, s.load_status, a.attempt_no, a.outcome
+  FROM dw.rpt_checkout_blocked r
+  JOIN dw.fact_stock_event f     ON f.event_type = 'checkout_blocked' AND f.order_ref = r.basket
+                                AND f.event_ts = r.attempted_at
+  JOIN etl.stg_checkout_item s   ON s.event_id = f.event_id
+  JOIN online.checkout_attempt a ON a.attempt_no = s.attempt_no
+ ORDER BY r.attempted_at DESC LIMIT 1;
 ```
 
-### Demo Message
+Expected: one row linking report → warehouse event → staging row (`loaded`) → online checkout attempt (`blocked`).
 
-> “The dashboard is not simply reading one operational system. Its analytical results are supported by the ETL and warehouse integration layer.”
+## 7. End-to-end test result and summary (0:30)
 
-This step connects the business-facing dashboard back to the Advanced Database implementation.
-
----
-
-# 7. Final Summary
-
-Finish on the Dashboard.
-
-### Final Demo Message
-
-> “PetHaven's operational systems generate inventory data separately across Supplier, Store, and Online systems. This fragmentation makes it difficult to obtain one consistent view of inventory and understand cross-system issues.”
-
-> “Our prototype uses ETL, data transformation, approved mappings, and a Data Warehouse to integrate these records into a common analytical model.”
-
-> “The Dashboard then allows managers to see where stock is available or reserved, compare stock levels across stores, measure website stock discrepancies, and investigate their impact on checkout outcomes.”
-
-Finish with:
-
-```text
-Supplier ─┐
-Store ────┼──→ ETL → Data Warehouse → Dashboard
-Online ───┘
-                                      │
-                                      ├── Q1 Stock position
-                                      ├── Q4 Low-stock stores
-                                      ├── Q2 Stock discrepancy
-                                      └── Q3 Business impact
+```sql
+WITH po AS (
+    SELECT s.cartons, s.units_per_carton, s.delivered_at_utc, s.event_id,
+           f.units, f.event_ts, ds.store_code
+      FROM etl.stg_supplier_delivery_line s
+      JOIN dw.fact_stock_event f ON f.event_id = s.event_id
+      JOIN dw.dim_store ds       ON ds.store_key = f.store_key
+     WHERE s.supplier_order_no = 'PO-3001'
+), blocked AS (
+    SELECT * FROM dw.rpt_checkout_blocked ORDER BY attempted_at DESC LIMIT 1
+), checks(test_no, test, passed) AS (
+              SELECT 1,  'Supplier: 5 cartons loaded as 20 units', (SELECT bool_and(cartons * units_per_carton = units AND units = 20) FROM po)
+    UNION ALL SELECT 2,  'Supplier: NSW-CHATS mapped to S03',      (SELECT bool_and(store_code = 'S03') FROM po)
+    UNION ALL SELECT 3,  'Supplier: UTC converted correctly',      (SELECT bool_and(event_ts = delivered_at_utc AT TIME ZONE 'UTC') FROM po)
+    UNION ALL SELECT 4,  'Store: P018 sales at S04 and S05 loaded',
+              (SELECT count(DISTINCT ds.store_code) = 2
+                 FROM dw.fact_stock_event f JOIN dw.dim_store ds USING (store_key) JOIN dw.dim_product dp USING (product_key)
+                WHERE f.event_type = 'store_sale' AND dp.product_code = 'P018' AND f.event_id > (SELECT max(event_id) FROM po))
+    UNION ALL SELECT 5,  'Online: blocked checkout captured',
+              (SELECT product_code = 'P018' AND website_showed = 2 AND actual_combined_at_checkout = 0 FROM blocked)
+    UNION ALL SELECT 6,  'Q1: warehouse = store system (P001, Chatswood)',
+              (SELECT r.in_store_quantity = ss.in_store_quantity
+                 FROM dw.rpt_current_stock_by_store r, store_ops.store_stock ss
+                WHERE r.store_code = 'S03' AND r.product_code = 'P001' AND ss.store_no = '103' AND ss.item_no = 'P001')
+    UNION ALL SELECT 7,  'Q2: website in sync after the sync',     (SELECT count(*) = 0 FROM dw.rpt_online_vs_actual WHERE status <> 'in sync')
+    UNION ALL SELECT 8,  'Traceability: no staging row pending',   (SELECT count(*) = 0 FROM etl.v_staging WHERE load_status NOT IN ('loaded', 'skipped'))
+    UNION ALL SELECT 9,  'Reconciliation: all stores match',       (SELECT count(*) = 0 FROM dw.rpt_reconciliation WHERE status <> 'match')
+    UNION ALL SELECT 10, 'Data quality: no rejected rows',         (SELECT count(*) = 0 FROM etl.v_data_quality)
+)
+SELECT 'T' || test_no AS test, test AS description, CASE WHEN passed THEN 'PASS' ELSE 'FAIL' END AS result
+  FROM checks ORDER BY test_no;
 ```
 
----
+Expected: **T1–T10 all PASS**.
 
-# Suggested Demo Timing
+**Screen:** finish on Dashboard → Overview.
 
-| Section | Approx. Time |
+**Say:** "Inventory data is created separately in the Supplier, Store and Online systems. Our prototype uses ETL, transformation, approved mappings and a data warehouse to combine it into one analytical model. The dashboard then shows where stock is, which stores are low, how wrong the website is and the impact on checkouts, and every number can be traced back to its source."
+
+## Timing
+
+| Section | Time |
 |---|---:|
-| 1. Business Problem | 1 min |
-| 2. Three Source Systems | 1 min |
-| 3. ETL & Transformation | 1.5 min |
-| 4. Data Warehouse | 1 min |
-| 5. Dashboard — Q1 | 1 min |
-| 5. Dashboard — Q4 | 0.5 min |
-| 5. Dashboard — Q2 | 1 min |
-| 5. Dashboard — Q3 | 1 min |
-| 6. Data Integration / Traceability | 1 min |
-| 7. Final Summary | 0.5 min |
-| **Total** | **~9.5 min** |
+| 1. Business problem | 1:00 |
+| 2. Three source systems | 1:00 |
+| 3. ETL and transformation | 2:00 |
+| 4. Data warehouse | 1:00 |
+| 5. Dashboard Q1 / Q4 / Q2 / Q3 | 3:30 |
+| 6. Traceability | 1:00 |
+| 7. Test result and summary | 0:30 |
+| **Total** | **about 10 minutes** |
 
----
-
-# Core Message
-
-The main purpose of the prototype is **not** to demonstrate a retail checkout application.
-
-The main purpose is to demonstrate how advanced database techniques integrate fragmented retail inventory data and turn it into useful analytical information:
-
-> **Fragmented Operational Data → ETL & Transformation → Integrated Data Warehouse → Dashboard → Inventory Insights**
+To record another take, rebuild the database and start again from "Before recording".

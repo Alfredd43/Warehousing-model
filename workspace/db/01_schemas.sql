@@ -5,6 +5,20 @@
 -- Design ref: docs/Architecture_and_Data_Model.md section 2.
 -- Prerequisites: An empty database (scripts/build.py creates one).
 -- Rerun behaviour: Not rerunnable; build.py recreates the database from empty.
+--
+-- Medallion view of the layers (naming only - schema names are unchanged):
+--   SOURCES  store_ops, supply, online   operational systems (not a layer)
+--   BRONZE   etl.stg_*                    source records as captured, in their
+--                                         source format (cartons, UTC, source
+--                                         codes) with source_ref and load status
+--   SILVER   etl validation + transform   product list check, approved store-code
+--                                         mapping, cartons -> units, UTC -> Sydney;
+--                                         rejects in etl.v_data_quality. Applied
+--                                         during the load, not stored as a
+--                                         separate table.
+--   GOLD     dw                           star schema (fact_stock_event + dims),
+--                                         sync log and rpt_* report views read
+--                                         by the dashboard
 -- =============================================================================
 
 -- Each source stands for a separate operational system. All three use the
@@ -16,8 +30,8 @@ CREATE SCHEMA supply;      -- Source 2: supplier delivery system
 CREATE SCHEMA online;      -- Source 3: online store
 
 -- Integration layers. Not business sources.
-CREATE SCHEMA etl;         -- staging (extracted rows), product list, store-code mapping, ETL run log
-CREATE SCHEMA dw;          -- integrated data warehouse: star schema, sync log, reports
+CREATE SCHEMA etl;         -- BRONZE + SILVER: staging (extracted rows), product list, store-code mapping, ETL run log
+CREATE SCHEMA dw;          -- GOLD: integrated data warehouse: star schema, sync log, reports
 
 COMMENT ON SCHEMA store_ops IS
 'Source 1 - store system. Stores (store number), product catalogue (item number, with the EAN-13 barcode as an attribute), live stock per store (in-store and reserved), till sales (receipt number) and click-and-collect reservations (order ID).';

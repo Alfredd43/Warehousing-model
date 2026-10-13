@@ -2,7 +2,7 @@
 
 12 Oct 2026 · Group 3 · Internal guide, not a submission
 
-This guide defines the business problem, the three source systems, the business actions that create their records, the stock rules, the integration and warehouse layer, the dashboard's four business questions, and how the working prototype is tested end to end in the recorded demo video. The solution design that implements it is in [docs/Architecture_and_Data_Model.md](../docs/Architecture_and_Data_Model.md). The demo is scripted in [demo/demo_runbook.md](../demo/demo_runbook.md) and [demo/vedio_demo_script.sql](../demo/vedio_demo_script.sql).
+This guide defines the business problem, the three source systems, the business actions that create their records, the stock rules, the integration and warehouse layer, the dashboard's four data use cases, and how the working prototype is tested end to end in the recorded demo video. The solution design that implements it is in [docs/Architecture_and_Data_Model.md](../docs/Architecture_and_Data_Model.md). The demo is scripted in [demo/demo_runbook.md](../demo/demo_runbook.md) and [demo/vedio_demo_script.sql](../demo/vedio_demo_script.sql).
 
 PetHaven is fictional. Its size, operating arrangements and update rules below are fixed definitions for this project.
 
@@ -24,31 +24,43 @@ Use these words consistently: **in-store**, **online** and **supplier** (never "
 - **Fulfilment:** how an online order reaches the customer (always collection from one pickup store, with transfers from other stores where needed).
 - **Location:** where stock physically is (one of the five stores).
 
-## 2. The business problem
+## 2. Business problem and solution
 
-### 2.1 Operational symptom and the problem addressed
+### 2.1 The business problem
 
-PetHaven's inventory activity is spread over three operational systems: the **Supplier**, **Store** and **Online** systems.
+PetHaven is a fictional Sydney pet-supplies retailer with five stores and a website. Its stores, supplier deliveries and website run on three separate systems: the **Store**, **Supplier** and **Online** systems (section 3).
 
-**Operational symptom.** The website shows one combined "available" number per product, refreshed only by the sync (every 3 minutes). Between syncs it can be stale: customers can put items in their bag that no store can supply (they find out at checkout), or the website can show too little and hide available stock.
+The website shows one stock number per product for all five stores. Before this project, that number was updated only by a periodic batch sync (once a day: an overnight stock snapshot copied to the website at 5 am), not at the same time as store stock changed. In-store sales, supplier deliveries and cancellations change real stock straight away, so between syncs the website could show stock that no store had. Customers added these items to their bag and paid for them; only when store staff checked the order did they find the stock was not there, and the website and store records did not match. The website could also show too little and hide stock that was on the shelves.
 
-**The problem this project addresses is a data and analytical problem:**
+All three systems use the same item number for a product, but nobody could see how far the website was out of date, because each system records stock changes in its own way: its own transaction IDs, store codes, units and time zones.
 
-> Inventory data is fragmented across the Supplier, Store and Online systems, making it difficult to obtain an integrated view, measure stock discrepancies, and understand their business impact.
+> **Business problem:** product stock is not updated in real time between PetHaven's in-store and online sales, so stock sold in one channel can still show as available in the other.
 
-The three systems record the same inventory process differently (their own transaction IDs, store codes, units and time zones), so their records must be validated, matched and transformed before they can be combined. The prototype solves this with ETL, data validation and transformation, approved mappings, a data warehouse, analytical reports and a management dashboard:
+### 2.2 The solution
+
+| Part | What it does | Layer | Section |
+| --- | --- | --- | --- |
+| 1. Sync every 3 minutes | The website number is reset to the real store totals every 3 minutes, and can be synced by hand ("run sync now"). The interval follows the tutor's advice (6 Oct) to sync every few minutes. | Operational | 6 |
+| 2. Real-stock check at checkout | Before payment, each bag item is checked against real store shelf stock. If any item cannot be supplied, checkout is blocked: nothing is charged. A paid order can always be fulfilled. | Operational | 4.3, 5.3 |
+| 3. ETL, data warehouse and dashboard | Records from all three systems are validated, transformed and loaded into one warehouse, so PetHaven can see where stock is, how wrong the website was and which checkouts were blocked. | Analytical | 7–9 |
+
+Parts 1 and 2 make the problem smaller and stop it from charging customers for missing stock, but they do not remove it. Between syncs the website number can still be wrong for up to 3 minutes, and a customer can still be blocked at checkout. The website is not synced on every sale because the three systems are separate: syncing on every transaction would tie them together and add load to every sale, while the checkout check already protects the moment that matters.
+
+PetHaven therefore needs to measure the remaining gap: how often the website is wrong, by how much, for which products and stores, and how many checkouts it blocks. That needs records from all three systems, which each record stock in their own way (section 2.1). The ETL validates and converts them, and the warehouse combines them into one consistent view. Of the dashboard's data use cases (section 9), Q2 and Q3 measure the gap (how wrong the website is, and which checkouts it blocked); Q1 and Q4 show where the real stock is and which stores are running low.
 
 ```text
-Operational symptom: website stock can become stale between syncs
+Business problem: stock is not updated in real time between in-store and online
         ↓
-Data / analytical problem: inventory data fragmented across Supplier, Store and Online
+Operational solution: 3-minute sync + real-stock check at checkout
         ↓
-ETL + data transformation  →  Integrated Data Warehouse  →  Dashboard
+Remaining gap: the website number can still be wrong between syncs; checkouts can be blocked
         ↓
-Cross-system inventory insights (Q1-Q4, section 9)
+Analytical solution: ETL → integrated data warehouse → dashboard (data use cases Q1–Q4, section 9)
 ```
 
-### 2.2 Role of the data warehouse
+The demo video shows the problem and the solution in the same prototype: the scheduler is stopped, an in-store sale leaves the website number wrong (the problem), an online checkout is blocked (part 2), "run sync now" corrects the website (part 1), and the dashboard measures what happened (part 3).
+
+### 2.3 Role of the data warehouse
 
 | The warehouse does | The warehouse does not |
 | --- | --- |
@@ -57,15 +69,15 @@ Cross-system inventory insights (Q1-Q4, section 9)
 | Record each sync and each blocked checkout for analysis | Decide or execute replenishment |
 | Trace every result back to its source record | Act as a fourth source system |
 
-> "The Data Warehouse does not perform the operational checkout or stock synchronisation. Its role is to integrate data from multiple systems so PetHaven can analyse inventory from one consistent view."
-
-### 2.3 Scope
+### 2.4 Scope
 
 The unit of analysis is **one product at one store**, and the combined number for one product across all stores.
 
 In scope: in-store sales, supplier deliveries, online C&C orders with several lines (hold, transfer to the pickup store, collect, cancel), blocked checkouts, the scheduled sync (every 3 minutes, plus "run sync now"), ETL with validation and approved mappings, the warehouse, reports and dashboard.
 
 Out of scope: customer accounts and membership, grooming, home delivery, returns after collection, stock adjustments and counts, splitting one order line across several stores, pricing and promotions, automatic replenishment.
+
+The old once-a-day sync (section 2.1) is background only; it is not built in the prototype.
 
 ## 3. The three source systems
 
@@ -206,9 +218,11 @@ Report views:
 | 5 | `dw.rpt_open_reservations` | Open C&C order lines: source store, transfer status, order ready, overdue |
 | 6 | `dw.rpt_reconciliation`, `etl.v_data_quality` | Warehouse vs store system; rejected source records |
 
-## 9. Dashboard: four business questions
+## 9. Dashboard: four data use cases
 
 The dashboard is the main business-facing output. It reads only the warehouse report views (plus the online system's checkout records as the source evidence for Q3). Pages: Overview, Website stock, Store stock, Orders & lost sales, and Data & integration.
+
+A data use case is one way a PetHaven user relies on the integrated data: who uses it, the question it answers, the decision it supports, and the report and dashboard page that deliver it. The four use cases below are what the reports and dashboard are built for (brief item vi.d, at least 3).
 
 ```text
                      DATA WAREHOUSE
@@ -219,12 +233,19 @@ The dashboard is the main business-facing output. It reads only the warehouse re
      Q1 + Q4                                Q2 + Q3
 ```
 
-| Q | Business question | Dashboard page | Source view | What it shows | Scope note |
-| --- | --- | --- | --- | --- | --- |
-| Q1 | Where is stock available or reserved across PetHaven stores? | Store stock | Report 1 | Shelf (= available), reserved and on hand per store and product | Available = shelf (section 5.1) |
-| Q4 | Which stores have lower stock levels and may require replenishment? | Store stock | Report 1 | Available stock by store for one product, ranked; low-stock alerts per store | Identifies low stock; does **not** decide or execute replenishment |
-| Q2 | How inaccurate is website stock compared with real store stock? | Website stock | Report 2 | Website vs real stock, discrepancy, status, last sync and its corrections | The sync corrects the website; the warehouse measures and records the discrepancy |
-| Q3 | What is the business impact of inventory discrepancies? | Orders & lost sales | Report 3 + `online.checkout_attempt*` | Blocked checkout attempts: product, pickup store, website number shown, real stock, reason | The online system blocks the checkout; a blocked checkout is a potential, not confirmed, lost sale |
+| Use case | User | Question it answers | Decision it supports |
+| --- | --- | --- | --- |
+| Q1 Locate stock | Inventory manager, store staff | Where is stock available or reserved across PetHaven stores? | Which store can serve a customer, or send stock to another store |
+| Q4 Spot low stock | Inventory manager | Which stores have lower stock levels and may require replenishment? | Which stores to reorder for (the reorder itself is made outside this system) |
+| Q2 Measure website accuracy | Web team | How inaccurate is website stock compared with real store stock, and what did the last sync correct? | Whether the sync interval is short enough |
+| Q3 Measure the impact | Management, web team | Which checkouts were blocked because of inaccurate stock, for which products and stores, and why? | Which products and stores need attention; whether blocks come from a stale number or from stock split across stores |
+
+| Use case | Dashboard page | Source view | What it shows | Scope note |
+| --- | --- | --- | --- | --- |
+| Q1 | Store stock | Report 1 | Shelf (= available), reserved and on hand per store and product | Available = shelf (section 5.1) |
+| Q4 | Store stock | Report 1 | Available stock by store for one product, ranked; low-stock alerts per store | Identifies low stock; does **not** decide or execute replenishment |
+| Q2 | Website stock | Report 2 | Website vs real stock, discrepancy, status, last sync and its corrections | The sync corrects the website; the warehouse measures and records the discrepancy |
+| Q3 | Orders & lost sales | Report 3 + `online.checkout_attempt*` | Blocked checkout attempts: product, pickup store, website number shown, real stock, reason | The online system blocks the checkout; a blocked checkout is a potential, not confirmed, lost sale |
 
 The **Data & integration** page shows the technical evidence behind the answers: product list and store-code mappings, staging, ETL runs, data quality, reconciliation and a source → warehouse trace.
 
@@ -281,7 +302,7 @@ Recording rules: rebuild `pethaven_demo` before every take (`build.py`) and reco
 
 ### 10.5 Further cases in the sample data
 
-These are in the seed history and support the reports and questions:
+These are in the seed history and support the reports and use cases:
 
 - **Stale number blocks a checkout (seed).** Website synced at 7 aquarium kits; 5 sold in store; a Bondi customer's checkout for 3 was blocked (Report 3, basket 5).
 - **The nearest store can't supply, so it isn't offered.** A Penrith customer's 2 orthopaedic beds were held at Parramatta; never collected, so the order becomes overdue and is cancelled, returning the beds to the shelf.
@@ -294,7 +315,7 @@ These are in the seed history and support the reports and questions:
 | vi.a Source databases and schemas (≥ 3) | `store_ops`, `supply`, `online` (`workspace/db/02`–`04`) |
 | vi.b Integrated data warehouse (≥ 1) | `dw` (`workspace/db/05_warehouse.sql`) |
 | vi.c Commented SQL scripts with synthetic data, ETL | `workspace/db/01`–`08`, `workspace/db/seed/` |
-| vi.d Reports and dashboard (≥ 3) | Reports 1–6 (`08_reports.sql`), dashboard (`workspace/dashboard/`) |
+| vi.d Reports and dashboard per data use case (≥ 3) | Four data use cases Q1–Q4 (section 9), Reports 1–6 (`08_reports.sql`), dashboard (`workspace/dashboard/`) |
 | vi.e End-to-end testing and recorded demo video | `demo/demo_runbook.md`, `demo/vedio_demo_script.sql`, `workspace/tests/` |
 
 ## 12. Word list
@@ -302,8 +323,8 @@ These are in the seed history and support the reports and questions:
 | Word | Meaning here |
 | --- | --- |
 | Source system | An operational system that records business actions (Store, Supplier, Online). |
-| Operational symptom | What the business sees: website stock can be stale between syncs. |
-| Data / analytical problem | What the project solves: inventory data fragmented across three systems. |
+| Business problem | Product stock is not updated in real time between in-store and online sales, so stock sold in one channel can still show as available in the other. |
+| Remaining gap | What the operational solution cannot remove: the website number can be wrong between syncs, and checkouts can be blocked. The warehouse measures it. |
 | Data warehouse | The integrated analytical database (`dw`) combining the three sources. |
 | ETL | Extract, transform, load: copying source records into staging, validating and converting them, and loading them into the warehouse. |
 | Staging | ETL tables holding source records in their original format, with load status and traceability. |

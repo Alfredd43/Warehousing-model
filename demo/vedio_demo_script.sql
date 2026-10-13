@@ -140,7 +140,7 @@ SELECT store_name, in_store_quantity AS available, reserved_quantity AS reserved
  ORDER BY store_code;
 -- EXPECTED: Chatswood 73 = 53 + 20
 
--- Q2 Website discrepancy, before the sync
+-- Q3 Website discrepancy, before the sync
 SELECT product_code, online_shown AS website, actual_in_store AS actual,
        overstated_by AS discrepancy, status
   FROM dw.rpt_online_vs_actual
@@ -157,7 +157,7 @@ SELECT product_code, before_qty, after_qty, difference
  ORDER BY product_code;
 -- EXPECTED: P001 183 -> 203; P018 2 -> 0
 
--- Q3 Business impact: the blocked checkout
+-- Q4 Business impact: the blocked checkout
 SELECT basket, product_code, quantity_in_bag, pickup_store,
        website_showed, actual_combined_at_checkout AS actual, reason
   FROM dw.rpt_checkout_blocked
@@ -221,7 +221,7 @@ WITH po AS (
                             FROM dw.rpt_current_stock_by_store r, store_ops.store_stock ss
                            WHERE r.store_code = 'S03' AND r.product_code = 'P001'
                              AND ss.store_no = '103' AND ss.item_no = 'P001')
-    UNION ALL SELECT 7,  'Q2: website in sync after the sync',
+    UNION ALL SELECT 7,  'Q3: website in sync after the sync',
                          (SELECT count(*) = 0 FROM dw.rpt_online_vs_actual WHERE status <> 'in sync')
     UNION ALL SELECT 8,  'Traceability: no staging row left pending',
                          (SELECT count(*) = 0 FROM etl.v_staging WHERE load_status NOT IN ('loaded', 'skipped'))

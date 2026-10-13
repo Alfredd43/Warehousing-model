@@ -38,13 +38,25 @@ Run this once before the class, off screen. All SQL below is run in CloudBeaver 
 
 2. Open the dashboard at <http://localhost:8080>. Keep the automatic sync **stopped**.
 
-3. Make the website stale so Q2 has a clear example. These are the only statements that change data before the demo:
+3. Make the website stale so Q3 has a clear example. These are the only statements that change data before the demo:
 
    ```sql
    -- The last aquarium kit (P018) sells in store at Newtown (104) and Penrith (105)
    SELECT store_ops.record_sale('104', ARRAY['P018'], ARRAY[1]);
    SELECT store_ops.record_sale('105', ARRAY['P018'], ARRAY[1]);
    ```
+
+   Each statement returns the new receipt number (29 and 30). Run them only once.
+
+   Confirm the website is now stale:
+
+   ```sql
+   SELECT product_code, online_shown AS website, actual_in_store AS actual, status
+     FROM dw.rpt_online_vs_actual
+    WHERE status <> 'in sync';
+   ```
+
+   Expected: `P018 | 2 | 0 | overstated - oversell risk`.
 
 4. Check the starting point:
 
@@ -56,7 +68,7 @@ Run this once before the class, off screen. All SQL below is run in CloudBeaver 
 
    Expected: `pethaven_demo | never started | 1`.
 
-Every SQL block in sections 2–6 is read-only and can be run again at any time.
+The SQL in sections 3, 4 and 6 is read-only and can be run again at any time. Section 5 uses the dashboard only.
 
 ---
 
@@ -123,38 +135,20 @@ Show example data such as:
 - online orders
 - stock synchronisation information
 
-### SQL
-
-```sql
--- Supplier system: deliveries in cartons, supplier location codes, UTC time
-SELECT d.supplier_id, d.supplier_order_no, d.location_code, l.item_no,
-       l.cartons, d.delivered_at_utc
-  FROM supply.supplier_delivery d
-  JOIN supply.supplier_delivery_line l ON l.delivery_no = d.delivery_no
- ORDER BY d.delivery_no DESC
- LIMIT 5;
-
--- Store system: shelf and reserved stock per store number
-SELECT store_no, item_no, in_store_quantity AS shelf, reserved_quantity AS reserved
-  FROM store_ops.store_stock
- WHERE item_no = 'P001'
- ORDER BY store_no;
-
--- Online system: one website number per product, and checkout attempts
-SELECT item_no, available_quantity AS website_stock, last_synced_at
-  FROM online.online_stock
- WHERE item_no IN ('P001', 'P018');
-
-SELECT attempt_no, basket_id, outcome, pickup_cp_code
-  FROM online.checkout_attempt
- ORDER BY attempt_no;
-```
-
-Expected: supplier rows in cartons with `NSW-…` codes; store numbers `101`–`105`; P001 website 183, P018 website 2; 8 checkout attempts, one `blocked`.
-
 ### Key Point
 
 The data belongs to the same inventory process, but it is stored separately and follows different structures and business rules.
+
+| Data element | Store system (`store_ops`) | Supplier system (`supply`) | Online system (`online`) | After ETL (data warehouse `dw`) |
+|---|---|---|---|---|
+| **Product** | Item number `P001` | Item number `P001` | Item number `P001` | `product_code` `P001` (unchanged) |
+| **Store / location** | Store number `101`–`105` | Location code `NSW-PARRA`, `NSW-CHATS`, … | Collection point `CP-PARRAMATTA`, `CP-CHATSWOOD`, … | Conformed store code `S01`–`S05` (approved mapping) |
+| **Quantity unit** | Units | **Cartons** | Units | Units (cartons × units per carton) |
+| **Timestamp** | Sydney time | **UTC** | Sydney time | Sydney time plus Sydney business date (`dim_date`) |
+| **Transaction ID** | Receipt number | Supplier ID + supplier order number (`SUP-01` / `PO-1201`) | Order ID (bag / checkout attempt before payment) | `source_ref`, e.g. `SUPPLY:supplier SUP-01 order PO-1201 line 1` |
+| **Stock measure** | Shelf and reserved stock per store | Delivered cartons per delivery line | One combined website number for all stores | Signed `quantity_change` and `reserved_change` per event |
+
+The item number is the only value that is the same in all three systems. The ETL therefore maps store codes, converts units and time, and keeps each transaction ID as `source_ref`.
 
 ```text
 Supplier ─┐
@@ -172,7 +166,11 @@ Demonstrate how source data is prepared for integration.
 
 Use one or two clear examples.
 
+**Story line:** follow PetHaven's stock as it **comes in** from a supplier and **goes out** through the stores and the website. Each system records the same kind of event in its own way; the ETL makes them comparable.
+
 ## Example 1 — Supplier Delivery
+
+> **Stock comes in.** Supplier SUP-01 delivers 5 cartons of dog food (P001) to the Chatswood store (order PO-1201). The supplier system records it in its own format: cartons, a location code and UTC time.
 
 Show the original supplier record:
 
@@ -228,14 +226,24 @@ SELECT store_code, store_name, store_no, location_code, cp_code
 
 Expected: 5 cartons × 4 = **20 units**; `NSW-CHATS` → **S03**; UTC + 11 h = Sydney time; `loaded`.
 
+| | Supplier system (source) | Data warehouse (after ETL) |
+|---|---|---|
+| Quantity | 5 cartons | 20 units |
+| Location | `NSW-CHATS` | `S03` |
+| Time | 19:20 UTC | 06:20 Sydney time, next day |
+
 ## Example 2 — Store / Online Events
 
+> **Stock goes out.** A Bondi customer tries to buy 3 aquarium kits (P018) online while the website still shows 7, but only 2 are left, so checkout is blocked. Then the last 2 kits sell in store at Newtown and Penrith. The online and store systems each record these events with their own codes.
+
 Briefly show how store and online events are also mapped into a common analytical structure.
+
+The Store and Online systems record events in their own format: the store sale uses store number `104`, the online checkout uses collection point `CP-BONDI-JUNCTION`. The ETL captures both in staging with their own source reference, then loads them into the same warehouse fact table as the supplier deliveries.
 
 ### SQL
 
 ```sql
--- Store sales and an online checkout, staged with their own source references
+-- Store sales and an online checkout, staged with their own codes and source references
 SELECT 'STORE' AS source, store_no AS source_code, item_no, quantity, load_status, source_ref
   FROM etl.stg_store_sale_line
  WHERE stg_id > (SELECT max(stg_id) - 2 FROM etl.stg_store_sale_line)
@@ -243,15 +251,23 @@ UNION ALL
 SELECT 'ONLINE', pickup_cp_code, item_no, quantity, load_status, source_ref
   FROM etl.stg_checkout_item
  WHERE result = 'unavailable';
-
--- ETL audit: each source change triggered an ETL run automatically
-SELECT etl_run_id, trigger_source, rows_read, rows_loaded, rows_rejected
-  FROM etl.etl_run
- ORDER BY etl_run_id DESC
- LIMIT 5;
 ```
 
-Expected: the two P018 store sales (`104`, `105`) and the blocked online checkout (`CP-BONDI-JUNCTION`), all `loaded`; ETL runs with 0 rejected.
+Expected: three rows, all `loaded`.
+
+| Source | Source code | Item | Qty | Source reference |
+|---|---|---|---:|---|
+| STORE | `104` | P018 | 1 | `STORE:receipt 29 line 1` |
+| STORE | `105` | P018 | 1 | `STORE:receipt 30 line 1` |
+| ONLINE | `CP-BONDI-JUNCTION` | P018 | 3 | `ONLINE:checkout attempt 5 item P018` |
+
+### What to point out
+
+- Each system keeps its own codes and transaction IDs in staging.
+- All three records are `loaded`: the ETL ran automatically when each event happened.
+- In the warehouse they become rows in one fact table, with the same store codes (`S01`–`S05`) and product codes as the supplier deliveries (section 4).
+
+> **Where the story goes next:** the delivery, the sales and the blocked checkout now sit side by side in the warehouse (section 4), and the dashboard uses them to answer Q1–Q4 (section 5).
 
 ### Demo Message
 
@@ -339,10 +355,12 @@ Use it to answer four simple business questions.
         ▼                  ▼                  ▼
  Inventory position   Store comparison   Cross-system issues
         │                                     │
-   Q1 + Q4                              Q2 + Q3
+   Q1 + Q2                              Q3 + Q4
 ```
 
 ---
+
+Before starting, check the status line on **Website stock**: it should say *Automatic sync: not running*. Use the dashboard's **Refresh** button if a page looks out of date. Refresh only re-reads the reports; it never runs the sync or the ETL.
 
 ## Q1. Where is stock available or reserved?
 
@@ -350,49 +368,32 @@ Use it to answer four simple business questions.
 
 > **Where is stock available or reserved across PetHaven stores?**
 
-Open the **Store Stock** dashboard view.
+### On the Dashboard
 
-Show inventory by store/product, focusing on:
+1. Open **Store stock** → tab **Current stock**, **View: By store**.
+2. Type **P001** in the **Product** box. The **Stock by store** table shows *P001 at each store*, with one row per store and the columns **Available**, **Reserved**, **On hand** and **Stock status**.
+3. Clear the box and type **P013**, the large orthopaedic dog bed. It shows that a store can have reserved units with an empty shelf.
+4. Optional: click a store row to open its **Event history**, the warehouse events behind the number.
 
-- Shelf Stock
-- Reserved Stock
-- Available Stock, according to the implemented inventory definition
-
-Use a product filter if helpful.
-
-Example presentation:
+What the audience should see:
 
 ```text
-Store             Shelf       Reserved       Available
--------------------------------------------------------
-Parramatta          25            5              ...
-Chatswood           18            2              ...
-Newtown             12            3              ...
+P001 at each store      Available   Reserved   On hand
+------------------------------------------------------
+Parramatta                  37          0         37
+Bondi                       27          0         27
+Chatswood                   53          0         53
+Newtown                     20          0         20
+Penrith                     46          0         46
 ```
 
-### SQL
+For P013, **Parramatta** shows Available **0**, Reserved **2**, On hand **2**: both beds are on the premises but held for a click-and-collect order, so none are free to sell.
 
-```sql
-SELECT store_name,
-       in_store_quantity AS shelf_available,
-       reserved_quantity AS reserved,
-       total_on_hand
-  FROM dw.rpt_current_stock_by_store
- WHERE product_code = 'P001'
- ORDER BY store_code;
-
--- Reserved stock across all products, per store
-SELECT store_name, sum(in_store_quantity) AS shelf, sum(reserved_quantity) AS reserved
-  FROM dw.rpt_current_stock_by_store
- GROUP BY store_name
- ORDER BY store_name;
-```
-
-Expected: P001 shelf 37 / 27 / 53 / 20 / 46. Reserved units are held at Parramatta (3), Bondi (2) and Chatswood (2). Shelf stock is already the available stock; do not subtract reserved from it.
+*Note:* **Available** is the shelf stock and is already free to sell; reserved units have already been taken off the shelf. Available is therefore not reduced again by reserved.
 
 ### What This Shows
 
-Management can see the integrated stock position rather than looking at individual operational transactions.
+Management can see the integrated stock position rather than looking at individual operational transactions. The event history shows the warehouse events behind each number.
 
 ### Demo Message
 
@@ -400,56 +401,32 @@ Management can see the integrated stock position rather than looking at individu
 
 ---
 
-## Q4. Which stores have lower stock levels?
+## Q2. Which stores have lower stock levels?
 
 ### Business Question
 
 > **Which stores have lower stock levels and may require replenishment?**
 
-Use the **Store Stock** dashboard to compare stock across all five stores:
+### On the Dashboard
 
-- Parramatta
-- Bondi Junction
-- Chatswood
-- Newtown
-- Penrith
+1. Stay on **Store stock** → **Current stock**, **View: By store**, with **P001** in the **Product** box.
+2. Compare the **Available** column across the five stores.
+3. Point out the colours in the **Available** column: **red = out of stock**, **amber = low (1–2 left)**.
+4. Clear the **Product** box and tick **Low stock only** to list only the shelves that need attention. (The same list appears on **Overview** → *Out of stock and running low*.)
 
-Prefer a simple **Available Stock by Store** bar chart or ranked store view.
-
-Example:
+What the audience should see:
 
 ```text
-Available Stock by Store
+Available Stock by Store (P001)
 
-Parramatta       █████████████
-Chatswood        ██████████
-Newtown          ████████
-Bondi Junction   ██████
-Penrith          ███
-                  ↑
-             Lower stock
+Chatswood        ████████████████████  53
+Penrith          █████████████████     46
+Parramatta       ██████████████        37
+Bondi Junction   ██████████            27
+Newtown          ███████               20   ← lowest
 ```
 
-If filters are available, select one product to make the comparison clearer.
-
-### SQL
-
-```sql
-SELECT rank() OVER (ORDER BY in_store_quantity) AS rank_lowest,
-       store_name,
-       in_store_quantity AS available_stock
-  FROM dw.rpt_current_stock_by_store
- WHERE product_code = 'P001'
- ORDER BY in_store_quantity;
-
--- Low-stock alerts (2 or fewer on the shelf) per store
-SELECT store_name, count(*) FILTER (WHERE low_stock) AS low_stock_products
-  FROM dw.rpt_current_stock_by_store
- GROUP BY store_name
- ORDER BY low_stock_products DESC;
-```
-
-Expected: Newtown 20 (lowest), Bondi 27, Parramatta 37, Penrith 46, Chatswood 53. Newtown and Chatswood have the most low-stock products (3 each).
+With **Low stock only**, **Aquarium Starter Kit 40L (P018)** is red (0) in every store, after the two sales recorded before the demo. Orthopaedic Dog Bed Large (P013) is also low in every store, and Cat Scratching Post 80cm (P017) is low at Chatswood and Newtown.
 
 ### What This Shows
 
@@ -465,71 +442,40 @@ The Dashboard identifies lower inventory levels. It does **not** automatically d
 
 ---
 
-## Q2. How inaccurate is website stock?
+## Q3. How inaccurate is website stock?
 
 ### Business Question
 
 > **How inaccurate is website stock compared with real store stock?**
 
-Open the **Website Stock** dashboard view.
+### On the Dashboard
 
-Show:
+1. Open **Website stock**.
+2. Read the status line: *Automatic sync: not running* and the time of the last sync.
+3. Read the yellow banner: *1 of 18 products show the wrong stock on the website: 1 too high (customers may order stock that has gone)*.
+4. In **Products with the wrong number on the website**, show the P018 row.
+5. Optional: click the P018 row. It opens **Store stock** for P018 and shows 0 available in every store.
 
-- Website Stock
-- Real / Actual Store Stock
-- Difference or discrepancy
-- Sync correction information
-
-Use a clear example where website stock differs from actual store stock.
-
-Conceptually:
+What the audience should see:
 
 ```text
-Website Stock        5
-Actual Store Stock   2
-                    ──
-Discrepancy          3
+Product                       Website shows   Stores have   Difference
+-----------------------------------------------------------------------
+Aquarium Starter Kit 40L (P018)      2              0            +2     Website too high
 ```
 
-If appropriate, show the latest synchronisation correction.
+### Optional: Show the Sync Correction
 
-### SQL
+Open the **Demo actions** panel and click **Sync website stock now**. This changes data.
 
-```sql
--- Website stock vs actual store stock
-SELECT product_code, product_name,
-       online_shown    AS website_stock,
-       actual_in_store AS actual_store_stock,
-       overstated_by   AS discrepancy,
-       status
-  FROM dw.rpt_online_vs_actual
- WHERE status <> 'in sync';
+- The banner turns green: *The website matches the stores for all 18 products.*
+- **What the last sync corrected** lists P018: *Website before* **2** → *Website after* **0**.
 
--- Staleness summary
-SELECT last_sync_at AT TIME ZONE 'Australia/Sydney' AS last_sync, time_since_sync,
-       pending_events, products_out_of_date
-  FROM dw.rpt_online_staleness;
-```
-
-Expected: P018 website **2**, actual **0**, discrepancy **2**, *overstated - oversell risk*; 2 events pending, 1 product out of date.
-
-Optional: show the sync correction live (this changes data):
-
-```sql
-SELECT online.sync_website_stock();
-
-SELECT product_code, before_qty, after_qty, difference
-  FROM dw.rpt_last_sync_changes
- WHERE measure = 'online_available';
-```
-
-Expected: P018 website 2 → 0.
+Run this only once, and only at the end of Q3. To show the stale number again, rebuild the database and repeat **0. Before Presenting**.
 
 ### What This Shows
 
-This analysis combines information from the Online and Store systems.
-
-It allows PetHaven to identify cases where customer-facing stock information does not match operational inventory.
+This analysis combines information from the Online and Store systems. It allows PetHaven to identify cases where customer-facing stock information does not match operational inventory.
 
 ### Demo Message
 
@@ -537,56 +483,40 @@ It allows PetHaven to identify cases where customer-facing stock information doe
 
 ---
 
-## Q3. What is the business impact?
+## Q4. What is the business impact?
 
 ### Business Question
 
 > **What is the business impact of inventory discrepancies?**
 
-Open the **Orders / Lost Sales / Checkout** analytical view.
+### On the Dashboard
 
-Show:
+1. Open **Orders & lost sales** → tab **Lost sales**.
+2. Show the row for **Aquarium Starter Kit 40L (P018)**.
+3. Click the row. The **Customer checkout (attempt 5)** card opens with the source record from the online system: outcome *Blocked before payment*, the bag, the pickup store, and each item's *Website snapshot (source)* next to the *Report reconstruction*.
+4. Optional: click **View data trace** to lead into section 6.
 
-- blocked checkout attempts
-- product involved
-- failure reason
-- website stock at the time of the attempt, where available
-- actual or reconstructed stock information
+What the audience should see:
 
-Use one clear blocked-checkout example.
+```text
+Product          Wanted   Website showed   Stores had   Pickup store   Why
+------------------------------------------------------------------------------------------------
+Aquarium Kit       3            7              2          Bondi        Website number was out of date
+```
 
 Conceptually:
 
 ```text
-Website shows stock
+Website shows stock (7)
         ↓
-Customer attempts checkout
+Customer attempts checkout (3 kits, pickup at Bondi)
         ↓
-Real stock is insufficient
+Real stock is insufficient (only 2 left, at Newtown and Penrith)
         ↓
-Checkout blocked
+Checkout blocked before payment, nobody charged
         ↓
 Event captured for analysis
 ```
-
-### SQL
-
-```sql
--- Report 3: blocked checkouts, with website stock and real stock at that moment
-SELECT basket, attempted_at AT TIME ZONE 'Australia/Sydney' AS attempted_at,
-       product_code, quantity_in_bag, pickup_store,
-       website_showed, actual_combined_at_checkout AS actual_stock, reason
-  FROM dw.rpt_checkout_blocked
- ORDER BY attempted_at;
-
--- Source record in the online system for the same attempt
-SELECT a.attempt_no, a.outcome, i.item_no, i.quantity, i.website_qty_shown, i.result
-  FROM online.checkout_attempt a
-  JOIN online.checkout_attempt_item i ON i.attempt_no = a.attempt_no
- WHERE a.outcome = 'blocked';
-```
-
-Expected: basket 5, 3 × P018, pickup Bondi, website showed **7**, actual **2**, reason *stock sold since last sync - online number was stale*.
 
 ### What This Shows
 
@@ -623,7 +553,7 @@ Report / Dashboard
 ### SQL
 
 ```sql
--- Trace the Q3 result back: report -> warehouse event -> staging -> online source
+-- Trace the Q4 result back: report -> warehouse event -> staging -> online source
 SELECT r.basket, f.event_id, f.source_ref, s.stg_id, s.load_status, a.attempt_no, a.outcome
   FROM dw.rpt_checkout_blocked r
   JOIN dw.fact_stock_event f     ON f.event_type = 'checkout_blocked'
@@ -670,9 +600,9 @@ Store ────┼──→ ETL → Data Warehouse → Dashboard
 Online ───┘
                                       │
                                       ├── Q1 Stock position
-                                      ├── Q4 Low-stock stores
-                                      ├── Q2 Stock discrepancy
-                                      └── Q3 Business impact
+                                      ├── Q2 Low-stock stores
+                                      ├── Q3 Stock discrepancy
+                                      └── Q4 Business impact
 ```
 
 ---
@@ -689,9 +619,9 @@ The end-to-end test for the recorded video is a separate script: `demo/vedio_dem
 | 3. ETL & Transformation | 1.5 min |
 | 4. Data Warehouse | 1 min |
 | 5. Dashboard — Q1 | 1 min |
-| 5. Dashboard — Q4 | 0.5 min |
-| 5. Dashboard — Q2 | 1 min |
+| 5. Dashboard — Q2 | 0.5 min |
 | 5. Dashboard — Q3 | 1 min |
+| 5. Dashboard — Q4 | 1 min |
 | 6. Data Integration / Traceability | 1 min |
 | 7. Final Summary | 0.5 min |
 | **Total** | **~9.5 min** |

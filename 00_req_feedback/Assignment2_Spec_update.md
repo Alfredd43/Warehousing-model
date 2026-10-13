@@ -220,7 +220,7 @@ Report views:
 
 ## 9. Dashboard: four data use cases
 
-The dashboard is the main business-facing output. It reads only the warehouse report views (plus the online system's checkout records as the source evidence for Q3). Pages: Overview, Website stock, Store stock, Orders & lost sales, and Data & integration.
+The dashboard is the main business-facing output. It reads only the warehouse report views (plus the online system's checkout records as the source evidence for Q4). Pages: Overview, Website stock, Store stock, Orders & lost sales, and Data & integration.
 
 A data use case is one way a PetHaven user relies on the integrated data: who uses it, the question it answers, the decision it supports, and the report and dashboard page that deliver it. The four use cases below are what the reports and dashboard are built for (brief item vi.d, at least 3).
 
@@ -230,22 +230,22 @@ A data use case is one way a PetHaven user relies on the integrated data: who us
                        DASHBOARD
         ┌──────────────────┼──────────────────┐
  Inventory position   Store comparison   Cross-system issues
-     Q1 + Q4                                Q2 + Q3
+     Q1 + Q2                                Q3 + Q4
 ```
 
 | Use case | User | Question it answers | Decision it supports |
 | --- | --- | --- | --- |
 | Q1 Locate stock | Inventory manager, store staff | Where is stock available or reserved across PetHaven stores? | Which store can serve a customer, or send stock to another store |
-| Q4 Spot low stock | Inventory manager | Which stores have lower stock levels and may require replenishment? | Which stores to reorder for (the reorder itself is made outside this system) |
-| Q2 Measure website accuracy | Web team | How inaccurate is website stock compared with real store stock, and what did the last sync correct? | Whether the sync interval is short enough |
-| Q3 Measure the impact | Management, web team | Which checkouts were blocked because of inaccurate stock, for which products and stores, and why? | Which products and stores need attention; whether blocks come from a stale number or from stock split across stores |
+| Q2 Spot low stock | Inventory manager | Which stores have lower stock levels and may require replenishment? | Which stores to reorder for (the reorder itself is made outside this system) |
+| Q3 Measure website accuracy | Web team | How inaccurate is website stock compared with real store stock, and what did the last sync correct? | Whether the sync interval is short enough |
+| Q4 Measure the impact | Management, web team | Which checkouts were blocked because of inaccurate stock, for which products and stores, and why? | Which products and stores need attention; whether blocks come from a stale number or from stock split across stores |
 
 | Use case | Dashboard page | Source view | What it shows | Scope note |
 | --- | --- | --- | --- | --- |
 | Q1 | Store stock | Report 1 | Shelf (= available), reserved and on hand per store and product | Available = shelf (section 5.1) |
-| Q4 | Store stock | Report 1 | Available stock by store for one product, ranked; low-stock alerts per store | Identifies low stock; does **not** decide or execute replenishment |
-| Q2 | Website stock | Report 2 | Website vs real stock, discrepancy, status, last sync and its corrections | The sync corrects the website; the warehouse measures and records the discrepancy |
-| Q3 | Orders & lost sales | Report 3 + `online.checkout_attempt*` | Blocked checkout attempts: product, pickup store, website number shown, real stock, reason | The online system blocks the checkout; a blocked checkout is a potential, not confirmed, lost sale |
+| Q2 | Store stock | Report 1 | Available stock by store for one product, ranked; low-stock alerts per store | Identifies low stock; does **not** decide or execute replenishment |
+| Q3 | Website stock | Report 2 | Website vs real stock, discrepancy, status, last sync and its corrections | The sync corrects the website; the warehouse measures and records the discrepancy |
+| Q4 | Orders & lost sales | Report 3 + `online.checkout_attempt*` | Blocked checkout attempts: product, pickup store, website number shown, real stock, reason | The online system blocks the checkout; a blocked checkout is a potential, not confirmed, lost sale |
 
 The **Data & integration** page shows the technical evidence behind the answers: product list and store-code mappings, staging, ETL runs, data quality, reconciliation and a source → warehouse trace.
 
@@ -279,7 +279,7 @@ The script ends with an automatic test summary; every row must be PASS:
 | T4 | Store: P018 sales at S04 and S05 in the warehouse |
 | T5 | Online: blocked checkout captured with website 2 vs actual 0, reason "stale" |
 | T6 | Q1: warehouse stock equals the store system (P001 Chatswood = 73) |
-| T7 | Q2: after the sync, every product is in sync |
+| T7 | Q3: after the sync, every product is in sync |
 | T8 | Traceability: no staging row left pending |
 | T9 | Reconciliation: warehouse matches the store system |
 | T10 | Data quality: no rejected source rows |
@@ -294,7 +294,7 @@ Before recording, the automated checks must also pass: `check_demo.py` (104), `c
 | 2 | The three source systems | 1:00 |
 | 3 | ETL & transformation (supplier example; store and online events) | 2:00 |
 | 4 | Integrated data warehouse | 1:00 |
-| 5 | Dashboard Q1 / Q4 / Q2 / Q3 | 3:30 |
+| 5 | Dashboard Q1 / Q2 / Q3 / Q4 | 3:30 |
 | 6 | Traceability (+1:00 with the optional validation test) | 1:00 |
 | 7 | Final summary and PASS/FAIL result, ending on the dashboard | 0:30 |
 

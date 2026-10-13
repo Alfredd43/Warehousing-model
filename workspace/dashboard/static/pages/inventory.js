@@ -192,41 +192,48 @@ export default {
       });
     }
 
+    // "By store" view: one block per product, one row per store, with
+    // available, reserved and on-hand side by side (no measure switch).
     function matrixCard(rows) {
-      const measure = params.measure === "reserved" ? "reserved" : "available";
-      const stores = [...new Map(rows.map((r) => [r.store_code, r.store_name])).entries()];
       const byProduct = new Map();
       for (const r of rows) {
-        if (!byProduct.has(r.product_code)) byProduct.set(r.product_code, { code: r.product_code, name: r.product_name, cells: {} });
-        byProduct.get(r.product_code).cells[r.store_code] = r;
+        if (!byProduct.has(r.product_code)) byProduct.set(r.product_code, { code: r.product_code, name: r.product_name, stores: [] });
+        byProduct.get(r.product_code).stores.push(r);
       }
       const tbody = h("tbody");
       for (const p of byProduct.values()) {
-        const tr = h("tr", { class: `clickable${params.product === p.code ? " selected" : ""}`, tabindex: "0", "data-fk": `mrow-${p.code}` },
-          h("th", { scope: "row", style: "background:none;font-weight:500;color:var(--text)" }, p.name, h("span", { class: "cell-sub" }, p.code)),
-          stores.map(([sc]) => {
-            const c = p.cells[sc];
-            if (!c) return h("td", { class: "num" }, "—");
-            const v = c[measure];
-            const cls = measure === "available" ? (v === 0 ? "cell-zero" : v <= 2 ? "cell-low" : "") : "";
-            const label = measure === "available" ? stockStatus(v).label : "Reserved";
-            return h("td", { class: `num ${cls}`, title: `${c.store_name}: ${v} ${measure} (${label})` }, fmt.num(v));
-          }));
-        const pick = () => app.setParams({ product: p.code, store_sel: "" });
-        tr.addEventListener("click", pick);
-        tr.addEventListener("keydown", (e) => { if (e.key === "Enter") pick(); });
-        tbody.append(tr);
+        tbody.append(h("tr", { class: "group-row" },
+          h("td", { colspan: "5" }, `${p.code} at each store`, h("span", { class: "cell-sub", style: "font-weight:400" }, p.name))));
+        for (const r of p.stores) {
+          const s = stockStatus(r.available);
+          const cls = r.available === 0 ? "cell-zero" : r.available <= 2 ? "cell-low" : "";
+          const selected = params.product === r.product_code && params.store_sel === r.store_code;
+          const tr = h("tr", { class: `clickable${selected ? " selected" : ""}`, tabindex: "0", "data-fk": `srow-${r.product_code}-${r.store_code}` },
+            h("th", { scope: "row", style: "background:none;font-weight:500;color:var(--text)" },
+              r.store_name.replace("PetHaven ", ""), h("span", { class: "cell-sub" }, r.store_code)),
+            h("td", { class: `num ${cls}`, title: `${r.store_name}: ${r.available} available (${s.label})` }, fmt.num(r.available)),
+            h("td", { class: "num" }, fmt.num(r.reserved)),
+            h("td", { class: "num" }, fmt.num(r.on_hand)),
+            h("td", {}, badge(s.label, s.kind)));
+          const pick = () => app.setParams({ product: r.product_code, store_sel: r.store_code, hoff: "", hfrom: "", hto: "" });
+          tr.addEventListener("click", pick);
+          tr.addEventListener("keydown", (e) => { if (e.key === "Enter") pick(); });
+          tbody.append(tr);
+        }
       }
       return card({
         id: "stock-matrix", title: "Stock by store",
-        subtitle: "Select a product to see its detail and history.",
-        actions: field("Measure", select([{ value: "available", label: "Available" }, { value: "reserved", label: "Reserved" }], measure,
-          (v) => app.setParams({ measure: v === "available" ? "" : v }), { "data-fk": "measure" })),
+        subtitle: `${byProduct.size} product${byProduct.size === 1 ? "" : "s"} · select a store to see its event history.`,
         body: rows.length ? h("div", { class: "table-wrap" }, h("table", { class: "matrix" },
-          h("caption", { class: "sr-only" }, `${measure} units per product and store`),
-          h("thead", {}, h("tr", {}, h("th", { scope: "col" }, "Product"), stores.map(([sc, n]) => h("th", { scope: "col", class: "num" }, n.replace("PetHaven ", ""), h("span", { class: "cell-sub" }, sc))))),
+          h("caption", { class: "sr-only" }, "Available, reserved and on-hand units of each product at each store"),
+          h("thead", {}, h("tr", {},
+            h("th", { scope: "col" }, "Store"),
+            h("th", { scope: "col", class: "num" }, "Available"),
+            h("th", { scope: "col", class: "num" }, "Reserved"),
+            h("th", { scope: "col", class: "num" }, "On hand"),
+            h("th", { scope: "col" }, "Stock status"))),
           tbody)) : state("", "No balances match these filters", ""),
-        foot: measure === "available" ? "Red = out of stock. Amber = low (1–2 left)." : "Units held for click & collect orders at each store.",
+        foot: "Available = on the shelf, free to sell. Reserved = held for click & collect orders. Red = out of stock. Amber = low (1–2 left).",
       });
     }
 

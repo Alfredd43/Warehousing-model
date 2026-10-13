@@ -30,7 +30,7 @@ This is an educational working prototype using synthetic data. It is not a full 
 - [Business specification](../00_req_feedback/Assignment2_Spec.md): business rules, stock definitions, required reports, and demonstration cases.
 - [Architecture and model](Architecture_and_Data_Model.md).
 - [Implementation status and limitations](implementation_notes.md).
-- [Demonstration runbook with SQL](../demo/demo_runbook.md).
+- [Presentation runbook](../demo/demo_runbook.md) and [end-to-end test script](../demo/vedio_demo_script.sql).
 - [Report view definitions](../workspace/db/08_reports.sql): executable SQL is authoritative for actual fields and calculations.
 - [Lecture notes](../00_req_feedback/subject_knowledge/Notes_0-9.md), particularly Modules 1, 2, 5, and 8.
 - [Workshop notes](../00_req_feedback/subject_knowledge/Notes_Workshop.md), particularly Workshops 2 and 6.

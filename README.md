@@ -95,7 +95,7 @@ Safe to rerun at any time. Only `pethaven_demo` and `pethaven_check` are ever dr
 
 ### Step 5: Run the demo
 
-**In CloudBeaver** (easiest): open <http://localhost:8978>, add a PostgreSQL connection (host `postgres`, port `5432`, database **`pethaven_demo`**, user/password `student`/`student`), then follow [demo/demo_runbook.md](demo/demo_runbook.md) and run its SQL one statement at a time. Reconnect after every rebuild.
+**In CloudBeaver** (easiest): open <http://localhost:8978>, add a PostgreSQL connection (host `postgres`, port `5432`, database **`pethaven_demo`**, user/password `student`/`student`), then open [demo/vedio_demo_script.sql](demo/vedio_demo_script.sql) (end-to-end test) or follow [demo/demo_runbook.md](demo/demo_runbook.md) (presentation), and run the SQL one statement at a time. Reconnect after every rebuild.
 
 **Start the automatic sync** (every 3 minutes) when you want it; it keeps running in the background until you stop it or the containers stop:
 
@@ -203,7 +203,10 @@ workspace/
   dashboard/queries.py, actions.py     read queries over the report views / demo actions calling source functions
   dashboard/static/                    dashboard pages (HTML, CSS, JavaScript modules)
   dashboard/compose.dashboard.yml      optional Compose overlay that runs the dashboard on port 8080
-demo/demo_runbook.md                   end-to-end test and demo video runbook: steps, SQL, expected results, PASS/FAIL summary
+demo/                                  presentation and end-to-end test material
+  demo_runbook.md                      classroom presentation runbook (~10 min): story, dashboard Q1-Q4, SQL per section
+  vedio_demo_script.sql                recorded end-to-end test video (~8 min): test inputs, checks per layer, T1-T10 PASS/FAIL
+  demoSQL_sections_3_4.sql             read-only queries for runbook sections 3 & 4 (ETL, warehouse)
 docs/                                  design, traceability, dashboard runbook, implementation notes
 00_req_feedback/                       brief, Spec, tutor feedback, subject notes
 data/                                  lab database files created by Docker (not in Git)

@@ -461,7 +461,7 @@ Times are relative to the build day, so "time since sync" and "overdue" are alwa
 | vi.b Integrated data warehouse (≥ 1) | `workspace/db/05_warehouse.sql` (+ `07_sync.sql`) |
 | vi.c SQL scripts: create, extract, transform, load, synthetic data | `01_schemas.sql`; `06_etl.sql` (extract → transform → validate → load); `seed/01_reference_data.sql`, `seed/02_business_history.sql` |
 | vi.d Reports (≥ 3) | `workspace/db/08_reports.sql` (6 reports) |
-| vi.e End-to-end testing | `workspace/tests/check_demo.py` (104 checks), `check_scheduler.py` (17), `check_dashboard.py` (67), `demo/vedio_demo_script.sql`, [demo/demo_runbook.md](../demo/demo_runbook.md) |
+| vi.e End-to-end testing | `workspace/tests/check_demo.py` (104 checks), `check_scheduler.py` (17), `check_dashboard.py` (38), `demo/vedio_demo_script.sql`, [demo/demo_runbook.md](../demo/demo_runbook.md) |
 
 ### File map
 
@@ -484,7 +484,7 @@ demo/demo_runbook.md                   classroom presentation runbook (steps + S
 demo/vedio_demo_script.sql             recorded end-to-end test (T1-T10)
 workspace/tests/check_demo.py           104 behaviour checks on pethaven_check
 workspace/tests/check_scheduler.py      17 checks that the scheduler syncs at its interval
-workspace/tests/check_dashboard.py      67 dashboard API checks
+workspace/tests/check_dashboard.py      38 dashboard API checks
 ```
 
 ## 13. Data dictionary

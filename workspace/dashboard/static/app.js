@@ -1,24 +1,18 @@
-// Application shell: navigation, hash routing, shared status, refresh, demo workspace.
+// Application shell: navigation, hash routing, shared status, refresh.
 
 import { get } from "./api.js";
 import { h, clear, append, icon, fmt, announce } from "./components/ui.js";
-import { createDemo } from "./components/demo.js";
 import overview from "./pages/overview.js";
 import website from "./pages/website.js";
 import inventory from "./pages/inventory.js";
 import checkout from "./pages/checkout.js";
-import integration from "./pages/integration.js";
 
-// group: "main" pages are for running the business; "technical" shows how the
-// data gets there (evidence for the solution design).
 const PAGES = [
-  { id: "overview", label: "Overview", icon: "overview", group: "main", module: overview },
-  { id: "website", label: "Website stock", icon: "website", group: "main", module: website },
-  { id: "inventory", label: "Store stock", icon: "inventory", group: "main", module: inventory },
-  { id: "checkout", label: "Orders & lost sales", icon: "checkout", group: "main", module: checkout },
-  { id: "integration", label: "Data & integration", icon: "integration", group: "technical", module: integration },
+  { id: "overview", label: "Overview", icon: "overview", module: overview },
+  { id: "website", label: "Website stock", icon: "website", module: website },
+  { id: "inventory", label: "Store stock", icon: "inventory", module: inventory },
+  { id: "checkout", label: "Orders & lost sales", icon: "checkout", module: checkout },
 ];
-const GROUPS = [["main", "Business"], ["technical", "Technical"]];
 
 const els = {
   shell: document.getElementById("shell"),
@@ -29,8 +23,6 @@ const els = {
   readAt: document.getElementById("read-at"),
   banner: document.getElementById("global-banner"),
   refresh: document.getElementById("refresh-btn"),
-  demoBtn: document.getElementById("demo-btn"),
-  demo: document.getElementById("demo"),
   menu: document.getElementById("menu-btn"),
   scrim: document.getElementById("scrim"),
   sidebar: document.getElementById("sidebar"),
@@ -53,7 +45,6 @@ function buildHash(page, params) {
 }
 
 let current = { page: null, params: {}, controller: null };
-let catalogueCache = null;
 
 const app = {
   status: null,
@@ -78,16 +69,9 @@ const app = {
 
   params: () => current.params,
 
-  catalogue(force = false) {
-    if (!catalogueCache || force) catalogueCache = get("/catalogue").then((r) => r.data).catch((e) => { catalogueCache = null; throw e; });
-    return catalogueCache;
-  },
-
   markRead(meta) {
     if (meta?.read_at) els.readAt.textContent = `Updated ${fmt.time(meta.read_at)}`;
   },
-
-  openDemo(section, prefill) { demo.open(section, prefill); },
 
   async refreshStatus() {
     try {
@@ -110,12 +94,6 @@ const app = {
     ]);
     return okStatus && okPage;
   },
-
-  // After a committed write: re-read reports and the catalogue.
-  async afterWrite() {
-    catalogueCache = null;
-    return app.refresh();
-  },
 };
 
 function renderBanner() {
@@ -127,19 +105,16 @@ function renderBanner() {
     if (q.mismatched_pairs) bits.push(`${q.mismatched_pairs} store-product pair${q.mismatched_pairs === 1 ? "" : "s"} differ from the store system`);
     els.banner.append(h("div", { class: "banner warn", role: "status" },
       h("div", {}, h("strong", {}, "Some records are missing from the reports. "),
-        h("a", { href: "#/integration" }, "See data checks"), ` (${bits.join("; ")}).`)));
+        `(${bits.join("; ")}).`)));
   }
 }
 
 function renderNav() {
   clear(els.nav);
-  for (const [group, title] of GROUPS) {
-    els.nav.append(h("li", { class: "nav-group", role: "presentation" }, title));
-    for (const p of PAGES.filter((x) => x.group === group)) {
-      els.nav.append(h("li", {},
-        h("a", { href: `#/${p.id}`, "aria-current": p.id === current.page ? "page" : undefined },
-          icon(p.icon), h("span", {}, p.label))));
-    }
+  for (const p of PAGES) {
+    els.nav.append(h("li", {},
+      h("a", { href: `#/${p.id}`, "aria-current": p.id === current.page ? "page" : undefined },
+        icon(p.icon), h("span", {}, p.label))));
   }
 }
 
@@ -187,15 +162,6 @@ els.refresh.addEventListener("click", async () => {
   els.refresh.disabled = false;
   announce(ok ? "Reports refreshed" : "Refresh failed");
 });
-
-const demo = createDemo(els.demo, app, {
-  onToggle(open) {
-    els.shell.classList.toggle("demo-open", open);
-    els.demoBtn.setAttribute("aria-expanded", String(open));
-    if (!open) els.demoBtn.focus();
-  },
-});
-els.demoBtn.addEventListener("click", () => (demo.isOpen() ? demo.close() : demo.open()));
 
 window.addEventListener("hashchange", route);
 app.refreshStatus();

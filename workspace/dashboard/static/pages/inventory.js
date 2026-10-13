@@ -178,7 +178,6 @@ export default {
           { label: "Units involved", num: true, render: (r) => fmt.num(r.units) },
           { label: "Order / basket", render: (r) => (r.order_ref ? (/^\d+$/.test(r.order_ref) ? `Order ${r.order_ref}` : r.order_ref) : "—"),
             sub: (r) => (r.pickup_store_code && r.pickup_store_code !== r.store_code ? `Pickup store ${r.pickup_store_code}` : (r.pickup_store_code ? "Pickup here" : "")) },
-          { label: "", render: (r) => h("a", { href: `#/integration?trace_event=${encodeURIComponent(r.event_id)}` }, "Details") },
         ],
         rows: events.data.rows,
         empty: state("", "No events for this store and product", params.hfrom || params.hto ? "Try a wider date range." : ""),

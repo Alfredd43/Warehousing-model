@@ -466,7 +466,7 @@ Aquarium Starter Kit 40L (P018)      2              0            +2     Website 
 
 ### Optional: Show the Sync Correction
 
-Open the **Demo actions** panel and click **Sync website stock now**. This changes data.
+In a terminal, run `docker compose exec python python /workspace/scripts/demo.py sync`, then press **Refresh** on the dashboard. This changes data.
 
 - The banner turns green: *The website matches the stores for all 18 products.*
 - **What the last sync corrected** lists P018: *Website before* **2** → *Website after* **0**.
@@ -534,7 +534,7 @@ Avoid claiming that every blocked checkout is a confirmed lost sale unless the d
 
 After answering the four business questions, briefly return to the technical side.
 
-Use the **Data & Integration** view, ETL audit, staging records, or reconciliation information available in the prototype.
+Use the ETL audit (`etl.etl_run`), staging records, or reconciliation (`demo.py report reconciliation`) in CloudBeaver or the terminal.
 
 Show that a dashboard result can be traced back through the warehouse pipeline.
 

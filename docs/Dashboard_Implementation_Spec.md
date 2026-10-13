@@ -6,6 +6,8 @@ Language: English for the application, code-facing documentation, and user messa
 Status: implementation brief; the dashboard and proposed HTTP endpoints are not yet built
 
 > **Update, 7 October 2026 (admin-focused redesign).** The built dashboard now opens on an **Overview** page for the company admin (headline tiles and a "Needs attention" list from `/api/overview`), and the pages were renamed for that audience: Website & Sync → **Website stock**, Store Inventory → **Store stock** (products × stores grid by default), Checkout & Fulfilment → **Orders & lost sales**, Integration & Quality → **Data & integration** (grouped under "Technical" in the navigation). Report-number badges, "report read" times and long explanatory notes were removed from the business pages; "Business demo" is now **Demo actions** and "Refresh reports" is **Refresh**. The sections below keep the original page names. The current page guide is [dashboard_runbook.md](dashboard_runbook.md).
+>
+> **Update, 13 October 2026 (read-only).** The Demo actions panel and the Data & integration page were removed, with their `/api/demo/*`, `/api/integration/*` and `/api/catalogue` endpoints. The dashboard now only reads the reports; business events are made with `demo.py`. Sections below that describe them are kept as the original brief.
 
 ## 1. Objective and scope
 

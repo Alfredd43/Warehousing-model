@@ -220,7 +220,7 @@ Report views:
 
 ## 9. Dashboard: four data use cases
 
-The dashboard is the main business-facing output. It reads only the warehouse report views (plus the online system's checkout records as the source evidence for Q4). Pages: Overview, Website stock, Store stock, Orders & lost sales, and Data & integration.
+The dashboard is the main business-facing output. It reads only the warehouse report views (plus the online system's checkout records as the source evidence for Q4). Pages: Overview, Website stock, Store stock, and Orders & lost sales.
 
 A data use case is one way a PetHaven user relies on the integrated data: who uses it, the question it answers, the decision it supports, and the report and dashboard page that deliver it. The four use cases below are what the reports and dashboard are built for (brief item vi.d, at least 3).
 
@@ -246,8 +246,6 @@ A data use case is one way a PetHaven user relies on the integrated data: who us
 | Q2 | Store stock | Report 1 | Available stock by store for one product, ranked; low-stock alerts per store | Identifies low stock; does **not** decide or execute replenishment |
 | Q3 | Website stock | Report 2 | Website vs real stock, discrepancy, status, last sync and its corrections | The sync corrects the website; the warehouse measures and records the discrepancy |
 | Q4 | Orders & lost sales | Report 3 + `online.checkout_attempt*` | Blocked checkout attempts: product, pickup store, website number shown, real stock, reason | The online system blocks the checkout; a blocked checkout is a potential, not confirmed, lost sale |
-
-The **Data & integration** page shows the technical evidence behind the answers: product list and store-code mappings, staging, ETL runs, data quality, reconciliation and a source → warehouse trace.
 
 ## 10. End-to-end testing and the recorded demo video
 
@@ -284,7 +282,7 @@ The script ends with an automatic test summary; every row must be PASS:
 | T9 | Reconciliation: warehouse matches the store system |
 | T10 | Data quality: no rejected source rows |
 
-Before recording, the automated checks must also pass: `check_demo.py` (104), `check_scheduler.py` (17) and `check_dashboard.py` (67), each `FAIL 0`.
+Before recording, the automated checks must also pass: `check_demo.py` (104), `check_scheduler.py` (17) and `check_dashboard.py` (38), each `FAIL 0`.
 
 ### 10.4 Running order and timing (about 10 minutes)
 

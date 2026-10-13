@@ -133,7 +133,7 @@ The full 10-minute demonstration, with what to say at each step, is in [demo/dem
 docker compose -f docker-compose.yml -f workspace/dashboard/compose.dashboard.yml up -d dashboard
 ```
 
-Open <http://localhost:8080>. It opens on an **Overview** for the company admin (what needs attention: website accuracy, next sync, stock alerts, lost sales, open click & collect orders), then the three required reports (Website stock, Store stock, Orders & lost sales), a technical **Data & integration** page with a source-to-warehouse trace, and a **Demo actions** panel that records sales, supplier deliveries, bags, checkouts, manual syncs and product-list additions through the source systems. Website stock shows the automatic sync's interval, the time since the last sync and a countdown to the next one. The overlay adds a `dashboard` service and leaves the lab files unchanged. The dashboard demonstration is in [docs/dashboard_runbook.md](docs/dashboard_runbook.md).
+Open <http://localhost:8080>. It opens on an **Overview** for the company admin (what needs attention: website accuracy, next sync, stock alerts, lost sales, open click & collect orders), then the three required reports (Website stock, Store stock, Orders & lost sales). It is read-only: sales, deliveries, orders and the manual sync are made with `demo.py`. Website stock shows the automatic sync's interval, the time since the last sync and a countdown to the next one. The overlay adds a `dashboard` service and leaves the lab files unchanged. The dashboard demonstration is in [docs/dashboard_runbook.md](docs/dashboard_runbook.md).
 
 ### Step 6: Run the checks
 
@@ -149,7 +149,7 @@ The automatic sync has its own checks (it starts the scheduler with a 2-second i
 docker compose exec python python /workspace/tests/check_scheduler.py
 ```
 
-The dashboard's API has its own checks, also on `pethaven_check`. The run ends with `TOTAL: 67 checks - PASS 67, FAIL 0`:
+The dashboard's API has its own checks, also on `pethaven_check`. The run ends with `TOTAL: 38 checks - PASS 38, FAIL 0`:
 
 ```bash
 docker compose exec python python /workspace/tests/check_dashboard.py
@@ -198,9 +198,9 @@ workspace/
   scripts/sync_scheduler.py            runs the website sync every SYNC_INTERVAL_SECONDS
   tests/check_demo.py                  104 behaviour checks
   tests/check_scheduler.py             17 automatic-sync checks
-  tests/check_dashboard.py             67 dashboard API checks
+  tests/check_dashboard.py             38 dashboard API checks
   dashboard/server.py                  dashboard: local HTTP server and API routes
-  dashboard/queries.py, actions.py     read queries over the report views / demo actions calling source functions
+  dashboard/queries.py                 read-only queries over the report views
   dashboard/static/                    dashboard pages (HTML, CSS, JavaScript modules)
   dashboard/compose.dashboard.yml      optional Compose overlay that runs the dashboard on port 8080
 demo/                                  presentation and end-to-end test material

@@ -147,8 +147,6 @@ export default {
                 sub: (i) => (i.report_combined_available === null ? "" : `combined available ${fmt.num(i.report_combined_available)}`) },
               { label: "Result", render: (i) => (i.result === "available" ? badge("Available", "success") : badge("Unavailable", "warning")) },
               { label: "Supplying collection point", render: (i) => (i.source_cp_name ? i.source_cp_name.replace("Click & Collect - ", "") : "None") },
-              { label: "Data trace", render: (i) => (i.event_id ? h("a", { href: `#/integration?trace_event=${i.event_id}` }, "View data trace")
-                : i.stg_id ? h("a", { href: `#/integration?trace_table=stg_checkout_item&trace_id=${i.stg_id}` }, "View staging") : "—") },
             ],
             rows: items,
           }),

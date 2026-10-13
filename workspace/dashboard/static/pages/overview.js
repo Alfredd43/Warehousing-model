@@ -91,14 +91,14 @@ export default {
       if (st.out_of_stock) add("bad", `${st.out_of_stock} store shel${st.out_of_stock === 1 ? "f is" : "ves are"} out of stock`, "View stock", "inventory", "low=1");
       if (st.low_stock) add("warn", `${st.low_stock} store shel${st.low_stock === 1 ? "f is" : "ves are"} running low (1–2 left)`, "View stock", "inventory", "low=1");
       if (o.not_ready) add("info", `${o.not_ready} click & collect order${o.not_ready === 1 ? " is" : "s are"} waiting for items from another store`, "View orders", "checkout", "tab=reservations");
-      if (q.incomplete) add("warn", `${q.rejected_rows + q.mismatched_pairs} record${q.rejected_rows + q.mismatched_pairs === 1 ? "" : "s"} could not be loaded into the reports`, "View data checks", "integration", "");
+      if (q.incomplete) add("warn", `${q.rejected_rows + q.mismatched_pairs} record${q.rejected_rows + q.mismatched_pairs === 1 ? "" : "s"} could not be loaded into the reports`);
       return card({
         id: "attention", title: "Needs attention",
         body: items.length
           ? h("ul", { class: "todo" }, items.map((i) => h("li", { class: `todo-${i.tone}` },
               h("span", { class: "todo-dot", "aria-hidden": "true" }),
               h("span", { class: "todo-text" }, i.text),
-              h("a", { href: `#/${i.page}${i.params ? `?${i.params}` : ""}` }, i.link))))
+              i.page ? h("a", { href: `#/${i.page}${i.params ? `?${i.params}` : ""}` }, i.link) : null)))
           : state("", "Nothing needs attention", "The website matches the stores, and there are no stock or order problems."),
       });
     }

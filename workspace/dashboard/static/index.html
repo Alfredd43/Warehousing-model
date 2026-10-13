@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>PetHaven inventory dashboard</title>
-  <meta name="description" content="PetHaven inventory data solution: website stock, store inventory, checkout and integration reports over the lab warehouse.">
+  <meta name="description" content="PetHaven inventory data solution: website stock, store stock, and orders and lost sales reports over the lab warehouse.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap">
@@ -43,17 +43,12 @@
           <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg>
           <span>Refresh</span>
         </button>
-        <button class="btn btn-small" id="demo-btn" type="button" aria-controls="demo" aria-expanded="false" title="Record test sales, deliveries and orders (writes to the database)">
-          <span>Demo actions</span>
-        </button>
       </header>
       <main id="main" tabindex="-1">
         <div id="global-banner"></div>
         <div id="page"></div>
       </main>
     </div>
-
-    <aside class="demo" id="demo" hidden aria-labelledby="demo-title"></aside>
   </div>
   <div class="sr-only" id="announcer" aria-live="polite" aria-atomic="true"></div>
   <script type="module" src="app.js"></script>

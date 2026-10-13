@@ -57,10 +57,10 @@ export default {
           value: w.out_of_date ? `${w.out_of_date} wrong` : "All correct",
           note: w.out_of_date ? `of ${w.products} products show the wrong stock` : `${w.products} of ${w.products} products match the stores`,
           tone: w.out_of_date ? "bad" : "good" }),
-        tile({ label: "Next website sync", page: "website",
+        tile({ label: "Next website refresh", page: "website",
           value: running ? h("span", { "data-until": s.next_sync_at }, countdown(s.next_sync_at)) : "Not running",
           note: running ? `every ${duration(s.interval_seconds)} · last ${fmt.time(s.last_sync_at)} (${SYNC_TRIGGER[s.last_sync_trigger] || s.last_sync_trigger})`
-                        : "website only updates on a manual sync",
+                        : "website only updates on a manual refresh",
           tone: running ? "good" : "warn" }),
         tile({ label: "Stock alerts", page: "inventory", params: "low=1",
           value: `${st.out_of_stock} out · ${st.low_stock} low`,
@@ -86,7 +86,7 @@ export default {
       const items = [];
       const add = (tone, text, link, page, params) => items.push({ tone, text, link, page, params });
       if (w.out_of_date) add("bad", `${w.out_of_date} product${w.out_of_date === 1 ? " shows" : "s show"} the wrong stock on the website`, "Check website stock", "website", "");
-      if (s.scheduler_status !== "running") add("warn", "The automatic website sync is not running", "See website stock", "website", "");
+      if (s.scheduler_status !== "running") add("warn", "The automatic website refresh is not running", "See website stock", "website", "");
       if (o.overdue) add("bad", `${o.overdue} click & collect order${o.overdue === 1 ? " has" : "s have"} not been collected for over 3 days`, "View orders", "checkout", "tab=reservations&overdue=1");
       if (st.out_of_stock) add("bad", `${st.out_of_stock} store shel${st.out_of_stock === 1 ? "f is" : "ves are"} out of stock`, "View stock", "inventory", "low=1");
       if (st.low_stock) add("warn", `${st.low_stock} store shel${st.low_stock === 1 ? "f is" : "ves are"} running low (1–2 left)`, "View stock", "inventory", "low=1");

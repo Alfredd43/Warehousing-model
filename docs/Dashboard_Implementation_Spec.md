@@ -5,13 +5,13 @@ Audience: the implementation agent and project team
 Language: English for the application, code-facing documentation, and user messages  
 Status: implementation brief; the dashboard and proposed HTTP endpoints are not yet built
 
-> **Update, 7 October 2026 (admin-focused redesign).** The built dashboard now opens on an **Overview** page for the company admin (headline tiles and a "Needs attention" list from `/api/overview`), and the pages were renamed for that audience: Website & Sync → **Website stock**, Store Inventory → **Store stock** (products × stores grid by default), Checkout & Fulfilment → **Orders & lost sales**, Integration & Quality → **Data & integration** (grouped under "Technical" in the navigation). Report-number badges, "report read" times and long explanatory notes were removed from the business pages; "Business demo" is now **Demo actions** and "Refresh reports" is **Refresh**. The sections below keep the original page names. The current page guide is [dashboard_runbook.md](dashboard_runbook.md).
+> **Update, 7 October 2026 (admin-focused redesign).** The built dashboard now opens on an **Overview** page for the company admin (headline tiles and a "Needs attention" list from `/api/overview`), and the pages were renamed for that audience: Website & Refresh → **Website stock**, Store Inventory → **Store stock** (products × stores grid by default), Checkout & Fulfilment → **Orders & lost sales**, Integration & Quality → **Data & integration** (grouped under "Technical" in the navigation). Report-number badges, "report read" times and long explanatory notes were removed from the business pages; "Business demo" is now **Demo actions** and "Refresh reports" is **Refresh**. The sections below keep the original page names. The current page guide is [dashboard_runbook.md](dashboard_runbook.md).
 >
-> **Update, 13 October 2026 (read-only).** The Demo actions panel and the Data & integration page were removed, with their `/api/demo/*`, `/api/integration/*` and `/api/catalogue` endpoints. The dashboard now only reads the reports; business events are made with `demo.py`. Sections below that describe them are kept as the original brief.
+> **Update, 13 October 2026 (read-only).** The Demo actions panel and the Data & integration page were removed, with their `/api/demo/*`, `/api/integration/*` and `/api/catalogue` endpoints. The dashboard now only reads the reports; business events are made with `demo.py`. The **Refresh** button is now **Reload**, and "sync" is called the **website refresh** (13 Oct tutor feedback). Sections below that describe them are kept as the original brief.
 
 ## 1. Objective and scope
 
-Build a working dashboard over the existing PetHaven PostgreSQL prototype. It must make the inventory synchronisation problem visible, show the result of the existing solution, and provide inspectable evidence of multi-source integration through the warehouse.
+Build a working dashboard over the existing PetHaven PostgreSQL prototype. It must make the problem of the website stock not matching the stores visible, show the result of the existing solution, and provide inspectable evidence of multi-source integration through the warehouse.
 
 The delivered interface must answer four questions:
 
@@ -27,8 +27,8 @@ This is an educational working prototype using synthetic data. It is not a full 
 ### 1.1 Read these sources before implementing
 
 - [Assignment requirements](../00_req_feedback/Assignment2_Requirements.md), especially Working Prototype Implementation items vi.a–e.
-- [Tutor feedback](../00_req_feedback/29_Sep_tutor_workshop_feedback.md): focus on in-store/online product inventory synchronisation.
-- [Tutor feedback, 6 Oct](../00_req_feedback/06_Oct_tutor_workshop_feedback.md): one item number in every system, different transaction IDs (receipt number, order ID, supplier ID + supplier order number), a sync every few minutes, and the words in-store / online / supplier.
+- [Tutor feedback](../00_req_feedback/29_Sep_tutor_workshop_feedback.md): focus on in-store/online product stock not matching.
+- [Tutor feedback, 6 Oct](../00_req_feedback/06_Oct_tutor_workshop_feedback.md): one item number in every system, different transaction IDs (receipt number, order ID, supplier ID + supplier order number), a website refresh every few minutes, and the words in-store / online / supplier.
 - [Business specification](../00_req_feedback/Assignment2_Spec.md): business rules, stock definitions, required reports, and demonstration cases.
 - [Architecture and model](Architecture_and_Data_Model.md).
 - [Implementation status and limitations](implementation_notes.md).
@@ -46,7 +46,7 @@ The assignment asks for at least three source systems, at least one integrated w
 | Evidence needed | Dashboard implementation | Relevant learning |
 | --- | --- | --- |
 | Required report 1: stock by store | Store Inventory page | Fact/dimension joins; aggregation by product and store |
-| Required report 2: online staleness and sync | Website & Sync page | Cross-system comparison; historical sync records |
+| Required report 2: online staleness and refresh | Website & Refresh page | Cross-system comparison; historical refresh records |
 | Required report 3: checkout blocks | Checkout & Fulfilment page, Blocked Items tab | Business-event history; integrated reporting |
 | Three operational sources | Integration & Quality page and demo actions | Source systems versus warehouse versus consumption layer |
 | Transformation and loading | A source-to-staging-to-fact trace | ETL; standardised identifiers, units, and dates |
@@ -63,7 +63,7 @@ Label the three report pages in their subtitles or help text so a reviewer can i
 - `store_ops`, `supply`, and `online` operational schemas.
 - The warehouse product list (`etl.item_list`), the approved store-code mapping, staging tables, transformations, ETL triggers, loading functions, and logs in `etl`. All three source systems use the same item number (P001); `dw.dim_product.product_code` is that item number.
 - `dw.dim_product`, `dw.dim_store`, `dw.dim_date`, and `dw.fact_stock_event`.
-- Operational website sync — scheduled every `SYNC_INTERVAL_SECONDS` (180 s) by `scripts/sync_scheduler.py`, or run by hand — its registration in `online.sync_schedule`, and warehouse sync history (each sync tagged `scheduled` / `manual` / `seed`).
+- Operational website refresh — scheduled every `SYNC_INTERVAL_SECONDS` (180 s) by `scripts/sync_scheduler.py`, or run by hand — its registration in `online.sync_schedule`, and warehouse refresh history (each website refresh tagged `scheduled` / `manual` / `seed`).
 - Current stock, online comparison/staleness, last-sync changes, blocked checkout items, daily sales, open reservations, and reconciliation views.
 - Command-line/SQL demonstration and business-behaviour checks.
 
@@ -84,7 +84,7 @@ Do not claim these API endpoints or UI interactions already exist. New queries m
 
 **Secondary, after the required release works:** daily sales analysis; dispatch/receive/collect/cancel controls in the demo; historical sync-batch selection; CSV export; true concurrent-checkout visual demonstration.
 
-**Excluded:** authentication/account management, memberships, grooming, profit or conversion metrics, demand forecasting, real payment integration, product CRUD, automatic replenishment, 3D shop models, geographical maps, drag-and-drop widgets, scheduled sync, and a database reset button.
+**Excluded:** authentication/account management, memberships, grooming, profit or conversion metrics, demand forecasting, real payment integration, product CRUD, automatic replenishment, 3D shop models, geographical maps, drag-and-drop widgets, scheduled refresh, and a database reset button.
 
 Do not add an arbitrary "today's blocked checkouts" KPI. The required report displays actual blocked item records with their timestamps. Do not add charts simply to match the reference screenshots.
 
@@ -110,11 +110,11 @@ Additional rules:
 1. An item enters a bag based on the website number. Adding to a bag does not reserve stock.
 2. Checkout checks real source stock before creating a successful order. Each product line must be supplied entirely by one store; different lines can come from different stores.
 3. A blocked checkout is a recorded business outcome, not a server crash. It creates no paid order or partial stock hold, and the bag remains open.
-4. The two blocked-item reasons are combined-stock shortage and stock split across stores. Sync does not remove the single-store fulfilment constraint.
-5. The website sync reads store-system shelf totals and updates the website. It does not use warehouse totals to operate the website.
-6. The warehouse records the sync and analyses its effects. Source ETL currently runs through triggers within operational transactions; do not display invented background job progress. The only background job is the website sync scheduler; show its real state from `dw.rpt_online_staleness` (status, interval, next sync due), never an invented one.
-7. `pending_events` means events since the last sync boundary. It is not a queue of failed/unloaded ETL records and does not mean every event will alter the website number.
-8. `rpt_last_sync_changes` contains both website adjustments and store balance changes between syncs. Only `measure = 'online_available'` is a website correction. Store changes are not stock edits performed by sync.
+4. The two blocked-item reasons are combined-stock shortage and stock split across stores. Website refresh does not remove the single-store fulfilment constraint.
+5. The website refresh reads store-system shelf totals and updates the website. It does not use warehouse totals to operate the website.
+6. The warehouse records the website refresh and analyses its effects. Source ETL currently runs through triggers within operational transactions; do not display invented background job progress. The only background job is the website refresh scheduler; show its real state from `dw.rpt_online_staleness` (status, interval, next refresh due), never an invented one.
+7. `pending_events` means events since the last refresh boundary. It is not a queue of failed/unloaded ETL records and does not mean every event will alter the website number.
+8. `rpt_last_sync_changes` contains both website adjustments and store balance changes between refreshes. Only `measure = 'online_available'` is a website correction. Store changes are not stock edits performed by refresh.
 9. `dw.sync_run.numbers_changed` counts changed measure rows, not distinct corrected website products. Do not relabel it as a product count.
 10. Rejected and skipped staging rows are different. An available checkout item may be skipped because its stock movement is represented by a store reservation; skipped does not automatically mean failure.
 11. Current stock has no reporting-period filter. Date filters apply to historical events, attempts, runs, or sales only.
@@ -205,7 +205,7 @@ Keep the hierarchy and visual restraint. Do not reproduce the sample company nam
 
 Use the following order and labels:
 
-1. **Website & Sync** — default landing page; required Report 2.
+1. **Website & Refresh** — default landing page; required Report 2.
 2. **Store Inventory** — required Report 1.
 3. **Checkout & Fulfilment** — required Report 3 plus reservation detail.
 4. **Integration & Quality** — solution evidence and validation.
@@ -218,7 +218,7 @@ Provide **Business demo** as a clearly labelled shared action. On desktop it ope
 
 - Current page name or breadcrumb.
 - Compact `Synthetic data · Lab prototype` label.
-- `Refresh reports` button: read-only re-query; never performs sync or ETL.
+- `Refresh reports` button: read-only re-query; never performs refresh or ETL.
 - `Business demo` button.
 - Data read timestamp, shown in Sydney time.
 
@@ -232,30 +232,30 @@ Do not use a global date picker or global store picker. Their meaning differs be
 - Product selections may carry between the website and inventory pages. Label each remaining filter and provide `Clear filters`.
 - Search uses existing product names and codes; it is local to product-related content, not a decorative global search.
 - Load from the database on page entry and on explicit refresh. After a successful mutation invalidate related data and re-query it.
-- Do not run a sync when navigating, refreshing, or opening the app. The scheduler syncs on its own; when a scheduled sync is due, the Website & Sync page may re-read its reports (read-only) so the new numbers appear.
+- Do not run a website refresh when navigating, refreshing, or opening the app. The scheduler refreshes on its own; when a scheduled refresh is due, the Website & Refresh page may re-read its reports (read-only) so the new numbers appear.
 - Show loading, empty, disconnected, validation-error, and stale-request states distinctly.
 - Prevent an older async response from replacing data for a newer filter selection.
 
-## 6. Page A — Website & Sync
+## 6. Page A — Website & Refresh
 
 ### 6.1 Purpose and hierarchy
 
-Title: **Website & Sync**  
-Subtitle: **Compare website availability with warehouse stock and inspect the latest sync.**
+Title: **Website & Refresh**  
+Subtitle: **Compare website availability with warehouse stock and inspect the latest refresh.**
 
 Desktop composition:
 
 ```text
 Title / subtitle                                      Refresh | Business demo
-Automatic sync: every 3 min · next in m:ss (or "not started / stopped")   Last website sync: timestamp (automatic / manual)   Report read: timestamp   Data quality: status
+Automatic refresh: every 3 min · next in m:ss (or "not started / stopped")   Last website refresh: timestamp (automatic / manual)   Report read: timestamp   Data quality: status
 
 Product search | Category | All / Different / Website higher / Website lower
 
 [ Website vs warehouse available — comparison chart ] [ Selected product ]
 [ Complete product comparison table                                      ]
 
-[ Latest website sync: changed website values, before -> after            ]
-[ Collapsed: store balance changes between the previous and latest sync   ]
+[ Latest website refresh: changed website values, before -> after         ]
+[ Collapsed: store balance changes between the previous and latest refresh]
 ```
 
 Do not add a top row of revenue, visitor, conversion, forecast, or blocked-today KPI cards. A short inline sentence such as `3 of 18 mapped online products differ` is allowed if derived from the current result and scoped clearly.
@@ -284,17 +284,17 @@ Selected-product detail: full name/code, two current quantities, plain-language 
 
 Do not offer a store filter on this comparison: the website number is a five-store total. Product detail can drill into store distribution without redefining that total.
 
-### 6.3 Sync results
+### 6.3 Website refresh results
 
 Data: `dw.rpt_last_sync_changes` filtered to `measure = 'online_available'`, plus the latest `dw.sync_run` record.
 
-Show `Product | Website before | Website after | Change`. Title the section **Latest website sync**. Obtain the number of changed website products from these filtered rows, not `sync_run.numbers_changed`.
+Show `Product | Website before | Website after | Change`. Title the section **Latest website refresh**. Obtain the number of changed website products from these filtered rows, not `sync_run.numbers_changed`.
 
-If a sync exists but no website quantity changed, show **The latest sync did not change any website quantities.** This is different from **No website sync has been recorded.**
+If a website refresh exists but no website quantity changed, show **The latest refresh did not change any website quantities.** This is different from **No website refresh has been recorded.**
 
-A separate collapsed table may show `in_store`/`reserved` changes, labelled **Store balance changes between syncs** with this explanation: **These movements occurred through business operations; the sync recorded them.**
+A separate collapsed table may show `in_store`/`reserved` changes, labelled **Store balance changes between refreshes** with this explanation: **These movements occurred through business operations; the website refresh recorded them.**
 
-Keep historical before/after values tied to their sync ID. Current values can change again after sync; do not overwrite the historical record with today's comparison values.
+Keep historical before/after values tied to their refresh ID. Current values can change again after refresh; do not overwrite the historical record with today's comparison values.
 
 Historical batch selection is secondary work: query `dw.sync_run`/`dw.sync_change` for the selected ID; the existing last-sync view cannot serve an older batch.
 
@@ -408,7 +408,7 @@ Supplier deliveries ─┼─> Staging -> Map / convert / validate -> Warehouse 
 Online store        ─┘
 ```
 
-Also identify the separate operational path in a short caption: **All three systems use the same item number. The website sync copies available quantities from the store system to the online store on a schedule (and on demand); its log is recorded in the warehouse.**
+Also identify the separate operational path in a short caption: **All three systems use the same item number. The website refresh copies available quantities from the store system to the online store on a schedule (and on demand); its log is recorded in the warehouse.**
 
 This diagram is explanatory, not a graph database, live network monitor, or animated ETL progress display.
 
@@ -445,7 +445,7 @@ These are recorded results of completed runs. Counts of rejected rows across rep
 
 Staging list from `etl.v_staging`: filter by source/status; table includes `Source | Reference | Status | Note | ETL run | Event ID | Captured at`.
 
-Website sync staging is separate: `etl.stg_website_sync_line` is not included in `etl.v_staging` or `etl.v_data_quality`. Provide a labelled `Website sync records` subsection with its own status/note and sync linkage. Do not advertise a complete "all records" total while omitting that stream, or attach an invented ETL run ID to it.
+Website refresh staging is separate: `etl.stg_website_sync_line` is not included in `etl.v_staging` or `etl.v_data_quality`. Provide a labelled `Website sync records` subsection with its own status/note and refresh linkage. Do not advertise a complete "all records" total while omitting that stream, or attach an invented ETL run ID to it.
 
 ### 9.5 Reconciliation and rejected records
 
@@ -484,7 +484,7 @@ Ordinary sale/supplier delivery/checkout/sync submits need no extra confirmation
 | Remove bag item | Basket, item number | `online.remove_from_basket` | Updated bag |
 | View pickup options | Basket | `online.pickup_options` | Actual offered collection points and transfer information |
 | Checkout | Basket, offered pickup point or automatic selection | `online.checkout` | Generated order ID or recorded blocked attempt |
-| Sync website stock now (manual) | No quantity input | `online.sync_website_stock` | Source sync ID and linked warehouse sync ID (`triggered_by = manual`); before/after website values |
+| Refresh website stock now (manual) | No quantity input | `online.sync_website_stock` | Source refresh ID and linked warehouse refresh ID (`triggered_by = manual`); before/after website values |
 | Add item to product list | Item number (P019) after review | `etl.add_item` | Item on the list; does not itself claim records have loaded |
 | Run ETL | No raw SQL | `etl.run_etl` | Recorded run outcome, or a no-work result; rejected records may now load |
 
@@ -502,7 +502,7 @@ Optional lifecycle actions call the existing `dispatch_order_transfers`, `receiv
 | Bag creation/edit | Bag and pickup options only; no optimistic stock change |
 | Blocked checkout | Blocked items, source attempt, staging/runs |
 | Successful checkout | Bag/order, stock, website comparison, open reservations, staging/runs |
-| Website sync | Last sync, website comparison, sync staging/log, quality/reconciliation |
+| Website refresh | Last refresh, website comparison, refresh staging/log, quality/reconciliation |
 | Adding an item + later ETL | Item list, rejections, facts, affected stock/reconciliation, selector options |
 | Transfer/collection/cancellation | Open reservations, stock/events, comparison, integration evidence |
 
@@ -512,14 +512,14 @@ Re-query after commit. Read refresh failures after a successful write must say *
 
 Treat these as reproducible walkthroughs, not scripted browser animations. Verify prerequisites against the current database before presenting an action as runnable. Each scenario records its own returned identifiers. Scenario state may remain in the current browser session; it is not authoritative business data.
 
-**A. Stale website stock affects checkout, then sync corrects it**
+**A. Stale website stock affects checkout, then refresh corrects it**
 
-1. Use an online product on the warehouse product list with positive shelf stock, preferably P018 after a clean build. Query current source balances and sync to establish an equal starting point.
+1. Use an online product on the warehouse product list with positive shelf stock, preferably P018 after a clean build. Query current source balances and refresh to establish an equal starting point.
 2. Present an explicit scenario action, `Sell remaining available units`, showing which stores and quantities will be sold. On submission, call `record_sale` for each positive store balance of this one product in a single backend transaction. Do not directly overwrite stock. This bounded scenario consumes only this product's free stock, not reserved units.
 3. Verify combined shelf availability is now zero and the website still shows its prior positive quantity.
 4. Create a new bag, add one unit, and check out using the existing automatic selection behaviour. Confirm a blocked attempt, no successful order, and no additional reservations caused by this attempt.
 5. Show the new blocked-item record and its lineage.
-6. Run website sync; show website before > 0 and after = 0.
+6. Run website refresh; show website before > 0 and after = 0.
 7. In a new bag, attempting to add one unit is now refused by the website-quantity check. This is an add-to-bag refusal, not another blocked checkout record.
 
 If the product is already out of stock, explain the unmet prerequisite and suggest a valid product or an explicit supplier delivery. Never silently rebuild or manufacture balances. A labelled scenario preparation/commit is allowed; unrequested background business changes are not.
@@ -529,7 +529,7 @@ If the product is already out of stock, explain the unmet prerequisite and sugge
 1. Deliver item P001 to Chatswood (supplier SUP-01), location `NSW-CHATS`, 5 cartons, after checking the source catalogue.
 2. Show the stored `units_per_carton` (currently 4), hence 20 units, and UTC-to-Sydney timestamp/date handling.
 3. Follow the new staging record to its loaded supplier delivery event and updated store availability.
-4. Show that the website may now display fewer units than the stores have; sync and inspect the actual change if demonstrating that direction.
+4. Show that the website may now display fewer units than the stores have; refresh and inspect the actual change if demonstrating that direction.
 
 **C. Unknown item is rejected, then recovered**
 
@@ -557,7 +557,7 @@ These routes are to be implemented; names may be adjusted consistently across ba
 | `GET /api/health` | DB availability, configured demo DB, server time; no credentials |
 | `GET /api/catalogue` | Mapped products/stores, relevant source catalogue options, known postcodes |
 | `GET /api/website-stock` | Comparison, staleness, quality summary; product/category/status filters |
-| `GET /api/sync/latest` | Sync metadata; website corrections separately from store interval changes |
+| `GET /api/sync/latest` | Website refresh metadata; website corrections separately from store interval changes |
 | `GET /api/stock` | Current store-product balances; store/product/category/low-stock filters |
 | `GET /api/stock/events` | Fact/dimension event details; scoped date filters and stable ordering |
 | `GET /api/checkout/blocked` | Report fields plus stable event/attempt identifiers |
@@ -565,7 +565,7 @@ These routes are to be implemented; names may be adjusted consistently across ba
 | `GET /api/reservations` | Current open lines and full-order readiness |
 | `GET /api/integration/mappings` | Item list (`etl.v_item_list`) and store code view; items not on the warehouse product list |
 | `GET /api/integration/staging` | Business-event staging rows and status filters |
-| `GET /api/integration/sync-staging` | Separate sync stream with source/warehouse sync linkage |
+| `GET /api/integration/sync-staging` | Separate refresh stream with source/warehouse refresh linkage |
 | `GET /api/integration/runs` | Recorded ETL run rows |
 | `GET /api/integration/quality` | Current rejected rows plus reconciliation results |
 | `GET /api/integration/trace` | Whitelisted staging-table + row ID, or exact event ID; trace details |
@@ -687,12 +687,12 @@ Serve the frontend and API from the same local origin. Static file serving must 
 
 | Situation | Required presentation |
 | --- | --- |
-| No sync yet | `No website sync has been recorded` and a link to the explicit demo sync action |
+| No refresh yet | `No website sync has been recorded` and a link to the explicit demo refresh action |
 | All compared products equal | Positive informational state; keep the data visible |
-| No latest website changes | Explain that the last sync changed no website quantities |
+| No latest website changes | Explain that the last refresh changed no website quantities |
 | No blocked items in a filter | `No blocked item records match these filters` with clear-filter action |
 | No open reservations | `No open reservations` |
-| No rejected rows | `No currently rejected business-event records`; do not imply sync staging was checked by the same view |
+| No rejected rows | `No currently rejected business-event records`; do not imply refresh staging was checked by the same view |
 | Reconciliation mismatch | Visible caution and affected pairs; retain source and warehouse columns |
 | Database unavailable | Error panel and `Retry`; no zero-filled charts or silent mock-data fallback |
 | Business operation refused | Show the actual useful reason; preserve relevant form/bag state |
@@ -710,7 +710,7 @@ Use semantic headings/tables/forms. Associate labels with fields, support keyboa
 - [ ] Website comparison, store stock, blocked items, and open reservations agree with their source views for the same scope.
 - [ ] No invented business KPI, fake data fallback, fixed demo order ID, or decorative chart is present.
 - [ ] Current stock is unaffected by history-date filters; global website quantities are not compared with one selected store.
-- [ ] Website sync and report refresh are distinct actions.
+- [ ] Website refresh and report refresh are distinct actions.
 - [ ] Latest website corrections filter `online_available`; store interval changes are labelled separately.
 - [ ] Blocked checkout commits its evidence, creates no paid order, and leaves no partial reservation.
 - [ ] Repeated attempts from the same basket remain separately traceable.
@@ -719,9 +719,9 @@ Use semantic headings/tables/forms. Associate labels with fields, support keyboa
 - [ ] Loaded lineage works after a row disappears from `v_transform`.
 - [ ] Unknown item P019 is visible through rejection/source detail even before warehouse dimensions contain it.
 - [ ] Adding an unknown item to the product list then running ETL loads previously rejected rows; rerun creates no duplicate facts.
-- [ ] Website & Sync shows the sync interval, scheduler state, time since the last sync and the next sync due.
+- [ ] Website & Refresh shows the website refresh interval, scheduler state, time since the last refresh and the next refresh due.
 - [ ] A no-work ETL call and setting an existing bag line's quantity match the actual function semantics.
-- [ ] Separate website sync staging is visible or explicitly scoped out of business-event totals.
+- [ ] Separate website refresh staging is visible or explicitly scoped out of business-event totals.
 - [ ] Failed reads and valid zero/empty results look different.
 - [ ] UI does not rebuild databases or change data on load/refresh/navigation.
 
@@ -737,7 +737,7 @@ The repository previously documented 95 passing checks; treat that as historical
 
 Add focused API/query integration checks against `pethaven_check` for:
 
-1. View-equivalent stock/comparison values and correct sync measure filtering.
+1. View-equivalent stock/comparison values and correct refresh measure filtering.
 2. Parameter validation and refusal of unsupported dynamic query fields.
 3. Sale/supplier delivery effects through existing functions, with website unchanged until its prescribed update.
 4. A committed blocked attempt, stable attempt/event identity, no partial reservation, and successful retry after editing a bag when applicable.
@@ -754,8 +754,8 @@ At desktop size, the first viewport should establish the page question and show 
 
 Capture at least:
 
-- Website/warehouse mismatch before sync.
-- Latest website corrections after sync.
+- Website/warehouse mismatch before refresh.
+- Latest website corrections after refresh.
 - Store inventory with a selected product/event.
 - A newly blocked checkout and its detail.
 - Supplier delivery source-to-fact trace.
@@ -767,7 +767,7 @@ Screenshots are evidence from the running app with synthetic database data, not 
 
 1. Read the referenced code and business rules; preserve existing unrelated working-tree changes.
 2. Implement the local server, DB adapters, shared layout, visual tokens, and read-only health/status handling.
-3. Complete Website & Sync and Store Inventory using existing views.
+3. Complete Website & Refresh and Store Inventory using existing views.
 4. Complete Blocked Items and Open Reservations, including stable attempt identity and details.
 5. Complete Integration & Quality, especially retained staging/fact lineage and reconciliation.
 6. Add the explicit demo mutations and report invalidation; verify the three core scenarios.

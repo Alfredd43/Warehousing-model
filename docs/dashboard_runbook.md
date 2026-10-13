@@ -43,29 +43,29 @@ PGHOST=localhost python workspace/dashboard/server.py --port 8080
 
 | Page | Assignment output | Business question | Main data |
 | --- | --- | --- | --- |
-| Overview (start page) | Summary for the admin | What needs attention now? Website accuracy, next sync, stock alerts, lost sales, open click & collect orders, units sold, with a "Needs attention" list linking to each page | `/api/overview` over `dw.rpt_online_vs_actual`, `rpt_online_staleness`, `rpt_current_stock_by_store`, `rpt_checkout_blocked`, `rpt_open_reservations`, `rpt_daily_sales` |
-| Website stock | Required report 2 | Does the website show what the stores can supply? How often does it sync, when was the last sync (automatic or manual), when is the next one? What did the last sync change? | `dw.rpt_online_vs_actual`, `dw.rpt_online_staleness` (incl. scheduler status and interval), `dw.rpt_last_sync_changes`, `dw.sync_run` / `dw.sync_change` |
+| Overview (start page) | Summary for the admin | What needs attention now? Website accuracy, next refresh, stock alerts, lost sales, open click & collect orders, units sold, with a "Needs attention" list linking to each page | `/api/overview` over `dw.rpt_online_vs_actual`, `rpt_online_staleness`, `rpt_current_stock_by_store`, `rpt_checkout_blocked`, `rpt_open_reservations`, `rpt_daily_sales` |
+| Website stock | Required report 2 | Does the website show what the stores can supply? How often does it refresh, when was the last refresh (automatic or manual), when is the next one? What did the last refresh change? | `dw.rpt_online_vs_actual`, `dw.rpt_online_staleness` (incl. scheduler status and interval), `dw.rpt_last_sync_changes`, `dw.sync_run` / `dw.sync_change` |
 | Store stock | Required report 1 | Where is stock available or reserved, and which events explain it? | `dw.rpt_current_stock_by_store`, `dw.fact_stock_event` (event history), `dw.rpt_daily_sales` (Sales history tab) |
 | Orders & lost sales | Required report 3 + open reservations | What happened when a customer checked out, and where are open orders? | `dw.rpt_checkout_blocked` + `online.checkout_attempt*` (source record), `dw.rpt_open_reservations` |
 
-**Refresh** only reads the reports again. It never runs the sync or the ETL. Filters and selections are kept in the URL, so a reload or a shared link shows the same view.
+**Reload** only reads the reports again. It never refreshes the website stock or runs the ETL. Filters and selections are kept in the URL, so a reload or a shared link shows the same view.
 
-**Automatic sync.** The status line on Website stock shows "Automatic sync: every 3 min · next in …" while the scheduler runs (started with `docker compose exec python python /workspace/scripts/demo.py scheduler start`), or "Automatic sync: not running — the website only updates on a manual sync". When a scheduled sync is due, the page re-reads its reports a moment later, so the website numbers update on screen; the dashboard itself never runs the scheduled sync. The manual sync is `docker compose exec python python /workspace/scripts/demo.py sync`.
+**Automatic website refresh.** The status line on Website stock shows "Automatic refresh: every 3 min · next in …" while the scheduler runs (started with `docker compose exec python python /workspace/scripts/demo.py scheduler start`), or "Automatic refresh: not running — the website only updates on a manual refresh". When a scheduled refresh is due, the page re-reads its reports a moment later, so the website numbers update on screen; the dashboard itself never runs the scheduled refresh. The manual refresh is `docker compose exec python python /workspace/scripts/demo.py sync`.
 
 ## 3. Demonstration (about 10 minutes)
 
 Rebuild first so the starting point is known: `docker compose exec python python /workspace/scripts/build.py`. Then reload the dashboard.
 
-The dashboard is read-only. Business events are made in a terminal with `demo.py` (prefix each command below with `docker compose exec python python /workspace/scripts/demo.py`); press **Refresh** on the dashboard to see their effect.
+The dashboard is read-only. Business events are made in a terminal with `demo.py` (prefix each command below with `docker compose exec python python /workspace/scripts/demo.py`); press **Reload** on the dashboard to see their effect.
 
 | Time | Terminal (`demo.py …`) | Dashboard | What to point out |
 | --- | --- | --- | --- |
-| 0:00 | – | Overview (all tiles green apart from stock alerts), then Website stock: automatic sync status, last sync time, "The website matches the stores for all 18 products" | The website shows one combined number per product. It changes only on a sync (every 3 minutes, or by hand) or the website's own sales. Keep the scheduler stopped for this walkthrough so the stale state stays on screen. |
+| 0:00 | – | Overview (all tiles green apart from stock alerts), then Website stock: automatic refresh status, last refresh time, "The website matches the stores for all 18 products" | The website shows one combined number per product. It changes only on a website refresh (every 3 minutes, or by hand) or the website's own sales. Keep the scheduler stopped for this walkthrough so the stale state stays on screen. |
 | 1:00 | `report stock` | Store stock, product P018 | After a clean build P018 has 1 free unit at Newtown (S04) and 1 at Penrith (S05). |
-| 1:45 | `sale S04 P018 1`, then `sale S05 P018 1` | Website stock | One till receipt per store. P018 is "Website too high" by 2, and the stock events since the last sync go up. |
+| 1:45 | `sale S04 P018 1`, then `sale S05 P018 1` | Website stock | One till receipt per store. P018 is "Website too high" by 2, and the stock events since the last refresh go up. |
 | 2:45 | `order 2026 P018 1` | Orders & lost sales | The bag accepts the item (the stale website shows 2), but checkout checks real stock first: **blocked**, nothing charged or held. |
 | 3:45 | – | Orders & lost sales → the new blocked item | Its source checkout record: website snapshot from the source next to the report's reconstruction. Reason: "Website number was out of date". |
-| 4:30 | `sync` | Website stock | Website 2 → 0. The latest sync lists the correction; the collapsed section shows the store balance changes it recorded. |
+| 4:30 | `sync` | Website stock | Website 2 → 0. The latest refresh lists the correction; the collapsed section shows the store balance changes it recorded. |
 | 5:15 | `order 2026 P018 1` | – | Refused when adding to the bag: this is the fix working, not another blocked checkout. |
 | 6:00 | `supplier-delivery S03 P001 5` | Store stock → P001 at Chatswood → event history | "5 cartons × 4 units/carton = 20 units"; the event's source reference names the supplier ID and supplier order number. |
 | 7:00 | `supplier-delivery S01 P019 2 --supplier SUP-02`, then `sale S01 P019 1` | The yellow banner appears on every page | Both source operations succeed, but the ETL rejects 2 records as "Unknown item P019" and the warehouse no longer matches the store system (`report reconciliation` lists them). |
@@ -82,7 +82,7 @@ All runs used the isolated `pethaven_check` database; the dashboard checks never
 | --- | --- | --- |
 | Existing business rules | `docker compose exec python python /workspace/tests/check_demo.py` | 104 / 104 PASS |
 | Dashboard API | `docker compose exec python python /workspace/tests/check_dashboard.py` | 38 / 38 PASS |
-| Automatic sync | `docker compose exec python python /workspace/tests/check_scheduler.py` | 17 / 17 PASS |
+| Automatic refresh | `docker compose exec python python /workspace/tests/check_scheduler.py` | 17 / 17 PASS |
 | Overlay start-up | the command in section 1 | Container `student-dashboard` up on 127.0.0.1:8080; with the lab on another network it showed the 503 "database unavailable" state until it was attached with `docker network connect` |
 
 `check_dashboard.py` builds `pethaven_check`, starts the server in-process, makes business events with the source systems' own SQL functions (as `demo.py` does) and checks:
@@ -92,7 +92,7 @@ All runs used the isolated `pethaven_check` database; the dashboard checks never
 - parameter validation (400), missing records and unknown endpoints (404), and that any write request is refused (405);
 - that a sale changes warehouse stock but not the website number, that its event carries the receipt number, and that a supplier delivery's cartons are converted to units;
 - that a blocked checkout appears in Report 3 with its attempt, and that its source record shows no order and an open bag;
-- that the status endpoint reports the automatic sync, and that the latest sync's website corrections are filtered to `online_available`, with the count taken from those rows rather than `numbers_changed`;
+- that the status endpoint reports the automatic refresh, and that the latest refresh's website corrections are filtered to `online_available`, with the count taken from those rows rather than `numbers_changed`;
 - that the shared "data may be incomplete" warning appears when P019 is rejected and clears once it is added to the product list and the ETL runs;
 - the Sydney business date and the history date filter;
 - the 503 response when the database cannot be reached.

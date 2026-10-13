@@ -2,18 +2,18 @@
 
 ## Demo Objective
 
-This demonstration shows how PetHaven integrates fragmented inventory data from its **Supplier, Store, and Online systems** into a **Data Warehouse** through ETL and data transformation, and then uses a **Dashboard** to support inventory analysis and business decision-making.
+This demonstration shows how PetHaven combines the inventory data kept separately in its **Supplier, Store, and Online systems** into a **Data Warehouse** through ETL and data transformation, and then uses a **Dashboard** to support inventory analysis and business decision-making.
 
 The main story is:
 
 ```text
 Operational Symptom
         ↓
-Website inventory can become stale between synchronisations
+Website inventory can become stale between website refreshes
         ↓
 Data / Analytical Problem
         ↓
-Inventory data is fragmented across Supplier, Store, and Online systems
+Inventory data is kept separately in the Supplier, Store, and Online systems
         ↓
 ETL + Data Transformation
         ↓
@@ -36,7 +36,7 @@ Run this once before the class, off screen. All SQL below is run in CloudBeaver 
    docker compose exec python python /workspace/scripts/build.py
    ```
 
-2. Open the dashboard at <http://localhost:8080>. Keep the automatic sync **stopped**.
+2. Open the dashboard at <http://localhost:8080>. Keep the automatic website refresh **stopped**.
 
 3. Make the website stale so Q3 has a clear example. These are the only statements that change data before the demo:
 
@@ -80,13 +80,13 @@ Its inventory activities are distributed across three operational systems:
 
 - **Supplier System** — deliveries and replenishment data
 - **Store System** — shelf stock, sales, reservations, and stock movements
-- **Online System** — website stock, synchronisation, checkout attempts, and online orders
+- **Online System** — website stock, its 3-minute refresh from the store system, checkout attempts, and online orders
 
-An operational symptom is that **website inventory can become stale between synchronisations**, potentially causing blocked checkouts or obscuring available stock.
+An operational symptom is that **website inventory can become stale between website refreshes**, potentially causing blocked checkouts or obscuring available stock.
 
 However, the main problem addressed by this project is a **data and analytical problem**:
 
-> **Inventory data is fragmented across Supplier, Store, and Online systems, making it difficult to obtain an integrated view, measure stock discrepancies, and understand their business impact.**
+> **Inventory data is kept separately in the Supplier, Store, and Online systems, each with its own codes and units, making it difficult to obtain an integrated view, measure stock discrepancies, and understand their business impact.**
 
 Our prototype addresses this problem by using:
 
@@ -95,11 +95,11 @@ Our prototype addresses this problem by using:
 - approved mappings
 - a Data Warehouse
 - analytical reports
-- a management Dashboard
+- a Dashboard for the owner, store managers and store staff
 
 ### Demo Message
 
-> “The Data Warehouse does not perform the operational checkout or stock synchronisation. Its role is to integrate data from multiple systems so PetHaven can analyse inventory from one consistent view.”
+> “The Data Warehouse does not perform the operational checkout or the website stock refresh. Its role is to integrate data from multiple systems so PetHaven can analyse inventory from one consistent view.”
 
 ---
 
@@ -133,7 +133,7 @@ Show example data such as:
 - website-displayed stock
 - checkout attempts
 - online orders
-- stock synchronisation information
+- website refresh records (what each refresh corrected)
 
 ### Key Point
 
@@ -152,7 +152,7 @@ The item number is the only value that is the same in all three systems. The ETL
 
 ```text
 Supplier ─┐
-Store ────┼──→ Fragmented inventory data
+Store ────┼──→ Inventory data in three separate systems
 Online ───┘
 ```
 
@@ -360,13 +360,15 @@ Use it to answer four simple business questions.
 
 ---
 
-Before starting, check the status line on **Website stock**: it should say *Automatic sync: not running*. Use the dashboard's **Refresh** button if a page looks out of date. Refresh only re-reads the reports; it never runs the sync or the ETL.
+Before starting, check the status line on **Website stock**: it should say *Automatic refresh: not running*. Use the dashboard's **Reload** button if a page looks out of date. Reload only re-reads the reports; it never refreshes the website stock or runs the ETL.
 
 ## Q1. Where is stock available or reserved?
 
 ### Business Question
 
 > **Where is stock available or reserved across PetHaven stores?**
+
+**Who uses it:** store staff (main), store managers · **Impact:** low. Staff use it to tell a customer which store has the item, and to see what is held for click & collect orders.
 
 ### On the Dashboard
 
@@ -393,7 +395,7 @@ For P013, **Parramatta** shows Available **0**, Reserved **2**, On hand **2**: b
 
 ### What This Shows
 
-Management can see the integrated stock position rather than looking at individual operational transactions. The event history shows the warehouse events behind each number.
+Store staff and store managers can see the integrated stock position rather than looking at individual operational transactions. The event history shows the warehouse events behind each number.
 
 ### Demo Message
 
@@ -406,6 +408,8 @@ Management can see the integrated stock position rather than looking at individu
 ### Business Question
 
 > **Which stores have lower stock levels and may require replenishment?**
+
+**Who uses it:** store managers · **Impact:** medium. They decide which stores to reorder for.
 
 ### On the Dashboard
 
@@ -430,7 +434,7 @@ With **Low stock only**, **Aquarium Starter Kit 40L (P018)** is red (0) in every
 
 ### What This Shows
 
-Management can quickly compare locations and identify stores with relatively lower inventory that may need attention or replenishment.
+Store managers can quickly compare locations and identify stores with relatively lower inventory that may need attention or replenishment.
 
 ### Demo Message
 
@@ -448,10 +452,12 @@ The Dashboard identifies lower inventory levels. It does **not** automatically d
 
 > **How inaccurate is website stock compared with real store stock?**
 
+**Who uses it:** the owner · **Impact:** high. The owner decides whether the 3-minute website refresh is short enough.
+
 ### On the Dashboard
 
 1. Open **Website stock**.
-2. Read the status line: *Automatic sync: not running* and the time of the last sync.
+2. Read the status line: *Automatic refresh: not running* and the time of the last refresh.
 3. Read the yellow banner: *1 of 18 products show the wrong stock on the website: 1 too high (customers may order stock that has gone)*.
 4. In **Products with the wrong number on the website**, show the P018 row.
 5. Optional: click the P018 row. It opens **Store stock** for P018 and shows 0 available in every store.
@@ -464,12 +470,12 @@ Product                       Website shows   Stores have   Difference
 Aquarium Starter Kit 40L (P018)      2              0            +2     Website too high
 ```
 
-### Optional: Show the Sync Correction
+### Optional: Show the Website Refresh Correction
 
-In a terminal, run `docker compose exec python python /workspace/scripts/demo.py sync`, then press **Refresh** on the dashboard. This changes data.
+In a terminal, run `docker compose exec python python /workspace/scripts/demo.py sync` (the manual website refresh), then press **Reload** on the dashboard. This changes data.
 
 - The banner turns green: *The website matches the stores for all 18 products.*
-- **What the last sync corrected** lists P018: *Website before* **2** → *Website after* **0**.
+- **What the last refresh corrected** lists P018: *Website before* **2** → *Website after* **0**.
 
 Run this only once, and only at the end of Q3. To show the stale number again, rebuild the database and repeat **0. Before Presenting**.
 
@@ -479,7 +485,7 @@ This analysis combines information from the Online and Store systems. It allows 
 
 ### Demo Message
 
-> “The warehouse allows PetHaven to measure the stock discrepancy across systems. The operational sync corrects the website stock; the warehouse records and analyses the discrepancy.”
+> “The warehouse allows PetHaven to measure the stock discrepancy across systems. The operational website refresh corrects the website stock; the warehouse records and analyses the discrepancy.”
 
 ---
 
@@ -488,6 +494,8 @@ This analysis combines information from the Online and Store systems. It allows 
 ### Business Question
 
 > **What is the business impact of inventory discrepancies?**
+
+**Who uses it:** the owner, the final decision-maker · **Impact:** high. Blocked checkouts are potential lost sales; the owner decides which products and stores need attention.
 
 ### On the Dashboard
 
@@ -520,7 +528,7 @@ Event captured for analysis
 
 ### What This Shows
 
-The warehouse can connect inventory information with checkout outcomes to help management understand the customer impact of inventory issues.
+The warehouse can connect inventory information with checkout outcomes to help the owner understand the customer impact of inventory issues.
 
 ### Demo Message
 
@@ -586,7 +594,7 @@ Finish on the Dashboard.
 
 ### Final Demo Message
 
-> “PetHaven's operational systems generate inventory data separately across Supplier, Store, and Online systems. This fragmentation makes it difficult to obtain one consistent view of inventory and understand cross-system issues.”
+> “PetHaven's operational systems generate inventory data separately across Supplier, Store, and Online systems. Because each system keeps its own records, it is difficult to obtain one consistent view of inventory and understand cross-system issues.”
 
 > “Our prototype uses ETL, data transformation, approved mappings, and a Data Warehouse to integrate these records into a common analytical model.”
 
@@ -632,6 +640,6 @@ The end-to-end test for the recorded video is a separate script: `demo/vedio_dem
 
 The main purpose of the prototype is **not** to demonstrate a retail checkout application.
 
-The main purpose is to demonstrate how advanced database techniques integrate fragmented retail inventory data and turn it into useful analytical information:
+The main purpose is to demonstrate how advanced database techniques combine inventory data from three separate systems and turn it into useful analytical information:
 
-> **Fragmented Operational Data → ETL & Transformation → Integrated Data Warehouse → Dashboard → Inventory Insights**
+> **Separate Source Systems → ETL & Transformation → Integrated Data Warehouse → Dashboard → Inventory Insights**

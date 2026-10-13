@@ -160,7 +160,7 @@ els.refresh.addEventListener("click", async () => {
   els.refresh.disabled = true;
   const ok = await app.refresh();
   els.refresh.disabled = false;
-  announce(ok ? "Reports refreshed" : "Refresh failed");
+  announce(ok ? "Reports reloaded" : "Reload failed");
 });
 
 window.addEventListener("hashchange", route);

@@ -1,6 +1,6 @@
 # PetHaven inventory prototype: architecture and data model
 
-This document is the solution design behind the prototype in `workspace/`. It covers the architecture, the conceptual and logical data models, the ETL, the sync, the reports, the reasons for the design and its trade-offs, and a short data dictionary ([section 13](#13-data-dictionary)). Section numbers follow the report structure in the brief (section v. Solution Design, section vi. Prototype); [section 12](#12-mapping-to-the-assignment-brief) maps each brief item to the files that implement it.
+This document is the solution design behind the prototype in `workspace/`. It covers the architecture, the conceptual and logical data models, the ETL, the website refresh, the reports, the reasons for the design and its trade-offs, and a short data dictionary ([section 13](#13-data-dictionary)). Section numbers follow the report structure in the brief (section v. Solution Design, section vi. Prototype); [section 12](#12-mapping-to-the-assignment-brief) maps each brief item to the files that implement it.
 
 - Business rules and scope: [Spec](../00_req_feedback/Assignment2_Spec.md)
 - Rule → SQL → check mapping: [traceability.md](traceability.md)
@@ -9,7 +9,7 @@ This document is the solution design behind the prototype in `workspace/`. It co
 
 ## 1. Problem in one paragraph
 
-PetHaven has five Sydney stores and an online store. The website shows **one combined available quantity per product** for all five stores, but that number is only refreshed when a **sync** runs: automatically every 3 minutes (`SYNC_INTERVAL_SECONDS = 180`), or by hand. Between syncs, in-store sales, supplier deliveries and store-side cancellations change the real stock without the website knowing. Customers therefore put items in their bag that the website says are in stock but no store can supply; checkout checks real stock **before payment** and blocks them, so the stale number costs a sale and the customer's trust instead of a cancelled paid order. It can also hide stock that is really there. The prototype integrates the three operational systems into one data warehouse, refreshes the website number on a schedule straight from the store system, and uses the warehouse to report how stale the website was, what each sync corrected, and which customers were affected. Operational systems talk to each other directly; the warehouse only records and analyses.
+PetHaven has five Sydney stores and an online store. The website shows **one combined available quantity per product** for all five stores, but that number changes only when the website extracts the store totals (a **website refresh**): automatically every 3 minutes (`SYNC_INTERVAL_SECONDS = 180`), or by hand. Between refreshes, in-store sales, supplier deliveries and store-side cancellations change the real stock without the website knowing. Customers therefore put items in their bag that the website says are in stock but no store can supply; checkout checks real stock **before payment** and blocks them, so the stale number costs a sale and the customer's trust instead of a cancelled paid order. It can also hide stock that is really there. The prototype integrates the three operational systems into one data warehouse, refreshes the website number on a schedule straight from the store system, and uses the warehouse to report how stale the website was, what each website refresh corrected, and which customers were affected. Operational systems talk to each other directly; the warehouse only records and analyses.
 
 ## 2. Solution architecture
 
@@ -36,7 +36,7 @@ flowchart LR
     subgraph DW["dw · Integrated data warehouse"]
         dims[dim_product · dim_store · dim_date]
         fact[(fact_stock_event)]
-        sync[sync_run / sync_change<br/>sync record]
+        sync[sync_run / sync_change<br/>website refresh record]
         rpt[report views]
     end
 
@@ -53,9 +53,9 @@ flowchart LR
     xref --> tr
     tr --> run --> fact
     S1 -- master data --> dims
-    sched[sync scheduler<br/>every 180 s] -- sync_website_stock --> ostock
+    sched[refresh scheduler<br/>every 180 s] -- sync_website_stock --> ostock
     stock -- shelf totals --> ostock
-    ostock -. sync log via ETL .-> sync
+    ostock -. refresh log via ETL .-> sync
     fact --> rpt
 ```
 
@@ -63,10 +63,10 @@ flowchart LR
 | --- | --- | --- | --- |
 | Source 1 | `store_ops` | Stores, product catalogue, live shelf and reserved stock, till receipts (receipt number), click-and-collect holds and transfers between stores | The website number; history across systems |
 | Source 2 | `supply` | Suppliers (supplier ID), supplier delivery locations, items with units per carton, supplier delivery dockets (supplier order number) in cartons (UTC) | Store stock levels (it calls the store's receiving interface) |
-| Source 3 | `online` | Web catalogue, website stock number, collection points, customer postcodes, online orders (order ID), the website sync and the scheduler's registration | Real store stock (it asks the store system to hold stock) |
-| Scheduler | `scripts/sync_scheduler.py` | Runs the website sync every `SYNC_INTERVAL_SECONDS` (180 s) in the lab's `python` container | Any stock rule; it only calls `online.sync_website_stock` |
+| Source 3 | `online` | Web catalogue, website stock number, collection points, customer postcodes, online orders (order ID), the website refresh and the scheduler's registration | Real store stock (it asks the store system to hold stock) |
+| Scheduler | `scripts/sync_scheduler.py` | Runs the website refresh every `SYNC_INTERVAL_SECONDS` (180 s) in the lab's `python` container | Any stock rule; it only calls `online.sync_website_stock` |
 | ETL | `etl` | Extract (CDC into staging), warehouse product list, store-code mapping, transform, validate, load, run log, data quality | Business decisions; it never changes source data |
-| Warehouse | `dw` | Conformed dimensions, the stock event fact, the online sync and its log, reports | Operating checkout or tills |
+| Warehouse | `dw` | Conformed dimensions, the stock event fact, the record of each website refresh, reports | Operating checkout or tills |
 
 The lab runs all five schemas in one PostgreSQL 15 database. Each source schema stands for a separate system: no source table has a foreign key into another source, and the systems interact only through the small functions listed in [section 4.4](#44-how-the-systems-talk-to-each-other).
 
@@ -90,8 +90,8 @@ erDiagram
     STORE ||--o{ RESERVATION : "supplies stock for"
     STORE ||--o{ STOCK_EVENT : "happens at"
     PRODUCT ||--o{ STOCK_EVENT : changes
-    SYNC ||--o{ STOCK_EVENT : processes
-    SYNC ||--o{ WEBSITE_NUMBER : "refreshes from shelf totals"
+    WEBSITE_REFRESH ||--o{ STOCK_EVENT : processes
+    WEBSITE_REFRESH ||--o{ WEBSITE_NUMBER : "resets from shelf totals"
     PRODUCT ||--|| WEBSITE_NUMBER : "shown online as"
 ```
 
@@ -105,13 +105,13 @@ erDiagram
 | Online order / order line | A click-and-collect order (**order ID**) from a customer postcode, with one line per product. Collected at the **pickup store** the customer chose from the stores holding at least one of the items. |
 | Reservation | Stock held for one order line, taken from one store. If that store is not the pickup store, the units are **transferred**: held → in transit → arrived → collected (or cancelled). |
 | Stock event | Any change to a stock position, from any system. The single history. |
-| Sync | One run that refreshes the website numbers from the store system's shelf totals: scheduled every 3 minutes, or run by hand. The warehouse keeps a record of each one, with what triggered it. |
+| Website refresh | One run that refreshes the website numbers from the store system's shelf totals: scheduled every 3 minutes, or run by hand. The warehouse keeps a record of each one, with what triggered it. Code names still say "sync" (`online.sync_website_stock`, `dw.sync_run`, `SYNC_INTERVAL_SECONDS`). |
 | Website number | One combined available quantity per product, shown online. |
 
 Definitions used everywhere:
 
 - **Real combined available** for a product = sum of `in_store` over the five stores. Reserved units are not available.
-- **Website number** = the shelf total at the last sync, minus the website's own paid orders since then.
+- **Website number** = the shelf total at the last refresh, minus the website's own paid orders since then.
 - **Stale** = website number ≠ real combined available.
 - **Blocked at checkout** = a bag item the website showed as in stock that no single store could supply when the customer checked out (before payment).
 
@@ -165,8 +165,8 @@ Operation: `record_supplier_delivery(location_code, supplier_id, supplier_order_
 | `checkout_attempt` / `checkout_attempt_item` | `attempt_no` / `attempt_no, item_no` | Each press of "checkout": pickup collection point, outcome `paid` / `blocked`, order created; per item the website number at checkout, `available` / `unavailable`, and the store that would supply it. |
 | `web_order` | `order_no` | A **paid** order (`order_no` = **order ID**), one per checked-out bag: customer postcode, **pickup collection point**. |
 | `web_order_line` | `order_no, line_no` | One product on the order: item number, quantity, website number shown, the collection point the units come from, store reservation number. |
-| `stock_sync` / `stock_sync_line` | `sync_no` / `sync_no, item_no` | The online store's sync log: when, **triggered by** (`scheduled` / `manual` / `seed`), and each website number before → after. |
-| `sync_schedule` | `schedule_id` (one row) | The scheduler's registration: interval in use, status, heartbeat, next sync due. |
+| `stock_sync` / `stock_sync_line` | `sync_no` / `sync_no, item_no` | The online store's refresh log: when, **triggered by** (`scheduled` / `manual` / `seed`), and each website number before → after. |
+| `sync_schedule` | `schedule_id` (one row) | The scheduler's registration: interval in use, status, heartbeat, next refresh due. |
 
 Operations: `create_basket(postcode)`, `add_to_basket(basket, item_no, qty)`, `remove_from_basket(basket, item_no)`, `pickup_options(basket)`, `checkout(basket, pickup)` (returns the order ID); `place_online_order(postcode, item_nos[], quantities[], time, pickup)` is a shortcut for all of them.
 
@@ -183,7 +183,7 @@ Operations: `create_basket(postcode)`, `add_to_basket(basket, item_no, qty)`, `r
 | Supplier delivery recorded | Source 2 | `store_ops.receive_goods(store_no, item_no, units, time)` | Shelf + units, immediately |
 | Checkout (stock check) | Source 3 | `store_ops.find_stock(item_no, qty, stores in preference order)` per item | Returns the supplying store and locks the rows; changes nothing |
 | Checkout (paid) | Source 3 | `store_ops.reserve_stock(store_no, item_no, qty, order_id, line_no, pickup_store_no, time)` per item | At the supplying store: shelf − qty, reserved + qty, immediately |
-| Sync run (every 180 s, or by hand) | Source 3 | `store_ops.shelf_totals()` | Website number corrected |
+| Website refresh run (every 180 s, or by hand) | Source 3 | `store_ops.shelf_totals()` | Website number corrected |
 
 Items are passed by item number, which every system shares. Stores are passed in the *receiving* system's store code (a supplier delivery docket carries the store number; the website sends the store its store number). That store routing is operational data; the warehouse does **not** rely on it to integrate the sources and maps store codes through its own approved store-code mapping (section 5.2).
 
@@ -245,7 +245,7 @@ A row gets a `reject_reason`, and is not loaded, when its item is not on the war
 
 `etl.run_etl()` performs one pass: refresh dimensions (SCD type 1, only rows that changed), insert valid rows into `dw.fact_stock_event` in business-time order, mark each staged row `loaded` (with its `event_id`), `rejected` or `skipped` (with a note), and record counts in `etl.etl_run`.
 
-A statement-level trigger on each source table runs one pass straight after the source statement, inside the same transaction (`trigger_source = 'cdc:<table>'`). This near-real-time micro-batch means the warehouse is never behind the stores. If the load fails, the source change rolls back with it, so the two can never disagree. The same function can be run by hand (`SELECT etl.run_etl();`) and is run at the start of every sync. (The ETL itself needs no scheduler; only the website sync runs on a timer, section 7.)
+A statement-level trigger on each source table runs one pass straight after the source statement, inside the same transaction (`trigger_source = 'cdc:<table>'`). This near-real-time micro-batch means the warehouse is never behind the stores. If the load fails, the source change rolls back with it, so the two can never disagree. The same function can be run by hand (`SELECT etl.run_etl();`) and is run at the start of every website refresh. (The ETL itself needs no scheduler; only the website refresh runs on a timer, section 7.)
 
 Idempotency and lineage: `source_ref` is unique in staging and in the fact table, so a source record is loaded at most once. Every fact row carries `source_system`, `source_ref` (with the receipt number, supplier order number or order ID) and `etl_run_id`.
 
@@ -328,7 +328,7 @@ erDiagram
 | Dimension | Rows | Notes |
 | --- | --- | --- |
 | `dim_product` | 18 (19 once P019 is added to the product list) | Surrogate key + `product_code`, which **is the item number** (P001, the same in every source). One row per item on the warehouse product list. Attributes from the store catalogue. SCD type 1. |
-| `dim_store` | 6 | Five physical stores + `ONLINE` (channel `online`), used to label the website number in the sync log. |
+| `dim_store` | 6 | Five physical stores + `ONLINE` (channel `online`), used to label the website number in the website refresh log. |
 | `dim_date` | 5,844 | 2020-01-01 to 2035-12-31, `date_key` = `YYYYMMDD` in Sydney time. |
 
 ### 6.2 Fact: `fact_stock_event`
@@ -350,31 +350,31 @@ Every order event also carries `pickup_store_key`, a second, role-playing use of
 
 The sign rules are enforced by the `ck_fact_signs` check constraint, and `ck_fact_order_context` requires `order_ref` and `pickup_store_key` together. `units` is always positive; for `checkout_blocked` it is the quantity in the bag that could not be supplied, and `order_ref` holds `basket <id>`. Indexes: `(product_key, store_key)` for stock totals, `date_key`, `event_type`, and a partial index on `order_ref`.
 
-### 6.3 Sync log
+### 6.3 Website refresh log
 
-`sync_run` is the warehouse's record of each website sync (linked to the online store's own log by `source_sync_no`, with `triggered_by` = `scheduled`, `manual` or `seed`) and the window of stock events since the previous one. `sync_change` records before/after: the `online_available` website number for every online product (from the sync log), and the store `in_store`/`reserved` totals changed in the window (from the fact history).
+`sync_run` is the warehouse's record of each website refresh (linked to the online store's own log by `source_sync_no`, with `triggered_by` = `scheduled`, `manual` or `seed`) and the window of stock events since the previous one. `sync_change` records before/after: the `online_available` website number for every online product (from the website refresh log), and the store `in_store`/`reserved` totals changed in the window (from the fact history).
 
-## 7. The sync (`online.sync_website_stock`) and its warehouse record
+## 7. The website refresh (`online.sync_website_stock`) and its warehouse record
 
 **Operations and analytics are kept apart.** The website number is an operational value, so it comes straight from the operational system that owns it; the data warehouse never sets it.
 
-**When it runs.** Every **3 minutes**: the scheduler `scripts/sync_scheduler.py` runs in the lab's `python` container and calls `online.sync_website_stock(now(), 'scheduled')` every `SYNC_INTERVAL_SECONDS`. That interval is set in **one place**, `SYNC_INTERVAL_SECONDS = 180` in `scripts/pethaven_db.py`; no SQL decides the timing. The scheduler registers in `online.sync_schedule` (interval in use, heartbeat, next sync due), which is how the staleness report and the dashboard can show the interval and the next sync. Start and stop it with `demo.py scheduler start` / `stop`; it does not start by itself, and only one can run per database (session advisory lock). It can still be run **by hand** at any time (`SELECT online.sync_website_stock();`, `demo.py sync`, or the dashboard button), recorded as `manual`; that is how the demo video shows the stale "before" and corrected "after" on cue.
+**When it runs.** Every **3 minutes**: the scheduler `scripts/sync_scheduler.py` runs in the lab's `python` container and calls `online.sync_website_stock(now(), 'scheduled')` every `SYNC_INTERVAL_SECONDS`. That interval is set in **one place**, `SYNC_INTERVAL_SECONDS = 180` in `scripts/pethaven_db.py`; no SQL decides the timing. The scheduler registers in `online.sync_schedule` (interval in use, heartbeat, next refresh due), which is how the staleness report and the dashboard can show the interval and the next refresh. Start and stop it with `demo.py scheduler start` / `stop`; it does not start by itself, and only one can run per database (session advisory lock). It can still be run **by hand** at any time (`SELECT online.sync_website_stock();`, `demo.py sync`, or the dashboard button), recorded as `manual`; that is how the demo video shows the stale "before" and corrected "after" on cue.
 
-**The sync (operational, in the online store).** Each run:
+**The website refresh (operational, in the online store).** Each run:
 
 1. Locks the website numbers so no checkout uses them mid-sync.
 2. Asks the store system for the real shelf totals per item across the five stores (`store_ops.shelf_totals()`; reserved units are not available, so not counted), matched by item number.
 3. Replaces each website number with that total and logs before/after, and what triggered it, in `online.stock_sync` / `stock_sync_line`.
 
-**The warehouse record (analytical, via the ETL).** When the sync finishes, `dw.load_website_sync` (07_sync.sql) extracts its log into `etl.stg_website_sync_line`, matches each line to its warehouse product by item number, and records in `dw.sync_run` / `dw.sync_change`:
+**The warehouse record (analytical, via the ETL).** When the website refresh finishes, `dw.load_website_sync` (07_sync.sql) extracts its log into `etl.stg_website_sync_line`, matches each line to its warehouse product by item number, and records in `dw.sync_run` / `dw.sync_change`:
 
 - the website number before and after, per product;
-- the stock events since the previous sync (the window `(previous to_event_id, current max event_id]`) and the store totals they changed, from the fact history;
+- the stock events since the previous refresh (the window `(previous to_event_id, current max event_id]`) and the store totals they changed, from the fact history;
 - a reconciliation of the warehouse against the store system (`store_mismatches`, expected 0).
 
-Reports 2 and 3 use this record to show how stale the website was and what each sync corrected. If the warehouse were down or an item were not yet on the product list, the website number would still be right; only the reports would lag.
+Reports 2 and 3 use this record to show how stale the website was and what each website refresh corrected. If the warehouse were down or an item were not yet on the product list, the website number would still be right; only the reports would lag.
 
-Between syncs the website changes only through its own paid orders (it knows those immediately). In-store sales, supplier deliveries and store-side cancellations wait for the next sync — at most 3 minutes with the scheduler running — which is exactly the staleness the prototype demonstrates. Transfers do not change the website number: the units were already taken off it when the order was paid.
+Between refreshes the website changes only through its own paid orders (it knows those immediately). In-store sales, supplier deliveries and store-side cancellations wait for the next refresh — at most 3 minutes with the scheduler running — which is exactly the staleness the prototype demonstrates. Transfers do not change the website number: the units were already taken off it when the order was paid.
 
 ## 8. Reports
 
@@ -383,9 +383,9 @@ All in `dw`, as views, so they are always current:
 | # | View | Question answered |
 | --- | --- | --- |
 | 1 | `rpt_current_stock_by_store` | What is on each shelf and held for collection, per store and product? Low-stock flag (≤ 2). |
-| 2 | `rpt_online_staleness` | What is the sync interval and is the scheduler running? How long since the last sync (and was it scheduled or manual), when is the next one due, how many events are waiting, how many website numbers are wrong now, how many source rows failed to load? |
+| 2 | `rpt_online_staleness` | What is the website refresh interval and is the scheduler running? How long since the last refresh (and was it scheduled or manual), when is the next one due, how many events are waiting, how many website numbers are wrong now, how many source rows failed to load? |
 | 2 | `rpt_online_vs_actual` | For each product: website number vs real combined stock (overstated → oversell risk; understated → lost sales). |
-| 2 | `rpt_last_sync_changes` | What did the last sync change (before → after)? |
+| 2 | `rpt_last_sync_changes` | What did the last refresh change (before → after)? |
 | 3 | `rpt_checkout_blocked` | Which bag items did customers try to buy because the website showed them in stock, but checkout blocked before payment? For which pickup store, what did the website show versus what was really there, and why (stale number, or stock split across stores)? |
 | 4 | `rpt_daily_sales` | Units sold per day, store, channel and category (roll-up through `dim_date`): in-store till sales at the selling store, and online sales (paid items less cancellations) at the pickup store. |
 | 5 | `rpt_open_reservations` | Which click-and-collect order lines are still open, where are they coming from, are they waiting to be sent / in transit / ready, is the whole order ready, and which are overdue (> 3 days, cancelled by `store_ops.cancel_overdue_orders`)? |
@@ -403,26 +403,26 @@ Created by `db/seed/01_reference_data.sql` and `02_business_history.sql`, throug
 | Products | 18 items (P001–P018) in 9 categories, the same item number in every system, with valid EAN-13 barcodes; P019 (cat tunnel) catalogued in the store and supplier systems but deliberately left off the warehouse product list |
 | Suppliers | 5 (`SUP-01` … `SUP-05`); supplier orders `PO-1001` … (opening stock) and `PO-1101` …, `PO-1201` … (restocks) |
 | Postcodes | 20 Sydney postcodes with coordinates |
-| History (7 days) | 90 opening-stock supplier delivery lines (in cartons) on 25 supplier orders, 5 restock supplier deliveries, 36 till sale lines on 28 receipts, 8 bags: 7 paid orders with 9 items (one overdue for collection, one 3-item order collected at the customer's chosen store with 2 items in transit from Chatswood) and 1 checkout blocked before payment by the stale website number; 2 collections, 1 cancellation, 2 syncs (recorded as `seed`) |
+| History (7 days) | 90 opening-stock supplier delivery lines (in cartons) on 25 supplier orders, 5 restock supplier deliveries, 36 till sale lines on 28 receipts, 8 bags: 7 paid orders with 9 items (one overdue for collection, one 3-item order collected at the customer's chosen store with 2 items in transit from Chatswood) and 1 checkout blocked before payment by the stale website number; 2 collections, 1 cancellation, 2 refreshes (recorded as `seed`) |
 | Result | 155 staged source records → 146 fact rows + 9 skipped checkout items; 0 rejected; 90/90 store/product pairs reconcile; nothing pending |
 
-Times are relative to the build day, so "time since sync" and "overdue" are always realistic.
+Times are relative to the build day, so "time since refresh" and "overdue" are always realistic.
 
 ## 10. Design rationale
 
 | Decision | Why |
 | --- | --- |
-| One event fact table instead of balance snapshots | Every report and the sync need the same thing: stock changes over time. One history with signed measures gives current stock (sum), stock at any point (sum to an `event_id`), and a complete audit trail. |
+| One event fact table instead of balance snapshots | Every report and the website refresh need the same thing: stock changes over time. One history with signed measures gives current stock (sum), stock at any point (sum to an `event_id`), and a complete audit trail. |
 | One item number in every system; different transaction IDs | The item number is how the business tells one product from another, so every system uses it (tutor feedback, 6 Oct). What really differs is how each system identifies its transactions: receipt number (in-store), order ID (online), supplier ID + supplier order number (supplier). The warehouse keeps that ID in `source_ref`, so every event traces back to its source transaction. Surrogate keys still keep the warehouse's joins independent of source identifiers. |
 | Warehouse product list instead of a product mapping | With a shared item number there is nothing to map, but the warehouse should still only accept items a data steward has approved. A record for an item not on the list is rejected as "Unknown item" and loads once the item is added. |
 | Store codes still mapped | The three systems still name stores differently (store number, delivery location, collection point), so an approved store-code mapping remains. |
 | Reject-and-retry instead of guessing or failing | A guessed item or store corrupts stock silently; failing the business transaction would stop a till. Rejecting into staging keeps the source working, keeps the warehouse correct, and makes the gap visible until a person fixes it. |
-| CDC + micro-batch ETL in the same transaction | The user requirement is that every sale, supplier delivery and order is in the warehouse immediately, so the sync and reports never miss an event. Running the full extract-transform-load inside the source transaction guarantees source and warehouse cannot diverge, with no ETL scheduler to run in the lab. |
+| CDC + micro-batch ETL in the same transaction | The user requirement is that every sale, supplier delivery and order is in the warehouse immediately, so the website refresh and reports never miss an event. Running the full extract-transform-load inside the source transaction guarantees source and warehouse cannot diverge, with no ETL scheduler to run in the lab. |
 | Staging in source format | Keeps the extracted evidence unchanged (cartons, UTC, source store codes, transaction IDs), so every transformation is visible and re-runnable. |
-| Website number comes from the store system, not the warehouse | A data warehouse is for analysis. The number the website shows is operational and the store system already holds it, so the online store reads it there directly — as checkout does. The warehouse records each sync and reports on it, so analytics never sits in the path of trading. |
-| Sync every 3 minutes, plus a manual "run sync now" | The business problem is staleness, so how long the website can be wrong matters. A short interval (tutor feedback: a few minutes, not 30) keeps the window small without syncing on every sale. The interval lives in one configuration value so it can be changed without touching SQL. The manual trigger stays so the demo can build a stale state and show the correction on cue. |
-| Scheduler as a small Python process in the lab's `python` container | No new container and no database extension (such as pg_cron) is needed; the lab stays as supplied. The sync logic stays in SQL (`online.sync_website_stock`); the scheduler only decides *when*. |
-| Website deducts its own orders immediately | The website knows its own sales. Only changes it cannot see (other channels, supplier deliveries, store-side cancellations) need the sync. |
+| Website number comes from the store system, not the warehouse | A data warehouse is for analysis. The number the website shows is operational and the store system already holds it, so the online store reads it there directly — as checkout does. The warehouse records each website refresh and reports on it, so analytics never sits in the path of trading. |
+| Website refresh every 3 minutes, plus a manual "refresh now" | The business problem is staleness, so how long the website can be wrong matters. A short interval (tutor feedback: a few minutes, not 30) keeps the window small without refreshing on every sale. The interval lives in one configuration value so it can be changed without touching SQL. The manual trigger stays so the demo can build a stale state and show the correction on cue. |
+| Scheduler as a small Python process in the lab's `python` container | No new container and no database extension (such as pg_cron) is needed; the lab stays as supplied. The website refresh logic stays in SQL (`online.sync_website_stock`); the scheduler only decides *when*. |
+| Website deducts its own orders immediately | The website knows its own sales. Only changes it cannot see (other channels, supplier deliveries, store-side cancellations) need the website refresh. |
 | One pickup store per order; missing lines transferred in from the nearest store that has them | Click-and-collect means one pickup location for the customer. Taking a missing line from the next-nearest store and transferring it keeps the order together instead of failing it, which is how multi-store retailers fulfil click-and-collect. |
 | Check real stock at checkout, before payment | Taking payment and then cancelling is a poor customer experience and costs refunds. Checking and locking real stock inside checkout means a paid order can always be fulfilled; the stale website number now shows up as items blocked at checkout. |
 | Block the whole checkout and let the customer edit the bag | The customer decides whether to buy the rest; nothing is charged for something that cannot be supplied. |
@@ -439,11 +439,11 @@ Times are relative to the build day, so "time since sync" and "overdue" are alwa
 | SCD type 1 dimensions | A price change rewrites history; `rpt_daily_sales` values sales at the current price. | SCD type 2 for product prices, or store the sale price on the fact. |
 | Reports as views over the full fact | Simple and always current; cost grows with history. | Periodic snapshot fact for daily stock, partitioning by `date_key`, materialised views. |
 | Each order item comes from one store | An item that only several stores together could supply (e.g. 2 beds, 1 at each of two stores) is blocked at checkout, reported with the reason "no single store had enough". | Split an item across several transfers. |
-| The website number can be up to 3 minutes stale on the product page | Customers can add items that turn out to be unavailable at checkout — a lost sale and a frustrated customer, though never a cancelled payment. | Check real stock when the item is added to the bag too, or sync on every stock change (event-driven). |
+| The website number can be up to 3 minutes stale on the product page | Customers can add items that turn out to be unavailable at checkout — a lost sale and a frustrated customer, though never a cancelled payment. | Check real stock when the item is added to the bag too, or refresh on every stock change (event-driven). |
 | Only stores holding an item are offered for pickup | A customer cannot choose a store that has none of the items, even if it is closer. | Offer every store and transfer everything in. |
-| Overdue orders are cancelled by a job someone runs | `cancel_overdue_orders` is run by hand. | Run it on a schedule, like the sync. |
+| Overdue orders are cancelled by a job someone runs | `cancel_overdue_orders` is run by hand. | Run it on a schedule, like the website refresh. |
 | Transfers are instant to record | Dispatch and receive are explicit steps but have no courier, transit time or cost. | Transfer scheduling and transit-time estimates. |
-| Scheduled sync in a background process | The scheduler stops when the `python` container restarts and must be started again (`demo.py scheduler start`); the dashboard and staleness report show "not running" when its heartbeat stops. A fixed interval still leaves up to 3 minutes of staleness. | A managed job scheduler or event-driven sync, with the staleness report as an alert. |
+| Scheduled refresh in a background process | The scheduler stops when the `python` container restarts and must be started again (`demo.py scheduler start`); the dashboard and staleness report show "not running" when its heartbeat stops. A fixed interval still leaves up to 3 minutes of staleness. | A managed job scheduler or event-driven refresh, with the staleness report as an alert. |
 | Store codes differ per system | Every new store needs an approved store-code mapping in three systems. | One store code shared by all systems, like the item number. |
 | No returns, transfers between stores, stock adjustments | Not needed for the problem; out of scope. | Additional event types with their own sign rules. |
 | Distance by postcode centre | Approximate; ties broken by collection point code. | Geocoded addresses, travel time. |
@@ -469,21 +469,21 @@ Times are relative to the build day, so "time since sync" and "overdue" are alwa
 workspace/db/01_schemas.sql             5 schemas
 workspace/db/02_store_ops.sql           Source 1 tables, sale trigger, store operations
 workspace/db/03_supply.sql              Source 2 tables (suppliers, supplier orders), supplier delivery trigger, record_supplier_delivery
-workspace/db/04_online.sql              Source 3 tables, bag, checkout (stock check before payment), orders, sync + sync_schedule
-workspace/db/05_warehouse.sql           dimensions, fact, sync log, indexes
+workspace/db/04_online.sql              Source 3 tables, bag, checkout (stock check before payment), orders, website refresh + sync_schedule
+workspace/db/05_warehouse.sql           dimensions, fact, website refresh record, indexes
 workspace/db/06_etl.sql                 product list, store-code mapping, staging, CDC extract, v_transform, run_etl, data quality
-workspace/db/07_sync.sql                load each website sync into the warehouse (dw.load_website_sync)
+workspace/db/07_sync.sql                load each website refresh into the warehouse (dw.load_website_sync)
 workspace/db/08_reports.sql             report views 1-6
 workspace/db/seed/01_reference_data.sql master data, product list and approved store-code mapping
-workspace/db/seed/02_business_history.sql  7 days of activity and 2 syncs
+workspace/db/seed/02_business_history.sql  7 days of activity and 2 website refreshes
 workspace/scripts/pethaven_db.py        shared settings, incl. SYNC_INTERVAL_SECONDS = 180
 workspace/scripts/build.py              rebuild pethaven_demo
 workspace/scripts/demo.py               demo commands (incl. scheduler start / stop / status)
-workspace/scripts/sync_scheduler.py     runs the website sync every SYNC_INTERVAL_SECONDS
+workspace/scripts/sync_scheduler.py     runs the website refresh every SYNC_INTERVAL_SECONDS
 demo/demo_runbook.md                   classroom presentation runbook (steps + SQL)
-demo/vedio_demo_script.sql             recorded end-to-end test (T1-T10)
+demo/vedio_demo_script.sql             recorded end-to-end test (T1-T11)
 workspace/tests/check_demo.py           104 behaviour checks on pethaven_check
-workspace/tests/check_scheduler.py      17 checks that the scheduler syncs at its interval
+workspace/tests/check_scheduler.py      17 checks that the scheduler refreshes at its interval
 workspace/tests/check_dashboard.py      38 dashboard API checks
 ```
 
@@ -504,9 +504,9 @@ The identifiers and terms that matter most when reading the schemas, the reports
 | Supplier order number | `supply.supplier_delivery.supplier_order_no` | Supplier transaction ID; unique per supplier. |
 | `source_ref` | staging tables, `dw.fact_stock_event` | Lineage: source system + transaction ID, e.g. `STORE:receipt 12 line 1`, `SUPPLY:supplier SUP-01 order PO-1001 line 1`, `STORE:order 5 line 2 held`, `ONLINE:checkout attempt 9 item P018`. Unique. |
 | Store number / location code / collection point | `store_ops.store.store_no`, `supply.location.location_code`, `online.collection_point.cp_code` | Each system's own store code (`101`, `NSW-PARRA`, `CP-PARRAMATTA`). Mapped to the warehouse store code through `etl.store_xref`. |
-| `store_code` | `dw.dim_store.store_code` | Warehouse store code, `S01` … `S05` (plus `ONLINE` for the website number in the sync log). |
+| `store_code` | `dw.dim_store.store_code` | Warehouse store code, `S01` … `S05` (plus `ONLINE` for the website number in the website refresh log). |
 | Warehouse product list | `etl.item_list` | Items the warehouse accepts. Others are rejected as "Unknown item". |
 | In store / reserved | `store_ops.store_stock` | Units on the shelf and free to sell / held for online orders. |
 | Website number | `online.online_stock.available_quantity` | The one combined available quantity per item the website shows. |
-| `triggered_by` | `online.stock_sync`, `dw.sync_run` | What started a sync: `scheduled`, `manual` or `seed`. |
-| `SYNC_INTERVAL_SECONDS` | `workspace/scripts/pethaven_db.py` | Seconds between scheduled syncs (180). The only place the interval is set. |
+| `triggered_by` | `online.stock_sync`, `dw.sync_run` | What started a website refresh: `scheduled`, `manual` or `seed`. |
+| `SYNC_INTERVAL_SECONDS` | `workspace/scripts/pethaven_db.py` | Seconds between scheduled refreshes (180). The only place the interval is set. |

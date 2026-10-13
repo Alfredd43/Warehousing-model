@@ -65,12 +65,12 @@ export default {
       const st = stock.data.staleness;
       const running = st.scheduler_status === "running";
       return h("div", { class: "status-line" },
-        h("span", {}, "Automatic sync: ",
+        h("span", {}, "Automatic refresh: ",
           running
             ? [h("b", {}, `every ${duration(st.interval_seconds)}`), " · next in ",
                h("b", { "data-until": st.next_sync_at }, countdown(st.next_sync_at))]
-            : [h("b", {}, "not running"), " — the website only updates on a manual sync"]),
-        h("span", {}, "Last sync: ",
+            : [h("b", {}, "not running"), " — the website only updates on a manual refresh"]),
+        h("span", {}, "Last refresh: ",
           st.last_sync_at ? [h("b", {}, fmt.time(st.last_sync_at)), " (",
             h("span", { "data-ago": st.last_sync_at }, fmt.ago(st.last_sync_at)),
             `, ${SYNC_TRIGGER[st.last_sync_trigger] || st.last_sync_trigger})`] : h("b", {}, "none yet")));
@@ -87,7 +87,7 @@ export default {
       if (high) parts.push(`${high} too high (customers may order stock that has gone)`);
       if (low) parts.push(`${low} too low (stock in the stores can't be sold online)`);
       return h("div", { class: "banner warn summary-big" },
-        `${wrong.length} of ${all.length} products show the wrong stock on the website: ${parts.join("; ")}. The next sync will correct them.`);
+        `${wrong.length} of ${all.length} products show the wrong stock on the website: ${parts.join("; ")}. The next refresh will correct them.`);
     }
 
     function stockTable(rows, caption) {
@@ -133,11 +133,11 @@ export default {
     }
 
     function syncCard() {
-      if (!sync) return card({ id: "latest-sync", title: "Last sync", body: loading() });
+      if (!sync) return card({ id: "latest-sync", title: "Last refresh", body: loading() });
       const d = sync.data;
-      if (!d.run) return card({ id: "latest-sync", title: "Last sync", body: state("", "No sync has run yet", "") });
+      if (!d.run) return card({ id: "latest-sync", title: "Last refresh", body: state("", "No refresh has run yet", "") });
       return card({
-        id: "latest-sync", title: "What the last sync corrected",
+        id: "latest-sync", title: "What the last refresh corrected",
         body: h("div", {},
           h("div", { class: "card-body", style: "padding-bottom:8px" }, kv([
             ["Ran at", `${fmt.dateTime(d.run.run_at)} (${SYNC_TRIGGER[d.run.triggered_by] || d.run.triggered_by})`],
@@ -145,7 +145,7 @@ export default {
           ])),
           d.website_changes.length
             ? table({
-                caption: "Website numbers changed by the last sync",
+                caption: "Website numbers changed by the last refresh",
                 columns: [
                   { label: "Product", render: (r) => r.product_name, sub: (r) => r.product_code },
                   { label: "Website before", num: true, render: (r) => fmt.num(r.before_qty) },

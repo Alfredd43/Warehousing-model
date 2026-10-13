@@ -1,6 +1,6 @@
 # PetHaven Data Solution
 
-Assignment 2 prototype (32113 Advanced Database). PetHaven has five Sydney stores and an online store. The website shows one combined stock number per product, refreshed by a sync every 3 minutes, so between syncs customers can put items in their bag that no store can supply. Checkout checks real store stock before payment, so those items are blocked instead of being charged and cancelled. The prototype integrates **three source systems** (in-store, online, supplier) into **one data warehouse** through an ETL layer, refreshes the website number on a schedule straight from the store system, and uses the warehouse to report staleness, sync corrections and items blocked at checkout.
+Assignment 2 prototype (32113 Advanced Database). PetHaven has five Sydney stores and an online store. The website shows one combined stock number per product, which the website extracts from the store system every 3 minutes (the website refresh), so between refreshes customers can put items in their bag that no store can supply. Checkout checks real store stock before payment, so those items are blocked instead of being charged and cancelled. The prototype integrates **three source systems** (in-store, online, supplier) into **one data warehouse** through an ETL layer, refreshes the website number on a schedule straight from the store system, and uses the warehouse to report staleness, refresh corrections and items blocked at checkout.
 
 Every system identifies a product by the same **item number** (`P001`). What differs is each system's **transaction ID**, its store codes, and its units and time zone:
 
@@ -10,14 +10,14 @@ Every system identifies a product by the same **item number** (`P001`). What dif
 | `supply` | Source 2: supplier delivery system | supplier ID + supplier order number | location `NSW-PARRA`, **cartons**, **UTC** | `supplier`, `location`, `item`, `supplier_delivery`/`supplier_delivery_line` |
 | `online` | Source 3: online store | order ID (`order_no`) | collection point `CP-PARRAMATTA` | `product`, `online_stock` (website number), `collection_point`, `web_order`, `stock_sync`, `sync_schedule` |
 | `etl` | ETL layer | – | – | staging tables, `item_list` (warehouse product list), `store_xref` (approved store-code mapping), `v_transform`, `run_etl`, `etl_run`, `v_data_quality` |
-| `dw` | Integrated data warehouse | kept in `source_ref` | `S01`; `product_code` = the item number | `dim_product`, `dim_store`, `dim_date`, `fact_stock_event`, `sync_run`/`sync_change` (record of each sync), 8 report views |
+| `dw` | Integrated data warehouse | kept in `source_ref` | `S01`; `product_code` = the item number | `dim_product`, `dim_store`, `dim_date`, `fact_stock_event`, `sync_run`/`sync_change` (record of each website refresh), 8 report views |
 
 How it behaves:
 
-- **In-store sale / supplier delivery / collection / cancellation**: the store's stock changes immediately; the website number waits for the next sync.
+- **In-store sale / supplier delivery / collection / cancellation**: the store's stock changes immediately; the website number waits for the next refresh.
 - **Online shopping**: items go into a **bag** up to the (possibly stale) website number; nothing is held and bags never expire. The customer is offered every store that holds at least one bag item (fewest transfers first) and **chooses** where to collect. At **checkout, before payment**, real store stock is checked and locked, so whoever checks out first gets it. If any item can't be supplied by a single store, checkout is **blocked**: nothing charged, nothing held, and the customer removes it and tries again. Otherwise the order is **paid**, each item is held where it was found, items from other stores are **transferred** to the chosen store (dispatch → in transit → receive), and the website number drops at once. Orders not collected within 3 days are cancelled by the overdue job.
 - **ETL**: every source record is captured into staging in its source format, with its transaction ID; the item is checked against the warehouse product list, the store code is mapped through the approved store-code mapping, quantities and times are converted (cartons → units, UTC → Sydney date), and the record is validated and loaded into `dw.fact_stock_event` in the same transaction. A record for an item the warehouse does not know is rejected as "Unknown item" and loads once a data steward adds the item.
-- **Sync**: every 3 minutes (`SYNC_INTERVAL_SECONDS = 180` in `workspace/scripts/pethaven_db.py`) the scheduler runs `online.sync_website_stock()`: the online store takes the real shelf totals from the store system and updates the website. It can also be run by hand ("run sync now"). The warehouse is not involved in setting the number; through the ETL it records each sync (scheduled or manual, website before/after, store changes since the last sync, reconciliation) for the reports.
+- **Website refresh**: every 3 minutes (`SYNC_INTERVAL_SECONDS = 180` in `workspace/scripts/pethaven_db.py`) the scheduler runs `online.sync_website_stock()`: the online store takes the real shelf totals from the store system and updates the website. It can also be run by hand ("refresh now"). The warehouse is not involved in setting the number; through the ETL it records each website refresh (scheduled or manual, website before/after, store changes since the last refresh, reconciliation) for the reports.
 
 Documentation:
 
@@ -89,7 +89,7 @@ The first time PostgreSQL starts, it needs about 20–30 seconds to initialise. 
 docker compose exec python python /workspace/scripts/build.py
 ```
 
-This recreates the database `pethaven_demo`, creates the five schemas, loads the reference data and a week of sample trading through the source systems (so it all passes through the ETL), and runs two syncs, the last at build time. It ends with a summary: 155 source records staged, 146 stock events loaded, 0 rejected, 0 pending, 0 not reconciled. It does not start the automatic sync (Step 5).
+This recreates the database `pethaven_demo`, creates the five schemas, loads the reference data and a week of sample trading through the source systems (so it all passes through the ETL), and runs two refreshes, the last at build time. It ends with a summary: 155 source records staged, 146 stock events loaded, 0 rejected, 0 pending, 0 not reconciled. It does not start the automatic refresh (Step 5).
 
 Safe to rerun at any time. Only `pethaven_demo` and `pethaven_check` are ever dropped; the lab's own `lab` database is never touched.
 
@@ -97,13 +97,13 @@ Safe to rerun at any time. Only `pethaven_demo` and `pethaven_check` are ever dr
 
 **In CloudBeaver** (easiest): open <http://localhost:8978>, add a PostgreSQL connection (host `postgres`, port `5432`, database **`pethaven_demo`**, user/password `student`/`student`), then open [demo/vedio_demo_script.sql](demo/vedio_demo_script.sql) (end-to-end test) or follow [demo/demo_runbook.md](demo/demo_runbook.md) (presentation), and run the SQL one statement at a time. Reconnect after every rebuild.
 
-**Start the automatic sync** (every 3 minutes) when you want it; it keeps running in the background until you stop it or the containers stop:
+**Start the automatic refresh** (every 3 minutes) when you want it; it keeps running in the background until you stop it or the containers stop:
 
 ```bash
 docker compose exec python python /workspace/scripts/demo.py scheduler start
 ```
 
-`scheduler status` shows the interval, the last and the next sync; `scheduler stop` stops it. Leave it stopped while you record the step-by-step demo, so the stale website number stays until you run the sync yourself.
+`scheduler status` shows the interval, the last and the next refresh; `scheduler stop` stops it. Leave it stopped while you record the step-by-step demo, so the stale website number stays until you run the website refresh yourself.
 
 **In the terminal**: every command starts with `docker compose exec python python /workspace/scripts/demo.py`. Items are given by item number (`P001`), the same in every system; stores can be given as warehouse codes (`S01`), and the script prints each system's own store code.
 
@@ -118,8 +118,8 @@ docker compose exec python python /workspace/scripts/demo.py scheduler start
 | `dispatch 6` / `receive 6` | Send order 6's lines held at other stores to its pickup store / book them in there |
 | `collect 6` / `cancel 6` | Customer collects / cancels online order 6 |
 | `online` | Website number vs real stock per product |
-| `sync` | **Run sync now** (manual): stale "before", sync log, every number that changed |
-| `scheduler start [--interval N]` / `stop` / `status` | Automatic sync every `SYNC_INTERVAL_SECONDS` (180 s) |
+| `sync` | **Refresh now** (manual): stale "before", refresh log, every number that changed |
+| `scheduler start [--interval N]` / `stop` / `status` | Automatic refresh every `SYNC_INTERVAL_SECONDS` (180 s) |
 | `etl` | Run one ETL pass by hand; show the latest ETL runs |
 | `add-item P019` | Add an item to the warehouse product list (data steward) |
 | `codes` | The item list and each store's code in every system |
@@ -133,7 +133,7 @@ The full 10-minute demonstration, with what to say at each step, is in [demo/dem
 docker compose -f docker-compose.yml -f workspace/dashboard/compose.dashboard.yml up -d dashboard
 ```
 
-Open <http://localhost:8080>. It opens on an **Overview** for the company admin (what needs attention: website accuracy, next sync, stock alerts, lost sales, open click & collect orders), then the three required reports (Website stock, Store stock, Orders & lost sales). It is read-only: sales, deliveries, orders and the manual sync are made with `demo.py`. Website stock shows the automatic sync's interval, the time since the last sync and a countdown to the next one. The overlay adds a `dashboard` service and leaves the lab files unchanged. The dashboard demonstration is in [docs/dashboard_runbook.md](docs/dashboard_runbook.md).
+Open <http://localhost:8080>. It opens on an **Overview** for the company admin (what needs attention: website accuracy, next refresh, stock alerts, lost sales, open click & collect orders), then the three required reports (Website stock, Store stock, Orders & lost sales). It is read-only: sales, deliveries, orders and the manual refresh are made with `demo.py`. Website stock shows the automatic refresh's interval, the time since the last refresh and a countdown to the next one. The overlay adds a `dashboard` service and leaves the lab files unchanged. The dashboard demonstration is in [docs/dashboard_runbook.md](docs/dashboard_runbook.md).
 
 ### Step 6: Run the checks
 
@@ -141,9 +141,9 @@ Open <http://localhost:8080>. It opens on an **Overview** for the company admin 
 docker compose exec python python /workspace/tests/check_demo.py
 ```
 
-Builds a separate database, `pethaven_check`, runs scripted business events and checks every rule in [docs/traceability.md](docs/traceability.md): immediate store updates, website staleness, bag, pickup options and checkout with the stock check before payment, first-to-checkout wins, transfers to the chosen store, blocked checkouts, overdue cancellation, online sales in the sales report, carton/UTC conversion, one item number in every system, transaction IDs in the lineage, rejection and recovery of unknown items, sync before/after and reconciliation. It ends with `TOTAL: 104 checks - PASS 104, FAIL 0`.
+Builds a separate database, `pethaven_check`, runs scripted business events and checks every rule in [docs/traceability.md](docs/traceability.md): immediate store updates, website staleness, bag, pickup options and checkout with the stock check before payment, first-to-checkout wins, transfers to the chosen store, blocked checkouts, overdue cancellation, online sales in the sales report, carton/UTC conversion, one item number in every system, transaction IDs in the lineage, rejection and recovery of unknown items, refresh before/after and reconciliation. It ends with `TOTAL: 104 checks - PASS 104, FAIL 0`.
 
-The automatic sync has its own checks (it starts the scheduler with a 2-second interval on `pethaven_check` and checks it syncs at that interval). The run ends with `TOTAL: 17 checks - PASS 17, FAIL 0`:
+The automatic refresh has its own checks (it starts the scheduler with a 2-second interval on `pethaven_check` and checks it refreshes at that interval). The run ends with `TOTAL: 17 checks - PASS 17, FAIL 0`:
 
 ```bash
 docker compose exec python python /workspace/tests/check_scheduler.py
@@ -161,7 +161,7 @@ docker compose exec python python /workspace/tests/check_dashboard.py
 docker compose stop
 ```
 
-Your data is kept. Avoid `docker compose down -v` and do not delete `data/`; if that happens, rerun Step 4. Stopping the lab also stops the automatic sync; start it again after the next `docker compose up -d`.
+Your data is kept. Avoid `docker compose down -v` and do not delete `data/`; if that happens, rerun Step 4. Stopping the lab also stops the automatic refresh; start it again after the next `docker compose up -d`.
 
 ### Troubleshooting
 
@@ -174,7 +174,7 @@ Your data is kept. Avoid `docker compose down -v` and do not delete `data/`; if 
 | `the input device is not a TTY` | Add `-T` after `exec` (`docker compose exec -T python python ...`). |
 | Dashboard says "Database or server unavailable" | The lab was started from another folder, so its network is different. See [docs/dashboard_runbook.md](docs/dashboard_runbook.md), section 1. |
 | `port is already allocated` (5432, 8978, ...) | Another program uses that port, often a locally installed PostgreSQL. Stop that program, then repeat Step 3. |
-| Dashboard says "Automatic sync: not running" | The scheduler stopped (for example the `python` container restarted). Run `demo.py scheduler start` again; its log is in `/tmp/pethaven_sync_scheduler.log` inside the `python` container. |
+| Dashboard says "Automatic refresh: not running" | The scheduler stopped (for example the `python` container restarted). Run `demo.py scheduler start` again; its log is in `/tmp/pethaven_sync_scheduler.log` inside the `python` container. |
 
 
 ## Repository layout
@@ -186,16 +186,16 @@ workspace/
   db/02_store_ops.sql                  Source 1: store system
   db/03_supply.sql                     Source 2: supplier delivery system
   db/04_online.sql                     Source 3: online store
-  db/05_warehouse.sql                  star schema + sync log
+  db/05_warehouse.sql                  star schema + website refresh record
   db/06_etl.sql                        extract -> transform -> validate -> load
-  db/07_sync.sql                       load each website sync into the warehouse (for reporting)
+  db/07_sync.sql                       load each website refresh into the warehouse (for reporting)
   db/08_reports.sql                    report views
   db/seed/01_reference_data.sql        stores, items, suppliers, store codes per system, warehouse product list
-  db/seed/02_business_history.sql      a week of trading and two syncs
+  db/seed/02_business_history.sql      a week of trading and two website refreshes
   scripts/pethaven_db.py               shared settings, incl. SYNC_INTERVAL_SECONDS = 180
   scripts/build.py                     rebuild pethaven_demo
   scripts/demo.py                      demo commands (incl. scheduler start / stop / status)
-  scripts/sync_scheduler.py            runs the website sync every SYNC_INTERVAL_SECONDS
+  scripts/sync_scheduler.py            runs the website refresh every SYNC_INTERVAL_SECONDS
   tests/check_demo.py                  104 behaviour checks
   tests/check_scheduler.py             17 automatic-sync checks
   tests/check_dashboard.py             38 dashboard API checks
@@ -205,7 +205,7 @@ workspace/
   dashboard/compose.dashboard.yml      optional Compose overlay that runs the dashboard on port 8080
 demo/                                  presentation and end-to-end test material
   demo_runbook.md                      classroom presentation runbook (~10 min): story, dashboard Q1-Q4, SQL per section
-  vedio_demo_script.sql                recorded end-to-end test video (~8 min): test inputs, checks per layer, T1-T10 PASS/FAIL
+  vedio_demo_script.sql                recorded end-to-end test video (~10 min): test inputs, ETL code, checks per layer, validation test, T1-T11 PASS/FAIL
   demoSQL_sections_3_4.sql             read-only queries for runbook sections 3 & 4 (ETL, warehouse)
 docs/                                  design, traceability, dashboard runbook, implementation notes
 00_req_feedback/                       brief, Spec, tutor feedback, subject notes

@@ -30,7 +30,7 @@ Use these words consistently: **in-store**, **online** and **supplier** (never "
 
 PetHaven is a fictional Sydney pet-supplies retailer with five stores and a website. Its stores, supplier deliveries and website run on three separate systems: the **Store**, **Supplier** and **Online** systems (section 3).
 
-The website shows one stock number per product for all five stores. Before this project, that number was updated only by a periodic batch sync (once a day: an overnight stock snapshot copied to the website at 5 am), not at the same time as store stock changed. In-store sales, supplier deliveries and cancellations change real stock straight away, so between syncs the website could show stock that no store had. Customers added these items to their bag and paid for them; only when store staff checked the order did they find the stock was not there, and the website and store records did not match. The website could also show too little and hide stock that was on the shelves.
+The website shows one stock number per product for all five stores. Before this project, that number was updated only by a periodic batch extract (once a day: an overnight stock snapshot copied to the website at 5 am), not at the same time as store stock changed. In-store sales, supplier deliveries and cancellations change real stock straight away, so between refreshes the website could show stock that no store had. Customers added these items to their bag and paid for them; only when store staff checked the order did they find the stock was not there, and the website and store records did not match. The website could also show too little and hide stock that was on the shelves.
 
 All three systems use the same item number for a product, but nobody could see how far the website was out of date, because each system records stock changes in its own way: its own transaction IDs, store codes, units and time zones.
 
@@ -40,44 +40,44 @@ All three systems use the same item number for a product, but nobody could see h
 
 | Part | What it does | Layer | Section |
 | --- | --- | --- | --- |
-| 1. Sync every 3 minutes | The website number is reset to the real store totals every 3 minutes, and can be synced by hand ("run sync now"). The interval follows the tutor's advice (6 Oct) to sync every few minutes. | Operational | 6 |
+| 1. Website refresh every 3 minutes | The website extracts the real store totals from the store system every 3 minutes and resets its number, and can be refreshed by hand ("refresh now"). The interval follows the tutor's advice (6 Oct) to refresh every few minutes; on 13 Oct the tutor asked that this be described as shortening the data extraction, not as "syncing". | Operational | 6 |
 | 2. Real-stock check at checkout | Before payment, each bag item is checked against real store shelf stock. If any item cannot be supplied, checkout is blocked: nothing is charged. A paid order can always be fulfilled. | Operational | 4.3, 5.3 |
 | 3. ETL, data warehouse and dashboard | Records from all three systems are validated, transformed and loaded into one warehouse, so PetHaven can see where stock is, how wrong the website was and which checkouts were blocked. | Analytical | 7–9 |
 
-Parts 1 and 2 make the problem smaller and stop it from charging customers for missing stock, but they do not remove it. Between syncs the website number can still be wrong for up to 3 minutes, and a customer can still be blocked at checkout. The website is not synced on every sale because the three systems are separate: syncing on every transaction would tie them together and add load to every sale, while the checkout check already protects the moment that matters.
+Parts 1 and 2 make the problem smaller and stop it from charging customers for missing stock, but they do not remove it. Between refreshes the website number can still be wrong for up to 3 minutes, and a customer can still be blocked at checkout. The website is not refreshed on every sale because the three systems are separate: refreshing on every transaction would tie them together and add load to every sale, while the checkout check already protects the moment that matters.
 
 PetHaven therefore needs to measure the remaining gap: how often the website is wrong, by how much, for which products and stores, and how many checkouts it blocks. That needs records from all three systems, which each record stock in their own way (section 2.1). The ETL validates and converts them, and the warehouse combines them into one consistent view. Of the dashboard's data use cases (section 9), Q2 and Q3 measure the gap (how wrong the website is, and which checkouts it blocked); Q1 and Q4 show where the real stock is and which stores are running low.
 
 ```text
 Business problem: stock is not updated in real time between in-store and online
         ↓
-Operational solution: 3-minute sync + real-stock check at checkout
+Operational solution: 3-minute website refresh + real-stock check at checkout
         ↓
-Remaining gap: the website number can still be wrong between syncs; checkouts can be blocked
+Remaining gap: the website number can still be wrong between refreshes; checkouts can be blocked
         ↓
 Analytical solution: ETL → integrated data warehouse → dashboard (data use cases Q1–Q4, section 9)
 ```
 
-The demo video shows the problem and the solution in the same prototype: the scheduler is stopped, an in-store sale leaves the website number wrong (the problem), an online checkout is blocked (part 2), "run sync now" corrects the website (part 1), and the dashboard measures what happened (part 3).
+The demo video shows the problem and the solution in the same prototype: the scheduler is stopped, an in-store sale leaves the website number wrong (the problem), an online checkout is blocked (part 2), "refresh now" corrects the website (part 1), and the dashboard measures what happened (part 3).
 
 ### 2.3 Role of the data warehouse
 
 | The warehouse does | The warehouse does not |
 | --- | --- |
 | Integrate records from all three systems into one analytical model | Perform checkout or block a checkout (the online store does) |
-| Measure the discrepancy between the website number and real store stock | Set the website number (the operational sync does) |
-| Record each sync and each blocked checkout for analysis | Decide or execute replenishment |
+| Measure the discrepancy between the website number and real store stock | Set the website number (the operational website refresh does) |
+| Record each website refresh and each blocked checkout for analysis | Decide or execute replenishment |
 | Trace every result back to its source record | Act as a fourth source system |
 
 ### 2.4 Scope
 
 The unit of analysis is **one product at one store**, and the combined number for one product across all stores.
 
-In scope: in-store sales, supplier deliveries, online C&C orders with several lines (hold, transfer to the pickup store, collect, cancel), blocked checkouts, the scheduled sync (every 3 minutes, plus "run sync now"), ETL with validation and approved mappings, the warehouse, reports and dashboard.
+In scope: in-store sales, supplier deliveries, online C&C orders with several lines (hold, transfer to the pickup store, collect, cancel), blocked checkouts, the scheduled website refresh (every 3 minutes, plus "refresh now"), ETL with validation and approved mappings, the warehouse, reports and dashboard.
 
 Out of scope: customer accounts and membership, grooming, home delivery, returns after collection, stock adjustments and counts, splitting one order line across several stores, pricing and promotions, automatic replenishment.
 
-The old once-a-day sync (section 2.1) is background only; it is not built in the prototype.
+The old once-a-day extract (section 2.1) is background only; it is not built in the prototype.
 
 ## 3. The three source systems
 
@@ -87,7 +87,7 @@ The old once-a-day sync (section 2.1) is background only; it is not built in the
 | --- | --- | --- | --- |
 | **Store system** (POS tills + stock screens + C&C counter) | Store staff | `store_ops` | Stores, product catalogue, live shelf and reserved stock per store, till receipts, C&C holds and transfers |
 | **Supplier system** (supplier delivery system) | Receiving staff, suppliers | `supply` | Supplier delivery locations, supplier items, supplier delivery dockets |
-| **Online system** (online store) | Customers, web team | `online` | Web catalogue, the website stock number and its sync log, collection points, bags, checkout attempts, online orders |
+| **Online system** (online store) | Customers, web team | `online` | Web catalogue, the website stock number and its refresh log, collection points, bags, checkout attempts, online orders |
 
 The lab hosts them as separate schemas in one PostgreSQL database. They are separate systems: none has a foreign key into another, and they cooperate only through the actions in section 4.
 
@@ -114,18 +114,18 @@ All changes to a store's stock happen **immediately** when the action is recorde
 
 | Action | Recorded as | Store stock effect | Website number |
 | --- | --- | --- | --- |
-| Till sale (one receipt, one or more items) | `sale` (receipt number) + `sale_line` | shelf − qty per item; the whole receipt is refused if any item is short | unchanged until sync |
+| Till sale (one receipt, one or more items) | `sale` (receipt number) + `sale_line` | shelf − qty per item; the whole receipt is refused if any item is short | unchanged until the next refresh |
 | Held line sent to the pickup store | `reservation` → `in_transit` | supplying store: reserved − qty (in transit, in no store) | unchanged (already deducted) |
 | Transferred line arrives | `reservation` → `arrived` | pickup store: reserved + qty | unchanged |
 | Customer collects a C&C order (only when every line is at the pickup store) | each `reservation` → `collected` | pickup store: reserved − qty (goods leave) | unchanged (already deducted) |
-| C&C order not collected within 3 days | the overdue job (`cancel_overdue_orders`) cancels it like the row below | as below | unchanged until sync |
-| C&C order cancelled before collection (not while a line is in transit) | each `reservation` → `cancelled`, with reason | where the units are: reserved − qty, shelf + qty | unchanged until sync |
+| C&C order not collected within 3 days | the overdue job (`cancel_overdue_orders`) cancels it like the row below | as below | unchanged until the next refresh |
+| C&C order cancelled before collection (not while a line is in transit) | each `reservation` → `cancelled`, with reason | where the units are: reserved − qty, shelf + qty | unchanged until the next refresh |
 
 ### 4.2 Supplier system
 
 | Action | Recorded as | Store stock effect | Website number |
 | --- | --- | --- | --- |
-| Supplier delivery to a store | `supplier_delivery` (supplier ID + supplier order number, UTC) + `supplier_delivery_line` in cartons | shelf + cartons × units per carton at that store | unchanged until sync |
+| Supplier delivery to a store | `supplier_delivery` (supplier ID + supplier order number, UTC) + `supplier_delivery_line` in cartons | shelf + cartons × units per carton at that store | unchanged until the next refresh |
 
 ### 4.3 Online system
 
@@ -134,7 +134,7 @@ All changes to a store's stock happen **immediately** when the action is recorde
 | Customer adds items to the bag | `basket` + `basket_item` | Allowed only up to the website number (which may be stale). Nothing is held and the website number does not change. Bags never expire. |
 | Customer sees pickup options | `pickup_options()` | Every store holding at least one bag item, ranked by fewest transfers, then distance. A store with none of the items is not offered. |
 | Customer checks out (before payment) | `checkout_attempt` + `checkout_attempt_item` (records the website number shown) | 1. **Pickup store** = the customer's choice (default: the top option). 2. For each item, find a store whose **real** shelf stock covers the whole quantity: the pickup store first, then the others by distance. 3. If **any** item is unavailable → checkout **blocked**: nothing charged, nothing held, the customer sees which items to remove. 4. Otherwise → **paid**: `web_order` (order ID) + `web_order_line`; each item held at its supplying store (shelf − qty, reserved + qty), transferred to the pickup store if needed; the website number drops by each item at once. |
-| Website sync | `stock_sync` + `stock_sync_line` (before → after) | See section 6. |
+| Website refresh | `stock_sync` + `stock_sync_line` (before → after) | See section 6. |
 
 ## 5. Stock definitions and rules
 
@@ -149,27 +149,29 @@ All changes to a store's stock happen **immediately** when the action is recorde
 | Low stock | 2 or fewer units on one store's shelf (`low_stock` in Report 1). |
 | Real combined available | Sum of shelf over the five stores. |
 | Website number | The one number per product the website shows, and uses to let items into the bag. |
-| Discrepancy | Website number − real combined available. Positive = **overstated** (oversell risk); negative = **understated** (lost sales risk); zero = in sync. |
+| Discrepancy | Website number − real combined available. Positive = **overstated** (oversell risk); negative = **understated** (lost sales risk); zero = matches. |
 | Stale | Discrepancy ≠ 0. |
 | Blocked at checkout | A bag item the website showed as in stock that no single store could supply at checkout. Found before payment, so nothing is charged. It is a **potential** lost sale; it is not reported as a confirmed lost sale unless the data proves the customer did not buy later. |
 
 ### 5.2 How the website number changes
 
-1. A **sync** sets it to the real combined available: the shelf totals taken straight from the store system.
-2. Between syncs it drops by each **held** online order line (the website knows its own sales).
-3. Nothing else changes it: in-store sales, supplier deliveries and cancellations wait for the next sync; transfers and collections do not change it (the units were already deducted).
+1. A **website refresh** sets it to the real combined available: the shelf totals extracted straight from the store system.
+2. Between refreshes it drops by each **held** online order line (the website knows its own sales).
+3. Nothing else changes it: in-store sales, supplier deliveries and cancellations wait for the next refresh; transfers and collections do not change it (the units were already deducted).
 
 ### 5.3 Items blocked at checkout
 
 Checkout always checks real store stock before payment, so a paid order can always be fulfilled. Two causes are distinguished: **stale number** (the real combined stock was already below the quantity in the bag) and **stock split across stores** (enough in total, but not at any one store).
 
-## 6. The sync (operational, not part of the warehouse)
+## 6. The website refresh (operational, not part of the warehouse)
 
-The sync runs **automatically every 3 minutes** (one configuration value, `SYNC_INTERVAL_SECONDS = 180`). It can also be run **on demand** ("run sync now": `online.sync_website_stock()`, a script command or a dashboard button). The scheduler is kept **stopped while recording** so the stale state stays on screen until the presenter syncs by hand.
+The website refresh runs **automatically every 3 minutes** (one configuration value, `SYNC_INTERVAL_SECONDS = 180`). It can also be run **on demand** ("refresh now": `online.sync_website_stock()` or the script command `demo.py sync`). The scheduler is kept **stopped while recording** so the stale state stays on screen until the presenter refreshes by hand.
+
+It is a periodic, asynchronous extract (destination-driven, Module 5): the online system pulls the store totals on a timer. It is separate from the ETL, which loads every source record into the warehouse in near real time (section 7). The code keeps its original names (`sync_website_stock`, `sync_run`, `SYNC_INTERVAL_SECONDS`); "sync" in a code name means this website refresh.
 
 Each run asks the store system for the real shelf totals per product across the five stores, updates the website number for every product, and logs before → after in the online system.
 
-The warehouse does not set the website number. It receives the sync log through the ETL and records, for reporting: whether the sync was scheduled or manual, every website number it changed (before → after), the stock events since the previous sync and the store totals they changed, and whether the warehouse agrees with the store system.
+The warehouse does not set the website number. It receives the refresh log through the ETL and records, for reporting: whether the refresh was scheduled or manual, every website number it changed (before → after), the stock events since the previous refresh and the store totals they changed, and whether the warehouse agrees with the store system.
 
 ## 7. ETL and data transformation
 
@@ -204,7 +206,7 @@ Staging tables (`etl.stg_supplier_delivery_line`, `stg_store_sale_line`, `stg_ch
 | Fact | `dw.fact_stock_event`. **Grain:** one stock change for one product at one store, from any source system (`source_system` = SUPPLY, STORE or ONLINE). Measures: `quantity_change` (shelf), `reserved_change`, `units`. |
 | Event types | `supplier_delivery`, `store_sale`, `reservation`, `transfer_out`, `transfer_in`, `collection`, `cancellation`, `checkout_blocked` |
 | Dimensions | `dim_product` (item number, category, price; SCD type 1), `dim_store` (S01–S05 + ONLINE), `dim_date` (Sydney business date) |
-| Sync record | `dw.sync_run`, `dw.sync_change` (before → after per store and the website) |
+| Website refresh record | `dw.sync_run`, `dw.sync_change` (before → after per store and the website) |
 | Lineage | every fact row keeps `source_ref` and `etl_run_id`; every staging row keeps its `event_id` |
 
 Report views:
@@ -212,7 +214,7 @@ Report views:
 | # | View | Answers |
 | --- | --- | --- |
 | 1 | `dw.rpt_current_stock_by_store` | Shelf vs reserved, on hand and low stock per store and product |
-| 2 | `dw.rpt_online_vs_actual`, `rpt_online_staleness`, `rpt_last_sync_changes` | Website number vs real stock, time since last sync, events pending, before/after of the last sync |
+| 2 | `dw.rpt_online_vs_actual`, `rpt_online_staleness`, `rpt_last_sync_changes` | Website number vs real stock, time since the last refresh, events pending, before/after of the last refresh |
 | 3 | `dw.rpt_checkout_blocked` | Bag items blocked at checkout: pickup store, what the website showed, real stock, reason |
 | 4 | `dw.rpt_daily_sales` | Units sold per day, store, channel and category |
 | 5 | `dw.rpt_open_reservations` | Open C&C order lines: source store, transfer status, order ready, overdue |
@@ -224,6 +226,8 @@ The dashboard is the main business-facing output. It reads only the warehouse re
 
 A data use case is one way a PetHaven user relies on the integrated data: who uses it, the question it answers, the decision it supports, and the report and dashboard page that deliver it. The four use cases below are what the reports and dashboard are built for (brief item vi.d, at least 3).
 
+Three roles use the dashboard. The **owner** is affected most by stock that customers cannot buy (lost sales and unhappy customers) and is the one who decides whether the solution is kept, so the owner's use cases have high impact. **Store managers** manage stock across the stores (medium impact). **Store staff** serve customers and handle click & collect orders: holding stock, transfers between stores, collections (low impact: day-to-day questions).
+
 ```text
                      DATA WAREHOUSE
                            │
@@ -233,18 +237,18 @@ A data use case is one way a PetHaven user relies on the integrated data: who us
      Q1 + Q2                                Q3 + Q4
 ```
 
-| Use case | User | Question it answers | Decision it supports |
-| --- | --- | --- | --- |
-| Q1 Locate stock | Inventory manager, store staff | Where is stock available or reserved across PetHaven stores? | Which store can serve a customer, or send stock to another store |
-| Q2 Spot low stock | Inventory manager | Which stores have lower stock levels and may require replenishment? | Which stores to reorder for (the reorder itself is made outside this system) |
-| Q3 Measure website accuracy | Web team | How inaccurate is website stock compared with real store stock, and what did the last sync correct? | Whether the sync interval is short enough |
-| Q4 Measure the impact | Management, web team | Which checkouts were blocked because of inaccurate stock, for which products and stores, and why? | Which products and stores need attention; whether blocks come from a stale number or from stock split across stores |
+| Use case | User | Impact | Question it answers | Decision it supports |
+| --- | --- | --- | --- | --- |
+| Q1 Locate stock | Store staff (main), store managers | Low | Where is stock available or reserved across PetHaven stores? | Which store can serve a customer, or send stock to another store |
+| Q2 Spot low stock | Store managers | Medium | Which stores have lower stock levels and may require replenishment? | Which stores to reorder for (the reorder itself is made outside this system) |
+| Q3 Measure website accuracy | Owner | High | How inaccurate is website stock compared with real store stock, and what did the last refresh correct? | Whether the 3-minute refresh interval is short enough |
+| Q4 Measure the impact | Owner (final decision-maker) | High | Which checkouts were blocked because of inaccurate stock, for which products and stores, and why? | Which products and stores need attention; whether blocks come from a stale number or from stock split across stores |
 
 | Use case | Dashboard page | Source view | What it shows | Scope note |
 | --- | --- | --- | --- | --- |
-| Q1 | Store stock | Report 1 | Shelf (= available), reserved and on hand per store and product | Available = shelf (section 5.1) |
+| Q1 | Store stock (open click & collect orders: Orders & lost sales → Click & collect orders) | Report 1 (Report 5) | Shelf (= available), reserved and on hand per store and product | Available = shelf (section 5.1); reserved = held for click & collect orders |
 | Q2 | Store stock | Report 1 | Available stock by store for one product, ranked; low-stock alerts per store | Identifies low stock; does **not** decide or execute replenishment |
-| Q3 | Website stock | Report 2 | Website vs real stock, discrepancy, status, last sync and its corrections | The sync corrects the website; the warehouse measures and records the discrepancy |
+| Q3 | Website stock | Report 2 | Website vs real stock, discrepancy, status, last refresh and its corrections | The refresh corrects the website; the warehouse measures and records the discrepancy |
 | Q4 | Orders & lost sales | Report 3 + `online.checkout_attempt*` | Blocked checkout attempts: product, pickup store, website number shown, real stock, reason | The online system blocks the checkout; a blocked checkout is a potential, not confirmed, lost sale |
 
 ## 10. End-to-end testing and the recorded demo video
@@ -262,8 +266,8 @@ One scenario is driven through all three source systems and followed through ETL
 | 1 | Supplier | SUP-01, order PO-3001: 5 cartons of P001 to Chatswood (`NSW-CHATS`) | cartons → units, UTC → Sydney, location code → S03 |
 | 2 | Store | The last aquarium kit (P018) sold at Newtown and the last at Penrith | in-store sales reach the warehouse at once; website becomes stale |
 | 3 | Online | A Bondi customer tries to buy 1 × P018; the website still shows 2 | checkout blocked before payment; event captured for analysis |
-| 4 | Online | Run sync now | website corrected (P001 183 → 203, P018 2 → 0); correction recorded by the warehouse |
-| 5 (optional) | Supplier + Store | Deliver and sell P019, not on the product list; data steward approves it | rejection with reason, then load without duplicates |
+| 4 | Online | Refresh now | website corrected (P001 183 → 203, P018 2 → 0); correction recorded by the warehouse |
+| 5 | Supplier + Store | Deliver and sell P019, not on the product list; data steward approves it | rejection with reason, then load without duplicates (data cleaning and validation) |
 
 ### 10.3 Pass criteria
 
@@ -277,10 +281,11 @@ The script ends with an automatic test summary; every row must be PASS:
 | T4 | Store: P018 sales at S04 and S05 in the warehouse |
 | T5 | Online: blocked checkout captured with website 2 vs actual 0, reason "stale" |
 | T6 | Q1: warehouse stock equals the store system (P001 Chatswood = 73) |
-| T7 | Q3: after the sync, every product is in sync |
+| T7 | Q3: after the refresh, the website matches the stores for every product |
 | T8 | Traceability: no staging row left pending |
 | T9 | Reconciliation: warehouse matches the store system |
 | T10 | Data quality: no rejected source rows |
+| T11 | Validation: P019 rejected with a reason, then loaded once after approval |
 
 Before recording, the automated checks must also pass: `check_demo.py` (104), `check_scheduler.py` (17) and `check_dashboard.py` (38), each `FAIL 0`.
 
@@ -296,13 +301,13 @@ Before recording, the automated checks must also pass: `check_demo.py` (104), `c
 | 6 | Traceability (+1:00 with the optional validation test) | 1:00 |
 | 7 | Final summary and PASS/FAIL result, ending on the dashboard | 0:30 |
 
-Recording rules: rebuild `pethaven_demo` before every take (`build.py`) and reconnect CloudBeaver; keep the sync scheduler stopped; show times in Sydney time; select a few rows rather than scrolling large tables.
+Recording rules: rebuild `pethaven_demo` before every take (`build.py`) and reconnect CloudBeaver; keep the refresh scheduler stopped; show times in Sydney time; select a few rows rather than scrolling large tables.
 
 ### 10.5 Further cases in the sample data
 
 These are in the seed history and support the reports and use cases:
 
-- **Stale number blocks a checkout (seed).** Website synced at 7 aquarium kits; 5 sold in store; a Bondi customer's checkout for 3 was blocked (Report 3, basket 5).
+- **Stale number blocks a checkout (seed).** Website refreshed at 7 aquarium kits; 5 sold in store; a Bondi customer's checkout for 3 was blocked (Report 3, basket 5).
 - **The nearest store can't supply, so it isn't offered.** A Penrith customer's 2 orthopaedic beds were held at Parramatta; never collected, so the order becomes overdue and is cancelled, returning the beds to the shelf.
 - **The customer picks a store with only some items.** A Bondi order whose dog beds and scratching posts are in transit from Chatswood, so the order is not ready to collect (Report 5).
 
@@ -322,7 +327,7 @@ These are in the seed history and support the reports and use cases:
 | --- | --- |
 | Source system | An operational system that records business actions (Store, Supplier, Online). |
 | Business problem | Product stock is not updated in real time between in-store and online sales, so stock sold in one channel can still show as available in the other. |
-| Remaining gap | What the operational solution cannot remove: the website number can be wrong between syncs, and checkouts can be blocked. The warehouse measures it. |
+| Remaining gap | What the operational solution cannot remove: the website number can be wrong between refreshes, and checkouts can be blocked. The warehouse measures it. |
 | Data warehouse | The integrated analytical database (`dw`) combining the three sources. |
 | ETL | Extract, transform, load: copying source records into staging, validating and converting them, and loading them into the warehouse. |
 | Staging | ETL tables holding source records in their original format, with load status and traceability. |
@@ -333,6 +338,6 @@ These are in the seed history and support the reports and use cases:
 | Fact / dimension | Fact: a measured event (a stock change). Dimension: descriptive context (product, store, date). |
 | Grain | What one fact row represents: one stock change for one product at one store. |
 | Discrepancy | Website number minus real combined available stock. |
-| Sync | The operational job that copies the store system's shelf totals to the website: every 3 minutes, or by hand. |
+| Website refresh | The operational job in which the website extracts the store system's shelf totals: every 3 minutes, or by hand. Code names still say "sync" (`online.sync_website_stock()`, `dw.sync_run`). |
 | Reconciliation | Comparing warehouse totals with the store system's live stock. |
 | End-to-end test | The recorded scenario that drives all three sources through ETL, the warehouse and the dashboard, ending in T1–T10 PASS. |

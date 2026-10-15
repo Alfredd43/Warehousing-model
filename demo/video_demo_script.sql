@@ -1,39 +1,66 @@
 -- =============================================================================
--- demo/vedio_demo_script.sql
+-- demo/video_demo_script.sql
 -- PetHaven Data Warehouse Prototype - END-TO-END TEST (recorded video, ~10 min)
 -- =============================================================================
--- Purpose : Brief item vi.e. Drive one scenario through the three source
---           systems and verify each layer: source -> ETL staging ->
---           transformation -> data warehouse -> reports, then a data
---           validation test. Ends with an automatic PASS/FAIL summary (T1-T11).
+-- Purpose : Brief item vi.e. The recorded end-to-end test of the working
+--           prototype. It drives one scenario through the three source
+--           systems and shows each layer: source -> ETL staging ->
+--           transformation and validation -> data warehouse -> reports and
+--           dashboard, then a data validation test. Ends with an automatic
+--           PASS/FAIL summary (T1-T11).
+-- Tutor   : 6 Oct - do not write queries live: record them and play the
+--           video. 13 Oct - the video is the prototype: say the business
+--           problem very briefly, then show how data is ingested, extracted,
+--           transformed, cleaned and validated, and the reports and
+--           dashboard. In the presentation it is played sped up
+--           (demo/demo_runbook.md).
+-- Screens : CloudBeaver at http://localhost:8978 (SQL) and the dashboard at
+--           http://localhost:8080 (lines marked DASHBOARD). Start the
+--           dashboard first (README, "In the dashboard"). After every
+--           >>> WRITE, press Reload on the dashboard before showing it.
 -- Database: pethaven_demo (CloudBeaver: host postgres, port 5432,
 --           user/password student/student).
 -- Run     : one statement at a time (select it, Ctrl+Enter).
 -- Before  : rebuild before EVERY take, then reconnect CloudBeaver:
 --             docker compose exec python python /workspace/scripts/build.py
---           Keep the automatic website refresh stopped.
+--           Keep the automatic website refresh stopped, so the out-of-date
+--           website number stays on screen until the manual refresh.
 -- Writes  : only the statements marked >>> WRITE change data.
--- The classroom presentation uses demo/demo_runbook.md instead.
 --
 -- Test scenario
 --   Supplier : SUP-01 order PO-3001, 5 cartons of P001 to Chatswood (NSW-CHATS)
 --   Store    : the last aquarium kit (P018) sold at Newtown (104) and Penrith (105)
---   Online   : a customer tries to buy 1 x P018 while the website still shows 2
+--   Online   : a Bondi customer tries to buy 1 x P018 while the website still shows 2
 --   Refresh  : the website extracts real stock from the store system and
 --              corrects its numbers (code name: sync_website_stock)
 --   Validate : SUP-02 order PO-3002, 2 cartons of P019 (not on the warehouse
 --              product list) to Parramatta, and 1 sold there: the ETL rejects
 --              both records; once a data steward adds P019 they load once
 --
--- Timing   : 0 Pre-check 0:30 | 1 Baseline 0:45 | 2 Test inputs 1:00 |
---            3 ETL code + results 2:15 | 4 Warehouse 1:00 | 5 Reports 1:45 |
---            6 Traceability 0:45 | 7 Validation 1:15 | 8 Result 0:45
---            = about 10 minutes (play it sped up in the presentation)
+-- Timing   : Opening 0:30 | 0 Pre-check 0:15 | 1 Baseline 0:30 |
+--            2 Test inputs 0:45 | 3 ETL code + results 2:00 | 4 Warehouse 0:45 |
+--            5 Reports + dashboard UC1-UC4 3:00 | 6 Traceability 0:30 |
+--            7 Validation 1:00 | 8 Result 0:30
+--            = about 9:45 (played sped up in the presentation)
 -- =============================================================================
 
 
 -- =============================================================================
--- 0. PRE-CHECK: clean starting point                                  (0:30)
+-- OPENING: the business problem in brief                              (0:30)
+-- =============================================================================
+-- DASHBOARD: show the Overview page while saying:
+--   "PetHaven has five Sydney stores and a website. Product stock is not
+--    updated in real time between in-store and online sales, so stock sold
+--    in one channel can still show as available in the other. Our solution
+--    shortens the website's data extraction from once a day to every
+--    3 minutes, checks real store stock at checkout before payment, and
+--    integrates the store, supplier and online systems into one data
+--    warehouse, so the dashboard can measure the gap that remains. This
+--    video tests that prototype end to end."
+
+
+-- =============================================================================
+-- 0. PRE-CHECK: clean starting point                                  (0:15)
 -- =============================================================================
 SELECT current_database()                                                    AS db,
        (SELECT scheduler_status FROM dw.rpt_online_staleness)                AS scheduler,
@@ -46,7 +73,7 @@ SELECT current_database()                                                    AS 
 
 
 -- =============================================================================
--- 1. BASELINE: the source systems before the test                     (0:45)
+-- 1. BASELINE: the source systems before the test                     (0:30)
 -- =============================================================================
 -- Store system: shelf stock per store number
 SELECT store_no, item_no, in_store_quantity AS shelf, reserved_quantity AS reserved
@@ -60,11 +87,11 @@ SELECT product_code, online_shown AS website, actual_in_store AS actual, status
   FROM dw.rpt_online_vs_actual
  WHERE product_code IN ('P001', 'P018')
  ORDER BY product_code;
--- EXPECTED: P001 183 / 183 in sync; P018 2 / 2 in sync
+-- EXPECTED: P001 183 / 183 matches; P018 2 / 2 matches
 
 
 -- =============================================================================
--- 2. TEST INPUTS: one event in each source system                     (1:00)
+-- 2. TEST INPUTS: one event in each source system                     (0:45)
 -- =============================================================================
 -- >>> WRITE (Supplier): 5 cartons of P001 delivered to Chatswood
 SELECT supply.record_supplier_delivery('NSW-CHATS', 'SUP-01', 'PO-3001',
@@ -82,7 +109,7 @@ SELECT online.place_online_order('2026', 'P018', 1) AS order_no;
 
 
 -- =============================================================================
--- 3. ETL: the code, then its results                                  (2:15)
+-- 3. ETL: the code, then its results                                  (2:00)
 -- =============================================================================
 -- 3a. SHOW THE CODE (0:45). Nothing to run. Open workspace/db/06_etl.sql in an
 --     editor (or in CloudBeaver: pethaven_demo > Schemas > etl > Views /
@@ -99,7 +126,7 @@ SELECT online.place_online_order('2026', 'P018', 1) AS order_no;
 --       WHEN      cdc_run_etl() (line ~534): runs the ETL straight after every
 --                 source change (near real time), not on a timer.
 --
--- 3b. RESULTS (1:30): the test inputs from section 2 went through those steps.
+-- 3b. RESULTS (1:15): the test inputs from section 2 went through those steps.
 -- Supplier record: source values kept in staging, transformed for the warehouse
 SELECT s.supplier_order_no,
        s.cartons                      AS source_cartons,
@@ -133,7 +160,7 @@ SELECT etl_run_id, trigger_source, rows_read, rows_loaded, rows_rejected
 
 
 -- =============================================================================
--- 4. VERIFY DATA WAREHOUSE: one fact table, all three sources         (1:00)
+-- 4. VERIFY DATA WAREHOUSE: one fact table, all three sources         (0:45)
 -- =============================================================================
 SELECT f.event_id, f.source_system, f.event_type, s.store_code, p.product_code,
        f.quantity_change AS shelf_change, f.units,
@@ -152,44 +179,75 @@ SELECT f.event_id, f.source_system, f.event_type, s.store_code, p.product_code,
 
 
 -- =============================================================================
--- 5. VERIFY REPORTS (dashboard views)                                 (1:45)
+-- 5. VERIFY REPORTS AND DASHBOARD: the four data use cases           (3:00)
 -- =============================================================================
--- Q1 Stock position: the delivery is in Chatswood's stock
-SELECT store_name, in_store_quantity AS available, reserved_quantity AS reserved
-  FROM dw.rpt_current_stock_by_store
- WHERE product_code = 'P001'
- ORDER BY store_code;
--- EXPECTED: Chatswood 73 = 53 + 20
+-- Each use case: the report view in SQL, then the same answer on the
+-- dashboard. Ordered by impact: UC1 and UC2 (owner, high), UC3 (store
+-- managers, medium), UC4 (store staff, low).
 
--- Q3 Website discrepancy, before the refresh
+-- UC1 Website accuracy (owner, high): the website number vs real stock
 SELECT product_code, online_shown AS website, actual_in_store AS actual,
        overstated_by AS discrepancy, status
   FROM dw.rpt_online_vs_actual
- WHERE status <> 'in sync'
+ WHERE status <> 'matches'
  ORDER BY product_code;
 -- EXPECTED: P001 183 vs 203 (-20, understated); P018 2 vs 0 (+2, overstated)
+-- DASHBOARD: Website stock. Banner: "2 of 18 products show the wrong stock on
+--   the website: 1 too high ...; 1 too low ...". Status line: automatic
+--   refresh not running. Table: P001 "Website too low" by 20, P018
+--   "Website too high" by 2.
 
 -- >>> WRITE (Online): refresh the website stock now (manual refresh)
-SELECT online.sync_website_stock() AS sync_no;
+SELECT online.sync_website_stock() AS refresh_no;
 
 SELECT product_code, before_qty, after_qty, difference
   FROM dw.rpt_last_sync_changes
  WHERE measure = 'online_available'
  ORDER BY product_code;
 -- EXPECTED: P001 183 -> 203; P018 2 -> 0
+-- DASHBOARD: Reload Website stock. Banner: "The website matches the stores
+--   for all 18 products." "What the last refresh corrected": P001 183 -> 203,
+--   P018 2 -> 0, triggered manually.
 
--- Q4 Business impact: the blocked checkout
+-- UC2 Blocked checkouts (owner, high): what the out-of-date number cost
 SELECT basket, product_code, quantity_in_bag, pickup_store,
        website_showed, actual_combined_at_checkout AS actual, reason
   FROM dw.rpt_checkout_blocked
  ORDER BY attempted_at DESC
  LIMIT 1;
 -- EXPECTED: basket 9, P018, 1, Bondi, website 2, actual 0,
---           'stock sold since last sync - online number was stale'
+--           'stock sold since the last refresh - website number was out of date'
+-- DASHBOARD: Orders & potential lost sales -> Potential lost sales. Click the newest P018 row:
+--   the customer checkout card shows "Blocked before payment", pickup at
+--   Bondi, website 2 vs stores 0. Say: nobody was charged; this is a
+--   potential lost sale.
+
+-- UC3 Low stock (store managers, medium): which stores need replenishment
+SELECT store_name,
+       count(*) FILTER (WHERE low_stock)                                        AS low_stock_products,
+       string_agg(product_code, ', ' ORDER BY product_code) FILTER (WHERE low_stock) AS products
+  FROM dw.rpt_current_stock_by_store
+ GROUP BY store_code, store_name
+ ORDER BY low_stock_products DESC, store_code;
+-- EXPECTED: Chatswood 3 and Newtown 3 (P013, P017, P018);
+--           Parramatta, Bondi, Penrith 2 each (P013, P018)
+-- DASHBOARD: Store stock -> Current stock, tick "Low stock only": P018 is red
+--   (0) in every store. Say: the dashboard flags low stock; the reorder
+--   itself is made outside this system.
+
+-- UC4 Stock position (store staff, low): where stock is available or reserved
+SELECT store_name, in_store_quantity AS available, reserved_quantity AS reserved
+  FROM dw.rpt_current_stock_by_store
+ WHERE product_code = 'P001'
+ ORDER BY store_code;
+-- EXPECTED: Chatswood 73 = 53 + 20
+-- DASHBOARD: Store stock, Product P001: Chatswood available 73. Click the
+--   Chatswood row: its event history lists the supplier delivery
+--   (+20, supplier SUP-01 order PO-3001).
 
 
 -- =============================================================================
--- 6. VERIFY TRACEABILITY: report -> warehouse -> staging -> source    (0:45)
+-- 6. VERIFY TRACEABILITY: report -> warehouse -> staging -> source    (0:30)
 -- =============================================================================
 SELECT r.basket          AS report_row,
        f.event_id        AS dw_event,
@@ -209,7 +267,7 @@ SELECT r.basket          AS report_row,
 
 
 -- =============================================================================
--- 7. VALIDATION TEST: an unknown item is rejected, then loaded once   (1:15)
+-- 7. VALIDATION TEST: an unknown item is rejected, then loaded once   (1:00)
 -- =============================================================================
 -- P019 (Crinkle Cat Tunnel) is a new line: it is in the store and supplier
 -- catalogues but not yet on the warehouse product list.
@@ -230,6 +288,8 @@ SELECT source_system, source_ref, reject_reason
  ORDER BY source_ref;
 -- EXPECTED: 2 rows, STORE receipt 31 and SUPPLY order PO-3002,
 --           'Unknown item P019: not on the warehouse product list'
+-- DASHBOARD: Reload. A yellow banner on every page: "Some records are
+--   missing from the reports (2 source records rejected by the ETL)".
 
 -- >>> WRITE (Data steward): add P019 to the warehouse product list
 SELECT etl.add_item('P019');
@@ -256,10 +316,11 @@ SELECT f.event_id, f.source_system, f.event_type, s.store_code, p.product_code,
  ORDER BY f.event_id;
 -- EXPECTED: SUPPLY supplier_delivery S01 P019 +8 units 8;
 --           STORE store_sale S01 P019 -1
+-- DASHBOARD: Reload. The yellow banner has gone.
 
 
 -- =============================================================================
--- 8. TEST RESULT: every row must be PASS                              (0:45)
+-- 8. TEST RESULT: every row must be PASS                              (0:30)
 -- =============================================================================
 WITH po AS (
     SELECT s.cartons, s.units_per_carton, s.delivered_at_utc, s.event_id,
@@ -287,13 +348,13 @@ WITH po AS (
     UNION ALL SELECT 5,  'Online: blocked checkout captured (stale website)',
                          (SELECT product_code = 'P018' AND website_showed = 2
                                  AND actual_combined_at_checkout = 0 FROM blocked)
-    UNION ALL SELECT 6,  'Q1: warehouse stock = store system (P001 Chatswood)',
+    UNION ALL SELECT 6,  'UC4: warehouse stock = store system (P001 Chatswood)',
                          (SELECT r.in_store_quantity = ss.in_store_quantity
                             FROM dw.rpt_current_stock_by_store r, store_ops.store_stock ss
                            WHERE r.store_code = 'S03' AND r.product_code = 'P001'
                              AND ss.store_no = '103' AND ss.item_no = 'P001')
-    UNION ALL SELECT 7,  'Q3: website matches the stores after the refresh',
-                         (SELECT count(*) = 0 FROM dw.rpt_online_vs_actual WHERE status <> 'in sync')
+    UNION ALL SELECT 7,  'UC1: website matches the stores after the refresh',
+                         (SELECT count(*) = 0 FROM dw.rpt_online_vs_actual WHERE status <> 'matches')
     UNION ALL SELECT 8,  'Traceability: no staging row left pending',
                          (SELECT count(*) = 0 FROM etl.v_staging WHERE load_status NOT IN ('loaded', 'skipped'))
     UNION ALL SELECT 9,  'Reconciliation: warehouse matches store system',
@@ -314,5 +375,6 @@ SELECT 'T' || test_no AS test, test AS description,
   FROM checks
  ORDER BY test_no;
 -- EXPECTED: T1-T11 all PASS
+-- DASHBOARD: end on the Overview page: the website matches the stores.
 -- To record another take: rebuild (build.py), reconnect CloudBeaver, start at 0.
 -- =============================================================================

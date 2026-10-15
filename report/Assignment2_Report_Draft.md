@@ -8,27 +8,21 @@
 
 ## Executive Summary
 
-PetHaven is a fictional Sydney pet-supplies retailer with five stores and a website. The website shows one stock number per product for all five stores, and that number is only updated when the website extracts real stock from the store system, every 3 minutes. In-store sales, supplier deliveries and cancellations change real stock straight away, so between refreshes the website can show stock that no store has. Customers add these items to their bag and only find out at checkout that they cannot buy them.
+PetHaven is a fictional Sydney pet-supplies retailer with five stores and a website. Its product stock is not updated in real time between in-store and online sales. The website shows one combined stock number per product, and before this project that number was updated only once a day. In-store sales, supplier deliveries and cancellations change real stock straight away, so the website could show stock that no store had, and customers found out only at checkout.
 
-We designed and built a prototype for this problem in the Lab Environment on PostgreSQL 15. Three source systems (a store system, a supplier delivery system and an online store) share one item number per product but keep their own transaction IDs, store codes, units and time zones. An ETL layer captures every source record with its transaction ID, checks the item against the warehouse product list, maps store codes through an approved mapping, converts cartons to units and UTC to Sydney time, and loads one stock-event fact table in a star schema. A scheduler has the website extract real shelf totals from the store system every 3 minutes (a manual "refresh now" is kept), and the warehouse records what each refresh changed. Report views and a web dashboard show current stock, how stale the website is and which checkouts were blocked. One script builds the whole prototype, and it passes 104 automated behaviour checks, 17 scheduler checks and 38 dashboard checks.
+We built a working prototype in the Lab Environment on PostgreSQL 15. Three source systems (store, supplier and online) share one item number per product but keep their own transaction IDs, store codes, units and time zones. The website now extracts real shelf totals from the store system every 3 minutes, and checkout checks real store stock before payment. An ETL layer captures every source record with its transaction ID, accepts only approved items and store mappings, converts cartons to units and UTC to Sydney time, and loads a stock-event fact table in a star schema. Report views and a web dashboard serve four data use cases, led by the owner's two: how inaccurate website stock is, and which checkouts it blocked. One script builds the prototype, and it passes 104 behaviour checks, 17 scheduler checks and 38 dashboard checks.
 
 ---
 
 ## 1. Introduction
 
-PetHaven sells pet food, treats, toys, bedding, health and aquarium products in five Sydney stores (Parramatta, Bondi Junction, Chatswood, Newtown and Penrith) and on its website. Customers buy either at a store till or online, collecting the order from a store they choose.
+PetHaven is a fictional pet-supplies retailer selling pet food, treats, toys, bedding, health and aquarium products through five stores in Sydney: Parramatta, Bondi Junction, Chatswood, Newtown and Penrith. It also runs a website. Customers buy in a store, or order online and collect from a store they choose. Suppliers deliver products directly to each store, counted in cartons. PetHaven runs three separate systems (store, supplier and online), and their records are not kept consistent with each other.
 
-The website shows one combined "available" number per product for all five stores, and that number is refreshed only every 3 minutes, when the website extracts the real shelf totals from the store system. Every till sale, supplier delivery and cancelled order changes the real stock in a store at once. Between refreshes the website can show stock that is already gone, so customers put items in their bag and are only told at checkout that no store can supply them. The number can also be too low, which hides stock and loses sales.
+The main business problem is that product stock is not updated in real time between in-store and online sales, so the website shows different stock numbers from the stores. The website shows one combined available number for each product across the five stores, and before this project that number was updated only once a day. Store sales, supplier deliveries and cancelled orders change real stock straight away. The website may therefore show items that are no longer available, and customers discover only at checkout that no store can fulfil their order. It may also show too little stock, hiding available items and losing sales. Customers and staff therefore find it hard to trust the website's stock information.
 
-The cause is the delay between a stock change in one system and its use in another. A second problem makes it hard to measure: although all three systems identify a product by the same item number (for example `P001`), each numbers its own transactions differently (a receipt number in store, an order ID online, a supplier ID and supplier order number for deliveries), names the stores differently, and the supplier delivery system counts in cartons with times in UTC. Their records have to be converted and traced reliably before they can be combined.
+A further challenge is that all three systems use the same item number for a product (for example `P001`), but each numbers its own transactions differently (a receipt number in store, an order ID online, a supplier ID and supplier order number for deliveries) and names the stores differently. The supplier system also counts in cartons and records times in UTC. Without converting and tracing these records into one place, PetHaven cannot tell what stock each store really holds, how far the website is out of date, or which checkouts were blocked because of it.
 
-The prototype has five goals:
-
-1. Run three source systems as separate PostgreSQL schemas, each with its own codes and rules.
-2. Load every stock change into one data warehouse through an ETL layer that keeps each record's transaction ID, converts units and times, maps store codes only through an approved mapping and accepts only items on the warehouse product list.
-3. Let the online store refresh the website number from real shelf stock every 3 minutes (and on demand), while the warehouse records what each refresh changed.
-4. Report what stock each store holds, how stale the website is, and which checkouts were blocked and why.
-5. Show that all of this works with repeatable automated checks and a recorded demonstration.
+This project builds a working prototype that addresses these problems without replacing the existing systems. The website extracts real stock from the store system every 3 minutes, and checkout checks real store stock before payment, so nobody pays for stock that cannot be supplied. The three sources stay in separate PostgreSQL schemas, and an extract, transform and load (ETL) process integrates their records into a data warehouse. The ETL accepts only approved items and store mappings, converts quantities and timestamps, and records every stock movement, so reports and a dashboard can measure how far the website is out of date and which checkouts were blocked.
 
 ---
 
@@ -117,19 +111,54 @@ The dimensions use surrogate keys and conformed codes (`S01`, `P001`). The date 
 
 ### 2.4 Design Rationale
 
-**One fact table of stock events.** Every report needs stock changes over time. A single signed history gives current stock, stock at any earlier moment and an audit trail, without keeping separate balance tables in step.
+We judged each part of the design on four things: whether it gives the dashboard's users the data their decisions need (use case fit), whether it is fast enough for trading and reporting (performance), whether it is simple enough to build, test and explain (complexity), and what it costs to run. Use case fit was the first test, so the design starts from the people who use the dashboard.
 
-**One item number, separate transaction IDs.** Every system keys products on the same item number, so products need no translation; each system keeps its own transaction ID, and the warehouse stores it on every event so any number can be traced back to the receipt, order or supplier order behind it. Store codes still differ per system and are joined through an approved mapping, which keeps the warehouse independent of any one source.
+#### Data use cases
 
-**Reject unknown items instead of guessing or failing.** A guessed match corrupts stock silently, and failing the sale would stop a till. Rejecting the record into staging lets the store keep trading, keeps the warehouse correct and shows the gap until a data steward adds the item to the product list.
+Inaccurate website stock affects three roles at PetHaven, and we ranked their use cases by impact: how much the role loses when stock is wrong, and how much say it has over the solution.
 
-**ETL in the same transaction as the source change.** Every sale, supplier delivery and order reaches the warehouse immediately, so the source and the warehouse never disagree, and the ETL needs no schedule of its own in the lab.
+The owner is affected most. When the website shows stock that no store has, the customer is blocked at checkout and the sale is lost, and the owner is the person who decides whether the 3-minute website refresh and the checkout check are kept. The owner's two use cases are high impact. Store managers look after stock across the five stores and decide where to reorder, so theirs is medium impact. Store staff serve customers and handle click and collect orders: holding stock, transfers between stores and collections. Their questions come up every day but each one is small, so their use case is low impact.
 
-**The website number comes from the store system.** The website number is operational, and the store system already holds real stock. The warehouse is used for analysis only, so a problem in the warehouse can never stop customers from buying.
+**Table X. Data use cases, ordered by impact**
 
-**Website refresh every 3 minutes, plus a manual refresh.** A short interval keeps the website at most 3 minutes behind without putting the website update in the path of every till transaction. The interval is one configuration value, not SQL logic. A manual "refresh now" is kept so a demonstration can build up a stale state (with the scheduler stopped) and show the correction on cue.
+| Impact | Use case | User | Question it answers | Decision it supports |
+| --- | --- | --- | --- | --- |
+| High | UC1 Measure website accuracy | Owner | How far is the website number from real store stock, and what did the last refresh correct? | Whether a 3-minute refresh interval is short enough |
+| High | UC2 Measure the impact | Owner (final decision-maker) | Which checkouts were blocked because of inaccurate stock, for which products and stores, and why? | Which products and stores need attention, and whether blocks come from a stale website number or from stock split across stores |
+| Medium | UC3 Spot low stock | Store managers | Which stores have low stock and may need replenishment? | Which stores to reorder for (the order itself is placed outside this system) |
+| Low | UC4 Locate stock | Store staff (main), store managers | Where is stock available or reserved across the five stores? | Which store can serve a customer, or send stock to another store |
 
-**Stock checked before payment.** Taking payment and then cancelling costs refunds and trust. Checking and locking real stock at checkout means every paid order can be fulfilled.
+These use cases set three requirements. UC1 and UC2 compare records from different systems: the website number and the blocked checkouts are in the online store, while real shelf stock is in the store system. They can only be answered from one place that holds data from both. UC3 and UC4 need stock per store that matches the store system exactly, or staff will send customers to a store with an empty shelf. And the owner needs to trace any number back to the record it came from before acting on it. The dashboard pages are organised around these four use cases, and section 3.4 shows the report and page that answer each one.
+
+#### Use case fit
+
+Because UC1 and UC2 combine the online store with the store system, all three source systems load into one integrated data warehouse (`dw`) with shared product, store and date dimensions. The warehouse is used for analysis only. The online store sets its own website number from the store system and blocks checkouts itself, so a fault in the warehouse would delay the reports while customers could still buy.
+
+The fact table records one stock change for one product at one store, from any of the three systems. UC3 and UC4 read current stock as the sum of these signed changes, so a store total and the history behind it come from the same rows. A blocked checkout is stored as an event type that moves no stock, which puts the evidence for UC2 in the same table as the sales and deliveries around it. Each website refresh is logged with the website number before and after for every product, and UC1 reports from that log.
+
+All three systems use the same item number for a product, so products need no mapping. Each system numbers its own transactions differently: a receipt number in store, an order ID online, and a supplier ID with a supplier order number for deliveries. The ETL stores that transaction ID on every fact row (`source_ref`), so a blocked checkout in UC2 can be traced back to the checkout attempt in the online store.
+
+#### Data quality
+
+Store codes still differ between systems. Parramatta is `101` in the store system, `NSW-PARRA` in the supplier system and `CP-PARRAMATTA` online, so each code is mapped to one warehouse code (`S01`) through a mapping a data steward has approved. A record whose item is not on the warehouse product list, or whose store code has no approved mapping, is rejected with a reason and stays in staging until the steward approves it. We did not match codes by name, because one wrong match would change the UC3 and UC4 stock figures without anyone noticing. We also did not refuse the sale, because that would stop a till over a reporting problem.
+
+Supplier deliveries arrive in cartons with UTC times. The ETL converts them to units and to Sydney business dates before loading, so every store total is in units and every event falls on the right trading day.
+
+#### Performance
+
+Every source change starts an ETL run inside the same database transaction (change data capture). The warehouse is never behind the store system, so UC4 shows the stock a customer would find on the shelf now. At our data volume one ETL run takes about 5 ms, and a whole till sale stays under 10 ms.
+
+Before the project, the website number came from a once-a-day extract of store stock. We shortened this data extraction to every 3 minutes, following the tutor's advice to use an interval of a few minutes. Refreshing on every sale would tie the three systems together and add work to every till transaction, and the checkout check already protects the moment the customer pays. The interval is one configuration value (`SYNC_INTERVAL_SECONDS = 180`), so if UC1 shows the website is wrong too often, the owner can shorten it without changing any SQL. A manual "refresh now" is kept for the same check on demand.
+
+The reports are SQL views over the warehouse, so the dashboard always shows current data and needs no refresh job of its own. The prototype holds 146 stock events after the build, which is small enough for views; indexes on product and store support the stock totals.
+
+#### Complexity
+
+The three source systems are separate schemas in one PostgreSQL database, with no foreign keys between them. They behave as separate systems, and one script still builds and tests the whole prototype. The warehouse is a star schema with one fact table and three dimensions, which the dashboard and CloudBeaver query with simple joins. The website refresh logic is written in SQL, and a small Python scheduler only decides when to run it. Each online order is collected at one pickup store and each item comes from one store, which keeps transfers to one shipment per item.
+
+#### Cost
+
+The prototype uses the Lab Environment as supplied: PostgreSQL 15, the Python container and CloudBeaver. It needs no extra containers, no database extensions such as pg_cron, and no licences. We did not use the lab's Neo4j or ClickHouse, because the problem is relational and transactional. For the business, checking real store stock before payment means PetHaven never takes money for stock it cannot supply, so there are no refunds or cancelled paid orders. A blocked checkout still loses the sale, and UC2 measures how often that happens.
 
 ### 2.5 Design Trade-offs
 
@@ -199,37 +228,96 @@ The synthetic data covers five stores and 18 products, plus a new product (P019)
 
 > **[TODO Figure 9]** Output of `build.py`, ending with 155 records staged, 146 loaded, 0 rejected, 0 not reconciled.
 
-> **[TODO Figure 10]** One supplier delivery traced from source to warehouse: cartons and UTC in staging, units and Sydney date in the fact table. CloudBeaver: the staging query in section 3 and the fact-table query in section 4 of `demo/vedio_demo_script.sql`.
+> **[TODO Figure 10]** One supplier delivery traced from source to warehouse: cartons and UTC in staging, units and Sydney date in the fact table. CloudBeaver: the staging query in section 3 and the fact-table query in section 4 of `demo/video_demo_script.sql`.
 
 ### 3.4 Reports and dashboard
 
-The reports are views in the `dw` schema. A local web dashboard presents them. It opens on an Overview for the company admin (website accuracy, next refresh, stock alerts, lost sales, open orders), and has three report pages: Website stock, Store stock, and Orders & lost sales. The dashboard only reads the reports; the business events in the demonstration are made through the source systems' own functions.
+The reports are eight SQL views in the `dw` schema, grouped as Reports 1 to 6, and a local web dashboard presents them. The dashboard is organised around the four data use cases in section 2.4, so this section follows the same order, from high to low impact. It opens on an Overview that sums up what needs attention, mainly for the owner. The dashboard only reads the reports; business events are made through the source systems' own functions.
 
-**Report 1: current stock by store.** Shelf and reserved units for each store and product, with low-stock flags. It also lists the stock events behind each number.
+**Table X. Data use cases, reports and dashboard pages**
 
-> **[TODO Figure 11]** Dashboard → Store stock.
+| Use case | User (impact) | Report | Dashboard page |
+| --- | --- | --- | --- |
+| UC1 Measure website accuracy | Owner (high) | Report 2: `rpt_online_vs_actual`, `rpt_online_staleness`, `rpt_last_sync_changes` | Website stock |
+| UC2 Measure the impact | Owner (high) | Report 3: `rpt_checkout_blocked` | Orders & potential lost sales, Potential lost sales tab |
+| UC3 Spot low stock | Store managers (medium) | Report 1: `rpt_current_stock_by_store` | Store stock, "Low stock only" |
+| UC4 Locate stock | Store staff (low) | Report 1, and Report 5: `rpt_open_reservations` | Store stock; Orders & potential lost sales, Click & collect orders tab |
 
-**Report 2: website staleness.** For each product, the website number next to the real combined stock, whether it is too high or too low, how long since the last refresh, when the next scheduled refresh is due, and what the last refresh changed.
+#### UC1: website accuracy (owner)
 
-> **[TODO Figure 12]** Dashboard → Website stock, before a refresh (some products "Website too high"). If space allows, a second screenshot after the refresh.
+Report 2 puts the website number next to the real combined shelf stock for every product and labels the difference. "Website too high" means customers may order stock that has gone; "Website too low" means stock in the stores cannot be sold online. The page also shows whether the automatic refresh is running, when it last ran, when it runs next, and what the last refresh corrected. The owner uses it to judge whether a 3-minute interval is short enough.
 
-**Report 3: items blocked at checkout.** Each item that checkout blocked, the pickup store, what the website showed, what was really available and why it was blocked (a stale website number, or stock split across stores).
+> **[TODO Figure]** Dashboard, Website stock, before the manual refresh (P018 "Website too high", P001 "Website too low"), and after it ("What the last refresh corrected").
 
-> **[TODO Figure 13]** Dashboard → Orders & lost sales → Blocked items, with one row selected to show the source checkout record.
+#### UC2: blocked checkouts (owner)
 
-Three further reports support these: daily sales by store, channel and category; open click-and-collect orders and their transfer status; and a reconciliation of the warehouse against the store system, together with any rejected records.
+Report 3 lists every item that checkout blocked before payment: when, the pickup store, the quantity wanted, what the website showed, what the stores really had, and why. There are two reasons: the website number was out of date, or there was enough stock in total but no single store had the whole quantity. Selecting a row opens the customer's checkout record from the online store, so the owner can check the evidence behind the number. A blocked item is a potential lost sale; the report does not claim the customer never bought it later.
 
-> **[TODO Figure 14]** CloudBeaver, section 7 of `demo/vedio_demo_script.sql`: the two records rejected as "Unknown item P019" (`etl.v_data_quality`) before the item is added to the product list.
+> **[TODO Figure]** Dashboard, Orders & potential lost sales, with the blocked P018 checkout selected and its source checkout record open.
+
+#### UC3: low stock (store managers)
+
+Report 1 gives available, reserved and on-hand units for every store and product, and flags a shelf with 2 or fewer units as low stock. With "Low stock only" ticked, a manager sees which stores need replenishment. The dashboard only flags low stock; the reorder itself is placed outside this system.
+
+> **[TODO Figure]** Dashboard, Store stock, "Low stock only" ticked.
+
+#### UC4: stock position (store staff)
+
+The same report, filtered to one product, shows where it is available and where it is held for click and collect orders, so staff can tell a customer which store has it. Selecting a store opens the event history behind the number: every sale, delivery and order, each with its source reference. Report 5 lists open click and collect orders: where each line is coming from, whether it is in transit, and whether the whole order is ready to collect.
+
+> **[TODO Figure]** Dashboard, Store stock for P001, with the Chatswood event history showing supplier order PO-3001.
+
+#### Supporting reports
+
+Report 4 counts units sold per day by store, channel and category. Report 6 compares warehouse stock with the live store system and lists any source records the ETL rejected. When either finds a problem, a yellow banner appears on every dashboard page until the records load.
+
+> **[TODO Figure]** CloudBeaver, section 7 of `demo/video_demo_script.sql`: the two records rejected as "Unknown item P019" (`etl.v_data_quality`) before the item is added to the product list.
 
 ### 3.5 End-to-end testing
 
-Three automated test scripts build a separate test database and run scripted business events. The first checks every business rule, from stock updates and checkout to transaction IDs, unknown-item rejection, the website refresh and reconciliation, and passes all 104 checks. The second starts the scheduler with a 2-second test interval and checks that it refreshes on time, is recorded as scheduled and can be stopped; it passes all 17 checks. The third tests the dashboard's read-only interface against the report views and passes all 38 checks.
+The prototype was tested in two ways: automated checks, and a recorded end-to-end test that is also the demonstration video.
 
-> **[TODO Figure 15]** Last lines of the three test runs: `PASS 104, FAIL 0`, `PASS 17, FAIL 0` and `PASS 38, FAIL 0`.
+#### Automated checks
 
-The demonstration video (`demo/vedio_demo_script.sql`) starts from a fresh build and runs as queries in CloudBeaver. One event happens in each source system: supplier SUP-01 delivers 5 cartons of dog food (P001, order PO-3001) to Chatswood; the last aquarium kit (P018) sells in store at Newtown and at Penrith; and a Bondi customer tries to buy one online while the website still shows 2. The video then shows the ETL code, the staged records (5 cartons × 4 = 20 units, NSW-CHATS → S03, UTC → Sydney time), the three events in one fact table, and the reports: Chatswood's dog food rises from 53 to 73, the website is wrong for P001 (183 vs 203) and P018 (2 vs 0), and the online checkout was blocked before payment and is listed in Report 3. A manual website refresh corrects both numbers, and one query traces the blocked checkout from the report back to its source record.
+Three test scripts build a separate test database (`pethaven_check`) and run scripted business events. The first checks every business rule, from stock updates and checkout to transaction IDs, unknown-item rejection, the website refresh and reconciliation, and passes all 104 checks. The second starts the scheduler with a 2-second test interval and checks that it refreshes on time, is recorded as scheduled and can be stopped; it passes all 17 checks. The third tests the dashboard's read-only interface against the report views and passes all 38 checks.
 
-A validation test follows. The new product P019 is delivered and sold before it is on the warehouse product list; the ETL rejects both records as "Unknown item P019" without stopping the business transactions, and once a data steward adds the item they load exactly once. The script ends with 11 automatic checks (T1–T11), all PASS. Other cases, such as a checkout blocked because no single store has every item, transfers to the pickup store, collection and overdue cancellation, are in the sample data and covered by the automated checks.
+> **[TODO Figure]** Last lines of the three test runs: `PASS 104, FAIL 0`, `PASS 17, FAIL 0` and `PASS 38, FAIL 0`.
+
+#### Recorded end-to-end test
+
+Following the tutor's advice, the queries are recorded, not typed live. The script `demo/video_demo_script.sql` starts from a fresh build with the automatic refresh stopped, so the out-of-date website number stays on screen until the manual refresh. After a short statement of the business problem, it drives one scenario through all three source systems and follows it through every layer.
+
+**Table X. End-to-end test scenario**
+
+| Step | System | Action | What it proves |
+| --- | --- | --- | --- |
+| 1 | Supplier | SUP-01 delivers 5 cartons of P001 to Chatswood (order PO-3001) | 5 cartons × 4 = 20 units; `NSW-CHATS` → S03; UTC → Sydney time |
+| 2 | Store | The last P018 sells at Newtown and at Penrith | In-store sales reach the warehouse at once; the website number is now out of date |
+| 3 | Online | A Bondi customer tries to buy 1 × P018 while the website still shows 2 | Checkout is blocked before payment and recorded for analysis |
+| 4 | Online | Manual website refresh | P001 183 → 203 and P018 2 → 0; the warehouse records the correction |
+| 5 | Supplier, store | P019, not on the warehouse product list, is delivered and sold | Both records are rejected with a reason, then load once after a data steward approves P019 |
+
+The video shows the ETL code for each step (extract, transform, validate, load), the staged records in their source format next to the transformed values, and the three events in one fact table. It then answers each data use case as a report query in CloudBeaver and on the dashboard page its user would open. For UC1, the website is too high for P018 and too low for P001 before the refresh, and matches every store after it. For UC2, the blocked checkout appears with its source record. For UC3, the stores low on stock are listed. For UC4, Chatswood's dog food rises from 53 to 73, with the delivery in its event history. One query traces the blocked checkout from the report back to the source record, and during the validation step the dashboard's data-quality banner appears and then clears.
+
+The script ends with 11 automatic checks, and all of them pass.
+
+**Table X. End-to-end test results**
+
+| Test | What it checks | Result |
+| --- | --- | --- |
+| T1 | Supplier: 5 cartons loaded as 20 units | PASS |
+| T2 | Supplier: `NSW-CHATS` mapped to S03 | PASS |
+| T3 | Supplier: UTC converted to Sydney time | PASS |
+| T4 | Store: P018 sales at S04 and S05 in the warehouse | PASS |
+| T5 | Online: blocked checkout captured, website 2 vs stores 0 | PASS |
+| T6 | UC4: warehouse stock equals the store system (P001 Chatswood) | PASS |
+| T7 | UC1: after the refresh, the website matches the stores for every product | PASS |
+| T8 | Traceability: no staging row left pending | PASS |
+| T9 | Reconciliation: warehouse matches the store system | PASS |
+| T10 | Data quality: no rejected source rows | PASS |
+| T11 | Validation: P019 rejected with a reason, then loaded once | PASS |
+
+Other cases, such as a checkout blocked because no single store had the whole quantity, transfers to the pickup store, collection and overdue cancellation, are in the sample data and covered by the automated checks.
 
 Demo video: [TODO link]
 
@@ -237,7 +325,7 @@ Demo video: [TODO link]
 
 ## 4. Report Summary and Conclusion
 
-PetHaven's website stock number falls behind the stores between refreshes, so customers try to buy items that no store can supply. This project designed and built a data solution for that problem.
+PetHaven's product stock was not updated in real time between in-store and online sales, so the website could show stock that no store had and customers found out only at checkout. This project designed and built a solution for that problem.
 
 The design keeps the three operational systems separate, each with its own codes, units and time zone, and combines their data only in an integrated data warehouse. An ETL layer captures each source record unchanged, keeps its transaction ID, accepts only items on the warehouse product list, maps store codes through an approved mapping, converts cartons to units and UTC to Sydney time, and loads it as one row in a stock-event fact table with product, store and date dimensions. Records for unknown items are rejected with a reason and load once a data steward adds the item. Every 3 minutes (or by hand) the website extracts the real shelf totals from the store system and refreshes its number. The warehouse does not set that number, but it records every refresh so the reports can measure staleness. Checkout checks real stock before payment, so a stale number costs a sale rather than a refund.
 

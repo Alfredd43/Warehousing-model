@@ -1,6 +1,6 @@
-# PetHaven dashboard: start, demonstrate, verify
+# PetHaven dashboard: start, use, verify
 
-The dashboard is a local web app over the existing prototype database. It opens on an **Overview** for the company admin, and has three report pages (the assignment's required reports: Website stock, Store stock, Orders & lost sales). It is read-only: business events are made with `demo.py` (section 3). The brief it implements is [Dashboard_Implementation_Spec.md](Dashboard_Implementation_Spec.md).
+The dashboard is a local web app over the existing prototype database. It is built around the four data use cases (Spec 9): it opens on an **Overview** of what needs attention, and three pages answer the use cases: Website stock, Orders & potential lost sales, and Store stock. It is read-only: business events are made with `demo.py` or the source systems' SQL functions. The brief it implements is [Dashboard_Implementation_Spec.md](Dashboard_Implementation_Spec.md).
 
 It is a localhost teaching prototype: a standard-library Python HTTP server plus static HTML, CSS and JavaScript. It is not production hosting.
 
@@ -25,10 +25,10 @@ The overlay adds one service, `dashboard` (container `student-dashboard`), built
 | Stop | `docker compose -f docker-compose.yml -f workspace/dashboard/compose.dashboard.yml stop dashboard` |
 | Use the check database instead | set `DASHBOARD_DB: pethaven_check` in the overlay and recreate the service |
 
-**If the page says "Database or server unavailable"** while the lab is running, the lab was probably started from a different folder, so it runs as a different Compose project with its own network. (This happened while the dashboard was being built: the running lab came from `D:\00_project\PetHaven_data_solution`.) Either stop that lab and start this repository's lab (README, Step 2), or attach the dashboard to the running lab's network:
+**If the page says "Database or server unavailable"** while the lab is running, the lab was probably started from a different folder, so it runs as a different Compose project with its own network. Either stop that lab and start this repository's lab (README, Step 2), or attach the dashboard to the running lab's network:
 
 ```bash
-docker network connect pethaven_data_solution_default student-dashboard
+docker network connect <other-lab-folder>_default student-dashboard
 ```
 
 Use `docker network ls` to find the network name (`<folder name>_default`).
@@ -41,38 +41,22 @@ PGHOST=localhost python workspace/dashboard/server.py --port 8080
 
 ## 2. What each page shows
 
-| Page | Assignment output | Business question | Main data |
+| Page | Data use case (user, impact) | Business question | Main data |
 | --- | --- | --- | --- |
-| Overview (start page) | Summary for the admin | What needs attention now? Website accuracy, next refresh, stock alerts, lost sales, open click & collect orders, units sold, with a "Needs attention" list linking to each page | `/api/overview` over `dw.rpt_online_vs_actual`, `rpt_online_staleness`, `rpt_current_stock_by_store`, `rpt_checkout_blocked`, `rpt_open_reservations`, `rpt_daily_sales` |
-| Website stock | Required report 2 | Does the website show what the stores can supply? How often does it refresh, when was the last refresh (automatic or manual), when is the next one? What did the last refresh change? | `dw.rpt_online_vs_actual`, `dw.rpt_online_staleness` (incl. scheduler status and interval), `dw.rpt_last_sync_changes`, `dw.sync_run` / `dw.sync_change` |
-| Store stock | Required report 1 | Where is stock available or reserved, and which events explain it? | `dw.rpt_current_stock_by_store`, `dw.fact_stock_event` (event history), `dw.rpt_daily_sales` (Sales history tab) |
-| Orders & lost sales | Required report 3 + open reservations | What happened when a customer checked out, and where are open orders? | `dw.rpt_checkout_blocked` + `online.checkout_attempt*` (source record), `dw.rpt_open_reservations` |
+| Overview (start page) | Summary across UC1-UC4, mainly for the owner | What needs attention now? Website accuracy, next refresh, stock alerts, potential lost sales, open click & collect orders, units sold, with a "Needs attention" list linking to each page | `/api/overview` over `dw.rpt_online_vs_actual`, `rpt_online_staleness`, `rpt_current_stock_by_store`, `rpt_checkout_blocked`, `rpt_open_reservations`, `rpt_daily_sales` |
+| Website stock | UC1 Website accuracy (owner, high); Report 2 | Does the website show what the stores can supply? How often does it refresh, when was the last refresh (automatic or manual), when is the next one? What did the last refresh change? | `dw.rpt_online_vs_actual`, `dw.rpt_online_staleness` (incl. scheduler status and interval), `dw.rpt_last_sync_changes`, `dw.sync_run` / `dw.sync_change` |
+| Store stock | UC3 Low stock (store managers, medium) and UC4 Stock position (store staff, low); Report 1 | Which stores are low on stock? Where is stock available or reserved, and which events explain it? | `dw.rpt_current_stock_by_store`, `dw.fact_stock_event` (event history), `dw.rpt_daily_sales` (Sales history tab) |
+| Orders & potential lost sales | UC2 Blocked checkouts (owner, high); Report 3, plus open click & collect orders (Report 5) for store staff | What happened when a customer checked out, and where are open orders? | `dw.rpt_checkout_blocked` + `online.checkout_attempt*` (source record), `dw.rpt_open_reservations` |
 
 **Reload** only reads the reports again. It never refreshes the website stock or runs the ETL. Filters and selections are kept in the URL, so a reload or a shared link shows the same view.
 
 **Automatic website refresh.** The status line on Website stock shows "Automatic refresh: every 3 min · next in …" while the scheduler runs (started with `docker compose exec python python /workspace/scripts/demo.py scheduler start`), or "Automatic refresh: not running — the website only updates on a manual refresh". When a scheduled refresh is due, the page re-reads its reports a moment later, so the website numbers update on screen; the dashboard itself never runs the scheduled refresh. The manual refresh is `docker compose exec python python /workspace/scripts/demo.py sync`.
 
-## 3. Demonstration (about 10 minutes)
+## 3. Demonstration
 
-Rebuild first so the starting point is known: `docker compose exec python python /workspace/scripts/build.py`. Then reload the dashboard.
+The dashboard is demonstrated in the recorded end-to-end test video, not live: [demo/video_demo_script.sql](../demo/video_demo_script.sql) shows each data use case (UC1-UC4) first as a report query, then on the dashboard page that answers it (lines marked `DASHBOARD`). The presentation plays that video sped up ([demo/demo_runbook.md](../demo/demo_runbook.md)).
 
-The dashboard is read-only. Business events are made in a terminal with `demo.py` (prefix each command below with `docker compose exec python python /workspace/scripts/demo.py`); press **Reload** on the dashboard to see their effect.
-
-| Time | Terminal (`demo.py …`) | Dashboard | What to point out |
-| --- | --- | --- | --- |
-| 0:00 | – | Overview (all tiles green apart from stock alerts), then Website stock: automatic refresh status, last refresh time, "The website matches the stores for all 18 products" | The website shows one combined number per product. It changes only on a website refresh (every 3 minutes, or by hand) or the website's own sales. Keep the scheduler stopped for this walkthrough so the stale state stays on screen. |
-| 1:00 | `report stock` | Store stock, product P018 | After a clean build P018 has 1 free unit at Newtown (S04) and 1 at Penrith (S05). |
-| 1:45 | `sale S04 P018 1`, then `sale S05 P018 1` | Website stock | One till receipt per store. P018 is "Website too high" by 2, and the stock events since the last refresh go up. |
-| 2:45 | `order 2026 P018 1` | Orders & lost sales | The bag accepts the item (the stale website shows 2), but checkout checks real stock first: **blocked**, nothing charged or held. |
-| 3:45 | – | Orders & lost sales → the new blocked item | Its source checkout record: website snapshot from the source next to the report's reconstruction. Reason: "Website number was out of date". |
-| 4:30 | `sync` | Website stock | Website 2 → 0. The latest refresh lists the correction; the collapsed section shows the store balance changes it recorded. |
-| 5:15 | `order 2026 P018 1` | – | Refused when adding to the bag: this is the fix working, not another blocked checkout. |
-| 6:00 | `supplier-delivery S03 P001 5` | Store stock → P001 at Chatswood → event history | "5 cartons × 4 units/carton = 20 units"; the event's source reference names the supplier ID and supplier order number. |
-| 7:00 | `supplier-delivery S01 P019 2 --supplier SUP-02`, then `sale S01 P019 1` | The yellow banner appears on every page | Both source operations succeed, but the ETL rejects 2 records as "Unknown item P019" and the warehouse no longer matches the store system (`report reconciliation` lists them). |
-| 8:00 | `add-item P019`, then `etl` | The banner disappears | The waiting records load and reconciliation matches again. Running `etl` again finds nothing to process (no duplicates). |
-| 9:00 | – | Orders & lost sales → Click & collect orders, order 5 | Lines held at Chatswood are in transit to Bondi, so the whole order is not ready, even though one line is. Optional: `collect 5` is refused with the store system's reason. |
-
-If a step's prerequisite is not met (for example P018 already sold out), `demo.py` prints the source system's reason. Choose another product, record a supplier delivery first, or rebuild. Items are never removed from the warehouse product list automatically; for a fresh rejection demonstration, rebuild the database.
+To make your own business events while the dashboard is open, use `demo.py` (README, "In the terminal") and press **Reload**.
 
 ## 4. Verification (13 October 2026)
 

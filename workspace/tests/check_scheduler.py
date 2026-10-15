@@ -112,7 +112,7 @@ def main() -> int:
         stale = one("SELECT status FROM dw.rpt_online_vs_actual WHERE product_code = 'P001'")
         check("S4 straight after the sale the website number is stale", "overstated - oversell risk", stale)
         wait_for(lambda: scheduled_syncs() > before, INTERVAL + 2)
-        check("S4 after the next scheduled sync the website is correct, with no manual step", "in sync",
+        check("S4 after the next scheduled sync the website is correct, with no manual step", "matches",
               one("SELECT status FROM dw.rpt_online_vs_actual WHERE product_code = 'P001'"))
 
         print("\n-- Manual sync still works while the scheduler runs")

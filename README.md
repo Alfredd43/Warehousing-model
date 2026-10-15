@@ -1,6 +1,6 @@
 # PetHaven Data Solution
 
-Assignment 2 prototype (32113 Advanced Database). PetHaven has five Sydney stores and an online store. The website shows one combined stock number per product, which the website extracts from the store system every 3 minutes (the website refresh), so between refreshes customers can put items in their bag that no store can supply. Checkout checks real store stock before payment, so those items are blocked instead of being charged and cancelled. The prototype integrates **three source systems** (in-store, online, supplier) into **one data warehouse** through an ETL layer, refreshes the website number on a schedule straight from the store system, and uses the warehouse to report staleness, refresh corrections and items blocked at checkout.
+Assignment 2 prototype (32113 Advanced Database). PetHaven has five Sydney stores and an online store. **Business problem:** product stock is not updated in real time between in-store and online sales, so stock sold in one channel can still show as available in the other. The website shows one combined stock number per product, which used to be updated only once a day, so it could show stock that no store had. The prototype shortens that data extraction to every 3 minutes (the website refresh), checks real store stock at checkout before payment, and integrates **three source systems** (in-store, online, supplier) into **one data warehouse** through an ETL layer. The warehouse measures what the first two parts cannot remove: how far the website is still out of date between refreshes, what each refresh corrected, and which checkouts were blocked.
 
 Every system identifies a product by the same **item number** (`P001`). What differs is each system's **transaction ID**, its store codes, and its units and time zone:
 
@@ -21,10 +21,11 @@ How it behaves:
 
 Documentation:
 
-- Business case and rules: [00_req_feedback/Assignment2_Spec.md](00_req_feedback/Assignment2_Spec.md)
+- Business case and rules: [00_req_feedback/Assignment2_Spec_update.md](00_req_feedback/Assignment2_Spec_update.md)
 - Solution design (architecture, conceptual/logical models, ETL, rationale, trade-offs): [docs/Architecture_and_Data_Model.md](docs/Architecture_and_Data_Model.md)
 - Rule → SQL → check mapping: [docs/traceability.md](docs/traceability.md)
-- Demonstration script and Q&A: [demo/demo_runbook.md](demo/demo_runbook.md)
+- Recorded end-to-end test (video script): [demo/video_demo_script.sql](demo/video_demo_script.sql)
+- Presentation plan, timing and questions: [demo/demo_runbook.md](demo/demo_runbook.md)
 - Dashboard (start, demonstrate, verify): [docs/dashboard_runbook.md](docs/dashboard_runbook.md); its brief: [docs/Dashboard_Implementation_Spec.md](docs/Dashboard_Implementation_Spec.md)
 - Verification results and limitations: [docs/implementation_notes.md](docs/implementation_notes.md)
 
@@ -95,7 +96,7 @@ Safe to rerun at any time. Only `pethaven_demo` and `pethaven_check` are ever dr
 
 ### Step 5: Run the demo
 
-**In CloudBeaver** (easiest): open <http://localhost:8978>, add a PostgreSQL connection (host `postgres`, port `5432`, database **`pethaven_demo`**, user/password `student`/`student`), then open [demo/vedio_demo_script.sql](demo/vedio_demo_script.sql) (end-to-end test) or follow [demo/demo_runbook.md](demo/demo_runbook.md) (presentation), and run the SQL one statement at a time. Reconnect after every rebuild.
+**In CloudBeaver** (easiest): open <http://localhost:8978>, add a PostgreSQL connection (host `postgres`, port `5432`, database **`pethaven_demo`**, user/password `student`/`student`), then open [demo/video_demo_script.sql](demo/video_demo_script.sql) (the recorded end-to-end test) and run the SQL one statement at a time. Reconnect after every rebuild.
 
 **Start the automatic refresh** (every 3 minutes) when you want it; it keeps running in the background until you stop it or the containers stop:
 
@@ -125,7 +126,7 @@ docker compose exec python python /workspace/scripts/demo.py scheduler start
 | `codes` | The item list and each store's code in every system |
 | `report stock [S01]` / `staleness` / `blocked` / `sales` / `reservations` / `reconciliation` / `all` | Reports 1–6 |
 
-The full 10-minute demonstration, with what to say at each step, is in [demo/demo_runbook.md](demo/demo_runbook.md).
+The recorded end-to-end test is [demo/video_demo_script.sql](demo/video_demo_script.sql); the presentation that plays it is planned in [demo/demo_runbook.md](demo/demo_runbook.md).
 
 **In the dashboard** (web app over the same database):
 
@@ -133,7 +134,7 @@ The full 10-minute demonstration, with what to say at each step, is in [demo/dem
 docker compose -f docker-compose.yml -f workspace/dashboard/compose.dashboard.yml up -d dashboard
 ```
 
-Open <http://localhost:8080>. It opens on an **Overview** for the company admin (what needs attention: website accuracy, next refresh, stock alerts, lost sales, open click & collect orders), then the three required reports (Website stock, Store stock, Orders & lost sales). It is read-only: sales, deliveries, orders and the manual refresh are made with `demo.py`. Website stock shows the automatic refresh's interval, the time since the last refresh and a countdown to the next one. The overlay adds a `dashboard` service and leaves the lab files unchanged. The dashboard demonstration is in [docs/dashboard_runbook.md](docs/dashboard_runbook.md).
+Open <http://localhost:8080>. It opens on an **Overview** of what needs attention (website accuracy, next refresh, stock alerts, blocked checkouts, open click & collect orders), then three pages that answer the four data use cases: **Website stock** (UC1, owner), **Orders & potential lost sales** (UC2, owner), and **Store stock** (UC3, store managers; UC4, store staff). It is read-only: sales, deliveries, orders and the manual refresh are made with `demo.py`. Website stock shows the automatic refresh's interval, the time since the last refresh and a countdown to the next one. The overlay adds a `dashboard` service and leaves the lab files unchanged. How to start and check it: [docs/dashboard_runbook.md](docs/dashboard_runbook.md).
 
 ### Step 6: Run the checks
 
@@ -204,9 +205,8 @@ workspace/
   dashboard/static/                    dashboard pages (HTML, CSS, JavaScript modules)
   dashboard/compose.dashboard.yml      optional Compose overlay that runs the dashboard on port 8080
 demo/                                  presentation and end-to-end test material
-  demo_runbook.md                      classroom presentation runbook (~10 min): story, dashboard Q1-Q4, SQL per section
-  vedio_demo_script.sql                recorded end-to-end test video (~10 min): test inputs, ETL code, checks per layer, validation test, T1-T11 PASS/FAIL
-  demoSQL_sections_3_4.sql             read-only queries for runbook sections 3 & 4 (ETL, warehouse)
+  video_demo_script.sql                recorded end-to-end test video (~10 min): test inputs, ETL code, warehouse, reports and dashboard UC1-UC4, validation test, T1-T11 PASS/FAIL
+  demo_runbook.md                      presentation plan (10 min): 3-4 slides, the video sped up, timing, questions
 docs/                                  design, traceability, dashboard runbook, implementation notes
 00_req_feedback/                       brief, Spec, tutor feedback, subject notes
 data/                                  lab database files created by Docker (not in Git)

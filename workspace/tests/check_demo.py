@@ -266,7 +266,7 @@ def main() -> int:
     _, order_no, _, lines = order("2067", {"P006": 7})   # customer B checks out first
     check("R6 order of 7 paid, held at Chatswood", (True, ("available", "S03")), (order_no is not None, lines["P006"]))
     check("R6 website shows 3 before the next sync", 3, online("P006"))
-    check("R6 not counted as out of date", "in sync",
+    check("R6 not counted as out of date", "matches",
           one("SELECT status FROM dw.rpt_online_vs_actual WHERE product_code='P006'"))
     basket_id = run("SELECT online.create_basket('2067')")
     check("R7 cannot add 7 to the bag (website shows 3)", "refused",
@@ -368,7 +368,7 @@ def main() -> int:
     check("R16 checkout_blocked fact at the pickup store (Chatswood)", "S03",
           one("SELECT s.store_code FROM dw.fact_stock_event f JOIN dw.dim_store s USING (store_key) "
               "WHERE f.order_ref=%s AND f.event_type='checkout_blocked'", (f"basket {basket_id}",)))
-    check("R16 report reason", "stock sold since last sync - online number was stale",
+    check("R16 report reason", "stock sold since the last refresh - website number was out of date",
           one("SELECT reason FROM dw.rpt_checkout_blocked WHERE basket=%s", (f"basket {basket_id}",)))
 
     print("\n-- More than the website shows cannot go in the bag")
@@ -427,7 +427,7 @@ def main() -> int:
     check("R17 P017 before/after logged", (shown, 0),
           tuple(db.query(conn, "SELECT before_qty, after_qty FROM dw.rpt_last_sync_changes "
                                "WHERE product_code='P017' AND measure='online_available'")[1][0]))
-    check("R17 all products in sync", 0, one("SELECT products_out_of_date::int FROM dw.rpt_online_staleness"))
+    check("R17 all products match", 0, one("SELECT products_out_of_date::int FROM dw.rpt_online_staleness"))
     check("R19 sync reconciliation", 0, one("SELECT store_mismatches FROM dw.sync_run WHERE sync_id=%s", (sync_id,)))
     check("R19 warehouse reconciles with store system", 0, not_matching())
     check("R13 every fact traces to one loaded staging row", events(),

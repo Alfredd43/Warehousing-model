@@ -46,7 +46,7 @@ All three systems use the same item number for a product, but nobody could see h
 
 Parts 1 and 2 make the problem smaller and stop it from charging customers for missing stock, but they do not remove it. Between refreshes the website number can still be wrong for up to 3 minutes, and a customer can still be blocked at checkout. The website is not refreshed on every sale because the three systems are separate: refreshing on every transaction would tie them together and add load to every sale, while the checkout check already protects the moment that matters.
 
-PetHaven therefore needs to measure the remaining gap: how often the website is wrong, by how much, for which products and stores, and how many checkouts it blocks. That needs records from all three systems, which each record stock in their own way (section 2.1). The ETL validates and converts them, and the warehouse combines them into one consistent view. Of the dashboard's data use cases (section 9), Q2 and Q3 measure the gap (how wrong the website is, and which checkouts it blocked); Q1 and Q4 show where the real stock is and which stores are running low.
+PetHaven therefore needs to measure the remaining gap: how often the website is wrong, by how much, for which products and stores, and how many checkouts it blocks. That needs records from all three systems, which each record stock in their own way (section 2.1). The ETL validates and converts them, and the warehouse combines them into one consistent view. Of the dashboard's data use cases (section 9), UC1 and UC2 measure the gap (how wrong the website is, and which checkouts it blocked); UC3 and UC4 show which stores are running low and where the real stock is.
 
 ```text
 Business problem: stock is not updated in real time between in-store and online
@@ -55,7 +55,7 @@ Operational solution: 3-minute website refresh + real-stock check at checkout
         ↓
 Remaining gap: the website number can still be wrong between refreshes; checkouts can be blocked
         ↓
-Analytical solution: ETL → integrated data warehouse → dashboard (data use cases Q1–Q4, section 9)
+Analytical solution: ETL → integrated data warehouse → dashboard (data use cases UC1–UC4, section 9)
 ```
 
 The demo video shows the problem and the solution in the same prototype: the scheduler is stopped, an in-store sale leaves the website number wrong (the problem), an online checkout is blocked (part 2), "refresh now" corrects the website (part 1), and the dashboard measures what happened (part 3).
@@ -222,7 +222,7 @@ Report views:
 
 ## 9. Dashboard: four data use cases
 
-The dashboard is the main business-facing output. It reads only the warehouse report views (plus the online system's checkout records as the source evidence for Q4). Pages: Overview, Website stock, Store stock, and Orders & lost sales.
+The dashboard is the main business-facing output. It reads only the warehouse report views (plus the online system's checkout records as the source evidence for UC2). Pages: Overview, Website stock, Store stock, and Orders & potential lost sales.
 
 A data use case is one way a PetHaven user relies on the integrated data: who uses it, the question it answers, the decision it supports, and the report and dashboard page that deliver it. The four use cases below are what the reports and dashboard are built for (brief item vi.d, at least 3).
 
@@ -234,28 +234,28 @@ Three roles use the dashboard. The **owner** is affected most by stock that cust
                        DASHBOARD
         ┌──────────────────┼──────────────────┐
  Inventory position   Store comparison   Cross-system issues
-     Q1 + Q2                                Q3 + Q4
+     UC3 + UC4                              UC1 + UC2
 ```
 
 | Use case | User | Impact | Question it answers | Decision it supports |
 | --- | --- | --- | --- | --- |
-| Q1 Locate stock | Store staff (main), store managers | Low | Where is stock available or reserved across PetHaven stores? | Which store can serve a customer, or send stock to another store |
-| Q2 Spot low stock | Store managers | Medium | Which stores have lower stock levels and may require replenishment? | Which stores to reorder for (the reorder itself is made outside this system) |
-| Q3 Measure website accuracy | Owner | High | How inaccurate is website stock compared with real store stock, and what did the last refresh correct? | Whether the 3-minute refresh interval is short enough |
-| Q4 Measure the impact | Owner (final decision-maker) | High | Which checkouts were blocked because of inaccurate stock, for which products and stores, and why? | Which products and stores need attention; whether blocks come from a stale number or from stock split across stores |
+| UC1 Measure website accuracy | Owner | High | How inaccurate is website stock compared with real store stock, and what did the last refresh correct? | Whether the 3-minute refresh interval is short enough |
+| UC2 Measure the impact | Owner (final decision-maker) | High | Which checkouts were blocked because of inaccurate stock, for which products and stores, and why? | Which products and stores need attention; whether blocks come from a stale number or from stock split across stores |
+| UC3 Spot low stock | Store managers | Medium | Which stores have lower stock levels and may require replenishment? | Which stores to reorder for (the reorder itself is made outside this system) |
+| UC4 Locate stock | Store staff (main), store managers | Low | Where is stock available or reserved across PetHaven stores? | Which store can serve a customer, or send stock to another store |
 
 | Use case | Dashboard page | Source view | What it shows | Scope note |
 | --- | --- | --- | --- | --- |
-| Q1 | Store stock (open click & collect orders: Orders & lost sales → Click & collect orders) | Report 1 (Report 5) | Shelf (= available), reserved and on hand per store and product | Available = shelf (section 5.1); reserved = held for click & collect orders |
-| Q2 | Store stock | Report 1 | Available stock by store for one product, ranked; low-stock alerts per store | Identifies low stock; does **not** decide or execute replenishment |
-| Q3 | Website stock | Report 2 | Website vs real stock, discrepancy, status, last refresh and its corrections | The refresh corrects the website; the warehouse measures and records the discrepancy |
-| Q4 | Orders & lost sales | Report 3 + `online.checkout_attempt*` | Blocked checkout attempts: product, pickup store, website number shown, real stock, reason | The online system blocks the checkout; a blocked checkout is a potential, not confirmed, lost sale |
+| UC1 | Website stock | Report 2 | Website vs real stock, discrepancy, status, last refresh and its corrections | The refresh corrects the website; the warehouse measures and records the discrepancy |
+| UC2 | Orders & potential lost sales | Report 3 + `online.checkout_attempt*` | Blocked checkout attempts: product, pickup store, website number shown, real stock, reason | The online system blocks the checkout; a blocked checkout is a potential, not confirmed, lost sale |
+| UC3 | Store stock | Report 1 | Available stock by store for one product, ranked; low-stock alerts per store | Identifies low stock; does **not** decide or execute replenishment |
+| UC4 | Store stock (open click & collect orders: Orders & potential lost sales → Click & collect orders) | Report 1 (Report 5) | Shelf (= available), reserved and on hand per store and product | Available = shelf (section 5.1); reserved = held for click & collect orders |
 
 ## 10. End-to-end testing and the recorded demo video
 
 ### 10.1 Format
 
-Following the tutor's guidance (6 Oct), queries are **not written live**: the end-to-end test is **pre-recorded** and played in the presentation, and its link is given in the report (brief item vi.e). The video tells the story end to end: business problem → solution → prototype → how it was tested → dashboard.
+Following the tutor's guidance (6 Oct), queries are **not written live**: the end-to-end test is **pre-recorded**, its link is given in the report (brief item vi.e), and it is played sped up in the presentation. On 13 Oct the tutor described the video as the prototype itself: state the business problem very briefly, then show the code and the technologies: how the data is ingested, extracted, transformed, cleaned and validated, and the reports and dashboards. The architecture is explained in the report and on the presentation slides, not in the video. The script is `demo/video_demo_script.sql`; each data use case is shown as a report query and then on the dashboard.
 
 ### 10.2 Test scenario
 
@@ -277,11 +277,11 @@ The script ends with an automatic test summary; every row must be PASS:
 | --- | --- |
 | T1 | Supplier: 5 cartons loaded as 20 units |
 | T2 | Supplier: `NSW-CHATS` mapped to S03 |
-| T3 | Supplier: UTC converted to Sydney time and Sydney business date |
+| T3 | Supplier: UTC converted to Sydney time |
 | T4 | Store: P018 sales at S04 and S05 in the warehouse |
-| T5 | Online: blocked checkout captured with website 2 vs actual 0, reason "stale" |
-| T6 | Q1: warehouse stock equals the store system (P001 Chatswood = 73) |
-| T7 | Q3: after the refresh, the website matches the stores for every product |
+| T5 | Online: blocked checkout captured with website 2 vs actual 0 |
+| T6 | UC4: warehouse stock equals the store system (P001 Chatswood = 73) |
+| T7 | UC1: after the refresh, the website matches the stores for every product |
 | T8 | Traceability: no staging row left pending |
 | T9 | Reconciliation: warehouse matches the store system |
 | T10 | Data quality: no rejected source rows |
@@ -293,13 +293,15 @@ Before recording, the automated checks must also pass: `check_demo.py` (104), `c
 
 | Section | Content | Time |
 | --- | --- | ---: |
-| 1 | Business problem (Overview page) | 1:00 |
-| 2 | The three source systems | 1:00 |
-| 3 | ETL & transformation (supplier example; store and online events) | 2:00 |
-| 4 | Integrated data warehouse | 1:00 |
-| 5 | Dashboard Q1 / Q2 / Q3 / Q4 | 3:30 |
-| 6 | Traceability (+1:00 with the optional validation test) | 1:00 |
-| 7 | Final summary and PASS/FAIL result, ending on the dashboard | 0:30 |
+| Opening | Business problem and solution in brief (dashboard Overview) | 0:30 |
+| 0-1 | Pre-check and baseline: the source systems before the test | 0:45 |
+| 2 | Test inputs: one event in each source system | 0:45 |
+| 3 | ETL: the code (extract, transform, validate, load), then its results | 2:00 |
+| 4 | Integrated data warehouse: one fact table, all three sources | 0:45 |
+| 5 | Reports and dashboard: UC1, UC2, UC3, UC4 | 3:00 |
+| 6 | Traceability: dashboard row back to its source record | 0:30 |
+| 7 | Validation test: P019 rejected, then loaded once | 1:00 |
+| 8 | Test result T1-T11, ending on the dashboard | 0:30 |
 
 Recording rules: rebuild `pethaven_demo` before every take (`build.py`) and reconnect CloudBeaver; keep the refresh scheduler stopped; show times in Sydney time; select a few rows rather than scrolling large tables.
 
@@ -311,6 +313,10 @@ These are in the seed history and support the reports and use cases:
 - **The nearest store can't supply, so it isn't offered.** A Penrith customer's 2 orthopaedic beds were held at Parramatta; never collected, so the order becomes overdue and is cancelled, returning the beds to the shelf.
 - **The customer picks a store with only some items.** A Bondi order whose dog beds and scratching posts are in transit from Chatswood, so the order is not ready to collect (Report 5).
 
+### 10.6 The presentation
+
+The tutor's format (13 Oct): at most 10 minutes (going over is marked down), 3 or 4 slides (business problem, solution, architecture, learnings), and the video above played sped up in between, with every member presenting and answering questions. The plan, timing and question list are in `demo/demo_runbook.md`.
+
 ## 11. Brief items and where they are delivered
 
 | Brief item | Delivered by |
@@ -318,8 +324,8 @@ These are in the seed history and support the reports and use cases:
 | vi.a Source databases and schemas (≥ 3) | `store_ops`, `supply`, `online` (`workspace/db/02`–`04`) |
 | vi.b Integrated data warehouse (≥ 1) | `dw` (`workspace/db/05_warehouse.sql`) |
 | vi.c Commented SQL scripts with synthetic data, ETL | `workspace/db/01`–`08`, `workspace/db/seed/` |
-| vi.d Reports and dashboard per data use case (≥ 3) | Four data use cases Q1–Q4 (section 9), Reports 1–6 (`08_reports.sql`), dashboard (`workspace/dashboard/`) |
-| vi.e End-to-end testing and recorded demo video | `demo/demo_runbook.md`, `workspace/tests/` |
+| vi.d Reports and dashboard per data use case (≥ 3) | Four data use cases UC1–UC4 (section 9), Reports 1–6 (`08_reports.sql`), dashboard (`workspace/dashboard/`) |
+| vi.e End-to-end testing and recorded demo video | `demo/video_demo_script.sql` (recorded video, T1-T11), `workspace/tests/` (104 + 17 + 38 checks) |
 
 ## 12. Word list
 

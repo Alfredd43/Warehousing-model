@@ -40,7 +40,7 @@
   <li><b>The supplier delivery system</b> — records when suppliers drop off new stock at a shop.</li>
   <li><b>The online store</b> — the website. It shows customers <b>one number per product</b>: how many are available across all five shops combined.</li>
 </ol>
-<p>The catch is that the website's number isn't live. It only gets corrected by a <b>refresh</b>, which runs automatically <b>every 3 minutes</b>. Between refreshes it can be out of date ("stale").</p>
+<p>The business problem is that this number isn't live. Before this project it was updated only <b>once a day</b>, so it could show stock that no shop had. The prototype now corrects it with a <b>refresh</b> that runs automatically <b>every 3 minutes</b>, and checks real stock before payment. Between refreshes it can still be out of date ("stale"), and the warehouse measures that.</p>
 <p>Behind all three systems sits a <b>data warehouse</b>: one central record of every stock movement in the business. It's the business's record book: it watches and writes everything down, and all the reports read from it. It doesn't run the shops or the website.</p>
 <p>All three systems know a product by the same <b>item number</b>: the dog food is <i>P001</i> in the shops, at the supplier and on the website. What differs is how each system numbers its own transactions: a shop sale has a <b>receipt number</b>, an online purchase has an <b>order ID</b>, and a delivery has a <b>supplier ID</b> and <b>supplier order number</b>. The warehouse keeps that number on every record, so anything can be traced back. The systems still name the shops differently (Parramatta is store 101 at the till, NSW-PARRA for deliveries and CP-PARRAMATTA online), so the warehouse translates those into one code, <i>S01</i>.</p>
 
@@ -71,7 +71,7 @@
   <li><b>The warehouse records the reservation</b> automatically, as with shop sales.</li>
   <li><b>The customer collects</b> at Bondi, and the reserved bags leave the shop.</li>
 </ol>
-<p>If the customer cancels before collecting, the items go back on the shelf. If they never come, the overdue clean-up (run like the website refresh) cancels any order older than 3 days and puts the items back on the shelf. Either way, the website only finds out at the next refresh.</p>
+<p>If the customer cancels before collecting, the items go back on the shelf. If they never come, the overdue clean-up, which staff run by hand, cancels any order older than 3 days and puts the items back on the shelf. Either way, the website only finds out at the next refresh.</p>
 <p><b>Two customers, one item left:</b> putting something in a bag doesn't hold it. Whoever checks out first gets it. The other customer's checkout is stopped before payment, and the item stays in their bag.</p>
 
 <h2>3. An online customer buys items that are in different shops</h2>
@@ -91,16 +91,16 @@
 <p>Every step (set aside, sent, received, collected) is recorded in the warehouse, so the reports always show where each item is: <i>waiting to be sent</i>, <i>in transit</i> or <i>ready for collection</i>.</p>
 
 <h2 class="page-break">4. The website shows stock that isn't really there</h2>
-<p>This is the core business problem.</p>
+<p>This is what is left of the business problem between refreshes.</p>
 <p class="example">Example from the sample data: the website was refreshed when there were 7 aquarium kits. Since then, 5 were sold in the shops. The website still says 7, but only 2 are really left — one at Newtown and one at Penrith.</p>
 <ol>
   <li>A Bondi customer puts <b>3 kits</b> in their bag. The website says 7, so it lets them.</li>
   <li>They press checkout. <b>Before payment</b>, the system checks the real shop stock and finds that no shop has 3 kits. There are only 2 in total.</li>
   <li><b>Checkout is blocked.</b> The customer isn't charged, nothing is set aside, and they're shown which item can't be supplied. Their bag stays open, so they can remove it and buy the rest.</li>
-  <li>The warehouse records this as a <b>blocked checkout</b>, and <b>Report 3</b> lists it: <i>"website showed 7, really 2: stock sold since last sync, online number was stale."</i></li>
+  <li>The warehouse records this as a <b>blocked checkout</b>, and <b>Report 3</b> lists it: <i>"website showed 7, really 2: stock sold since the last refresh, website number was out of date."</i></li>
 </ol>
 <p>A checkout can also be blocked when there's enough in total but <b>no single shop</b> has the full amount — for example, 2 dog beds when the shops have 1 each. Report 3 gives that reason separately: <i>"enough stock in total but no single store had enough."</i></p>
-<p><b>Why this matters:</b> nobody is ever charged for something that can't be supplied. But the customer was still shown stock that didn't exist and walked away disappointed: a lost sale. That's the cost of the out-of-date number, and the reports measure it.</p>
+<p><b>Why this matters:</b> nobody is ever charged for something that can't be supplied. But the customer was still shown stock that didn't exist and walked away disappointed: a potential lost sale. That's the cost of the out-of-date number, and the reports measure it.</p>
 
 <h2>5. The website refresh puts the website right</h2>
 <p>The website refresh runs automatically every 3 minutes. (It can also be run by hand at any time, which is how the demonstration shows it on cue.) Each time, it:</p>
@@ -120,8 +120,8 @@
   <tr><td>Online order</td><td>Customer picks from the shops that have their items; real stock checked before payment; set aside; website drops instantly</td></tr>
   <tr><td>Items in different shops</td><td>Each item set aside where it's found, sent to the chosen shop, collected together once all have arrived</td></tr>
   <tr><td>Two customers, one item left</td><td>Whoever checks out first gets it; the other is stopped before payment and keeps it in their bag</td></tr>
-  <tr><td>Not collected in 3 days</td><td>Cancelled by the overdue clean-up, items back on the shelf</td></tr>
-  <tr><td>Website shows stock that's gone</td><td>Checkout blocked before payment, no charge, recorded as a lost sale in Report 3</td></tr>
+  <tr><td>Not collected in 3 days</td><td>Cancelled when staff run the overdue clean-up, items back on the shelf</td></tr>
+  <tr><td>Website shows stock that's gone</td><td>Checkout blocked before payment, no charge, recorded as a potential lost sale in Report 3</td></tr>
   <tr><td>Website refresh (every 3 minutes, or by hand)</td><td>Website corrected straight from the shops' shelf totals; the warehouse logs every change before → after</td></tr>
 </table>
 

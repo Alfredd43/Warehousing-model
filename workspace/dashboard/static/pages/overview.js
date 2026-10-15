@@ -1,4 +1,4 @@
-// Overview: the admin's start page. What needs attention right now, in a few
+// Overview: the start page, mainly for the owner. What needs attention right now, in a few
 // numbers, each linking to the page with the detail.
 
 import { get } from "../api.js";
@@ -66,7 +66,7 @@ export default {
           value: `${st.out_of_stock} out · ${st.low_stock} low`,
           note: "store shelves with 0 or 1–2 left",
           tone: st.out_of_stock ? "bad" : st.low_stock ? "warn" : "good" }),
-        tile({ label: "Lost sales (7 days)", page: "checkout",
+        tile({ label: "Potential lost sales (7 days)", page: "checkout",
           value: `${l.units} unit${l.units === 1 ? "" : "s"}`,
           note: `${l.items} item${l.items === 1 ? "" : "s"} blocked at checkout`,
           tone: l.items ? "warn" : "good" }),
@@ -123,8 +123,8 @@ export default {
     function lostCard() {
       const rows = data.lost_sales.rows;
       return card({
-        id: "lost-sales", title: "Latest lost sales",
-        actions: h("a", { href: "#/checkout" }, "All lost sales"),
+        id: "lost-sales", title: "Latest potential lost sales",
+        actions: h("a", { href: "#/checkout" }, "All potential lost sales"),
         body: table({
           caption: "Latest items customers could not buy at checkout",
           columns: [
@@ -132,7 +132,7 @@ export default {
             { label: "Product", render: (r) => r.product_name, sub: (r) => `${r.units} unit${r.units === 1 ? "" : "s"} · ${r.pickup_store.replace("PetHaven ", "")}` },
             { label: "Why", render: (r) => REASON[r.reason_code] },
           ],
-          rows, empty: state("", "No lost sales recorded", ""),
+          rows, empty: state("", "No potential lost sales recorded", ""),
         }),
       });
     }

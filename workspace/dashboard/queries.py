@@ -143,18 +143,18 @@ def health(conn, params) -> Result:
     return Result(r)
 
 
-# --- Overview: what the admin needs to act on -----------------------------------------
+# --- Overview: what the owner needs to act on -----------------------------------------
 def overview(conn, params) -> Result:
     """Headline numbers and attention lists, all from the existing report views."""
     website = row(conn, """
         SELECT count(*)                                                   AS products,
-               count(*) FILTER (WHERE status <> 'in sync')                AS out_of_date,
+               count(*) FILTER (WHERE status <> 'matches')                AS out_of_date,
                count(*) FILTER (WHERE overstated_by > 0)                  AS overstated,
                count(*) FILTER (WHERE overstated_by < 0)                  AS understated
           FROM dw.rpt_online_vs_actual""")
     website["rows"] = rows(conn, """
         SELECT product_code, product_name, online_shown, actual_in_store, overstated_by AS difference
-          FROM dw.rpt_online_vs_actual WHERE status <> 'in sync'
+          FROM dw.rpt_online_vs_actual WHERE status <> 'matches'
          ORDER BY abs(overstated_by) DESC, product_code LIMIT 6""")
     sync = row(conn, """
         SELECT scheduler_status, extract(epoch FROM sync_interval)::integer AS interval_seconds,
@@ -174,7 +174,7 @@ def overview(conn, params) -> Result:
           FROM dw.rpt_checkout_blocked WHERE attempted_at > now() - interval '7 days'""")
     lost["rows"] = rows(conn, """
         SELECT attempted_at, product_code, product_name, quantity_in_bag AS units, pickup_store,
-               CASE WHEN starts_with(reason, 'stock sold since last sync') THEN 'stale' ELSE 'split' END AS reason_code
+               CASE WHEN starts_with(reason, 'stock sold since the last refresh') THEN 'stale' ELSE 'split' END AS reason_code
           FROM dw.rpt_checkout_blocked ORDER BY attempted_at DESC LIMIT 4""")
     orders = row(conn, """
         SELECT count(DISTINCT order_no)                                   AS open_orders,
@@ -188,7 +188,7 @@ def overview(conn, params) -> Result:
          GROUP BY channel ORDER BY channel""")
     return Result({"website": website, "sync": sync, "stock": stock, "lost_sales": lost, "orders": orders,
                    "sales_7_days": {r["channel"]: r["units"] for r in sales}, "quality": quality_summary(conn)},
-                  scope="All five stores; lost sales and sales over the last 7 days",
+                  scope="All five stores; potential lost sales and sales over the last 7 days",
                   provenance=["dw.rpt_online_vs_actual", "dw.rpt_online_staleness", "dw.rpt_current_stock_by_store",
                               "dw.rpt_checkout_blocked", "dw.rpt_open_reservations", "dw.rpt_daily_sales"])
 
@@ -336,7 +336,7 @@ def checkout_blocked(conn, params) -> Result:
                b.website_showed AS website_shown_then,
                b.actual_combined_at_checkout AS combined_available_then,
                ps.store_code AS pickup_store_code, b.pickup_store, b.reason AS report_reason,
-               CASE WHEN starts_with(b.reason, 'stock sold since last sync') THEN 'stale' ELSE 'split' END AS reason_code
+               CASE WHEN starts_with(b.reason, 'stock sold since the last refresh') THEN 'stale' ELSE 'split' END AS reason_code
           FROM dw.rpt_checkout_blocked b
           JOIN dw.dim_product p ON p.product_code = b.product_code
           JOIN dw.fact_stock_event f

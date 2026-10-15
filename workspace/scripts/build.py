@@ -30,16 +30,16 @@ def main() -> int:
             UNION ALL SELECT 'source records extracted to staging', count(*) FROM etl.v_staging
             UNION ALL SELECT 'stock events loaded into warehouse', count(*) FROM dw.fact_stock_event
             UNION ALL SELECT 'source records rejected by ETL', count(*) FROM etl.v_data_quality
-            UNION ALL SELECT 'syncs', count(*) FROM dw.sync_run
-            UNION ALL SELECT 'events pending sync', pending_events FROM dw.rpt_online_staleness
+            UNION ALL SELECT 'website refreshes', count(*) FROM dw.sync_run
+            UNION ALL SELECT 'events since the last refresh', pending_events FROM dw.rpt_online_staleness
             UNION ALL SELECT 'store/product pairs not reconciled', count(*) FROM dw.rpt_reconciliation WHERE status <> 'match'"""))
     finally:
         conn.close()
     print(f"\nDone. Try: python /workspace/scripts/demo.py report all")
     if scheduler_running():
-        print("The automatic sync scheduler is running; it reconnects to the new database within a few seconds.")
+        print("The automatic website refresh is running; it reconnects to the new database within a few seconds.")
     else:
-        print(f"The automatic sync is not started. To sync every {db.SYNC_INTERVAL_SECONDS} s: "
+        print(f"The automatic website refresh is not started. To refresh every {db.SYNC_INTERVAL_SECONDS} s: "
               f"python /workspace/scripts/demo.py scheduler start")
     return 0
 

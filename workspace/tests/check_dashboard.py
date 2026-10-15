@@ -117,7 +117,7 @@ def main() -> int:
     ov = o["data"]
     check("D8 overview: website accuracy equals dw.rpt_online_vs_actual",
           (sql("SELECT count(*) FROM dw.rpt_online_vs_actual")[0][0],
-           sql("SELECT count(*) FROM dw.rpt_online_vs_actual WHERE status <> 'in sync'")[0][0]),
+           sql("SELECT count(*) FROM dw.rpt_online_vs_actual WHERE status <> 'matches'")[0][0]),
           (ov["website"]["products"], ov["website"]["out_of_date"]))
     check("D8 overview: stock alerts equal dw.rpt_current_stock_by_store",
           tuple(sql("""SELECT count(*) FILTER (WHERE in_store_quantity = 0),

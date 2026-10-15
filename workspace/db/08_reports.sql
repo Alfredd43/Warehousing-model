@@ -5,7 +5,7 @@
 -- Prerequisites: 05_warehouse.sql, 06_etl.sql.
 --
 --   Report 1  dw.rpt_current_stock_by_store   in-store vs reserved per store/product
---   Report 2  dw.rpt_online_staleness         sync interval, time since last sync, next sync, pending events
+--   Report 2  dw.rpt_online_staleness         refresh interval, time since last refresh, next refresh, pending events
 --             dw.rpt_online_vs_actual         website number vs real total per product
 --             dw.rpt_last_sync_changes        before/after of the most recent sync
 --   Report 3  dw.rpt_checkout_blocked         bag items blocked at checkout although the website showed them
@@ -59,14 +59,14 @@ SELECT p.product_code,
        CASE
            WHEN os.available_quantity > coalesce(a.actual_in_store, 0) THEN 'overstated - oversell risk'
            WHEN os.available_quantity < coalesce(a.actual_in_store, 0) THEN 'understated - lost sales risk'
-           ELSE 'in sync'
+           ELSE 'matches'
        END                                                     AS status,
        os.last_synced_at                                       AS synced_at
   FROM dw.dim_product p
   JOIN online.online_stock os ON os.item_no = p.product_code
   LEFT JOIN actual a          ON a.product_key = p.product_key;
 COMMENT ON VIEW dw.rpt_online_vs_actual IS
-'Report 2 (detail). The number the website shows right now next to the real combined in-store stock from the warehouse, per product sold online. Shows what a sync would correct.';
+'Report 2 (detail). The number the website shows right now next to the real combined in-store stock from the warehouse, per product sold online. Shows what the next website refresh would correct.';
 
 -- The interval comes from the scheduler's registration (online.sync_schedule):
 -- the value is configured once in the scheduler (SYNC_INTERVAL_SECONDS); this
@@ -103,13 +103,13 @@ SELECT ls.sync_id                                                        AS last
          WHERE event_type IN ('reservation', 'transfer_out', 'transfer_in', 'collection', 'cancellation'))
                                                                          AS pending_order_events,
        (SELECT count(*) FROM pending WHERE event_type = 'checkout_blocked') AS pending_checkout_blocks,
-       (SELECT count(*) FROM dw.rpt_online_vs_actual WHERE status <> 'in sync') AS products_out_of_date,
+       (SELECT count(*) FROM dw.rpt_online_vs_actual WHERE status <> 'matches') AS products_out_of_date,
        (SELECT count(*) FROM etl.v_data_quality)                         AS source_rows_not_loaded
   FROM (SELECT 1) AS one
   LEFT JOIN last_sync ls ON true
   LEFT JOIN schedule sc  ON true;
 COMMENT ON VIEW dw.rpt_online_staleness IS
-'Report 2 (summary). The configured sync interval and whether the scheduler is running, when the website was last synced (and by whom), when the next sync is due, how many stock events happened since, how many product numbers are wrong now, and how many source rows the ETL could not load.';
+'Report 2 (summary). The configured refresh interval and whether the scheduler is running, when the website was last refreshed (and by whom), when the next refresh is due, how many stock events happened since, how many product numbers are wrong now, and how many source rows the ETL could not load.';
 
 CREATE VIEW dw.rpt_last_sync_changes AS
 SELECT r.sync_id,
@@ -129,7 +129,7 @@ SELECT r.sync_id,
  WHERE c.changed
    AND c.sync_id = (SELECT max(sync_id) FROM dw.sync_run);
 COMMENT ON VIEW dw.rpt_last_sync_changes IS
-'Report 2 (before/after). Every store and website number the most recent sync changed.';
+'Report 2 (before/after). Every store and website number the most recent website refresh changed.';
 
 -- Report 3 ------------------------------------------------------------------
 CREATE VIEW dw.rpt_checkout_blocked AS
@@ -143,7 +143,7 @@ SELECT f.order_ref                                 AS basket,
        real_total.actual_in_store                  AS actual_combined_at_checkout,
        CASE
            WHEN real_total.actual_in_store < f.units
-               THEN 'stock sold since last sync - online number was stale'
+               THEN 'stock sold since the last refresh - website number was out of date'
            ELSE 'enough stock in total but no single store had enough'
        END                                         AS reason
   FROM dw.fact_stock_event f
@@ -174,7 +174,7 @@ SELECT f.order_ref                                 AS basket,
   ) real_total
  WHERE f.event_type = 'checkout_blocked';
 COMMENT ON VIEW dw.rpt_checkout_blocked IS
-'Report 3. Items customers put in their bag because the website showed them in stock, but checkout blocked before payment because no single store could supply them: the pickup store, what the website showed versus what was really there, and why. Lost sales caused by stale data.';
+'Report 3. Items customers put in their bag because the website showed them in stock, but checkout blocked before payment because no single store could supply them: the pickup store, what the website showed versus what was really there, and why. Potential lost sales: the customer was not charged and may still have bought later.';
 
 -- Report 4 ------------------------------------------------------------------
 CREATE VIEW dw.rpt_daily_sales AS

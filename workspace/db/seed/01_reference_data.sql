@@ -16,7 +16,7 @@
 -- Item P019 (Crinkle Cat Tunnel) is a new line: it is in the store and
 -- supplier catalogues but NOT yet on the warehouse product list, and is not
 -- sold online. Moving its stock exercises the ETL's "Unknown item" rejection
--- (see demo/demo_runbook.md, data quality step).
+-- (see demo/video_demo_script.sql, section 7, validation test).
 -- =============================================================================
 
 -- One authoring table so each product sits on one line. Not part of the

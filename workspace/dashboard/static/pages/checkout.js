@@ -1,4 +1,4 @@
-// Orders & lost sales (Report 3: items blocked at checkout) + open click & collect orders.
+// Orders & potential lost sales (Report 3: items blocked at checkout) + open click & collect orders.
 
 import { get } from "../api.js";
 import { h, clear, fmt, badge, card, state, loading, field, select, table, tabs, kv, errorState, keepFocus } from "../components/ui.js";
@@ -59,11 +59,11 @@ export default {
       const tab = params.tab === "reservations" ? "reservations" : "blocked";
       root.append(h("div", { class: "page-head" },
         h("div", {},
-          h("h1", {}, "Orders & lost sales"),
+          h("h1", {}, "Orders & potential lost sales"),
           h("p", { class: "subtitle" }, tab === "blocked"
             ? "Items customers tried to buy online that no store could supply. Nobody was charged."
             : "Click & collect orders still waiting to be collected."))));
-      root.append(tabs([{ value: "blocked", label: "Lost sales" }, { value: "reservations", label: "Click & collect orders" }], tab,
+      root.append(tabs([{ value: "blocked", label: "Potential lost sales" }, { value: "reservations", label: "Click & collect orders" }], tab,
         (v) => app.setParams({ tab: v === "blocked" ? "" : v }), "Checkout views"));
       if (tab === "blocked") drawBlocked(); else drawReservations();
     }
@@ -90,11 +90,11 @@ export default {
 
       const selectedEvent = params.event;
       const units = rows.reduce((n, r) => n + (r.requested || 0), 0);
-      root.append(h("p", { class: "lede" }, h("b", {}, `${rows.length} lost sale${rows.length === 1 ? "" : "s"}`),
+      root.append(h("p", { class: "lede" }, h("b", {}, `${rows.length} potential lost sale${rows.length === 1 ? "" : "s"}`),
         ` · ${fmt.units(units)}`, rows.length !== all.length ? ` (of ${all.length} recorded)` : ""));
       if (params.attempt) root.append(attemptCard());
       root.append(card({
-        id: "blocked-table", title: "Lost sales",
+        id: "blocked-table", title: "Potential lost sales",
         subtitle: "Select a row to see the customer's checkout.",
         body: table({
           caption: "Items blocked at checkout before payment",

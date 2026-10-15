@@ -11,7 +11,7 @@ const PAGES = [
   { id: "overview", label: "Overview", icon: "overview", module: overview },
   { id: "website", label: "Website stock", icon: "website", module: website },
   { id: "inventory", label: "Store stock", icon: "inventory", module: inventory },
-  { id: "checkout", label: "Orders & lost sales", icon: "checkout", module: checkout },
+  { id: "checkout", label: "Orders & potential lost sales", icon: "checkout", module: checkout },
 ];
 
 const els = {

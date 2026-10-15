@@ -35,7 +35,7 @@ Usage (from the repository root; prefix every command with
   Reports
     online                           website number vs real stock, per product
     report stock [S01]               1 current stock by store (in-store vs reserved)
-    report staleness                 2 time since last sync, pending events, last sync changes
+    report staleness                 2 time since last refresh, pending events, last refresh changes
     report blocked                   3 bag items blocked at checkout although the website showed them
     report sales                     4 units sold per day, store and category
     report reservations              5 click-and-collect order lines not yet collected (transfers too)
@@ -284,7 +284,7 @@ def cmd_online(conn, args) -> None:
 def cmd_sync(conn, args) -> None:
     show(conn, "BEFORE sync: products whose website number is wrong", """
         SELECT product_code, product_name, online_shown, actual_in_store, status
-          FROM dw.rpt_online_vs_actual WHERE status <> 'in sync' ORDER BY product_code""")
+          FROM dw.rpt_online_vs_actual WHERE status <> 'matches' ORDER BY product_code""")
     _, rows = db.query(conn, "SELECT online.sync_website_stock(now(), 'manual')")
     conn.commit()
     sync_no = rows[0][0]

@@ -2,14 +2,14 @@
 
 This document is the solution design behind the prototype in `workspace/`. It covers the architecture, the conceptual and logical data models, the ETL, the website refresh, the reports, the reasons for the design and its trade-offs, and a short data dictionary ([section 13](#13-data-dictionary)). Section numbers follow the report structure in the brief (section v. Solution Design, section vi. Prototype); [section 12](#12-mapping-to-the-assignment-brief) maps each brief item to the files that implement it.
 
-- Business rules and scope: [Spec](../00_req_feedback/Assignment2_Spec.md)
+- Business rules and scope: [Spec](../00_req_feedback/Assignment2_Spec_update.md)
 - Rule → SQL → check mapping: [traceability.md](traceability.md)
 - Verification results and limitations: [implementation_notes.md](implementation_notes.md)
-- Live demonstration script: [demo_runbook.md](../demo/demo_runbook.md)
+- Recorded end-to-end test: [video_demo_script.sql](../demo/video_demo_script.sql); presentation plan: [demo_runbook.md](../demo/demo_runbook.md)
 
 ## 1. Problem in one paragraph
 
-PetHaven has five Sydney stores and an online store. The website shows **one combined available quantity per product** for all five stores, but that number changes only when the website extracts the store totals (a **website refresh**): automatically every 3 minutes (`SYNC_INTERVAL_SECONDS = 180`), or by hand. Between refreshes, in-store sales, supplier deliveries and store-side cancellations change the real stock without the website knowing. Customers therefore put items in their bag that the website says are in stock but no store can supply; checkout checks real stock **before payment** and blocks them, so the stale number costs a sale and the customer's trust instead of a cancelled paid order. It can also hide stock that is really there. The prototype integrates the three operational systems into one data warehouse, refreshes the website number on a schedule straight from the store system, and uses the warehouse to report how stale the website was, what each website refresh corrected, and which customers were affected. Operational systems talk to each other directly; the warehouse only records and analyses.
+PetHaven has five Sydney stores and an online store. **Business problem:** product stock is not updated in real time between in-store and online sales, so stock sold in one channel can still show as available in the other. The website shows **one combined available quantity per product** for all five stores; before this project that number came from a once-a-day extract. The solution shortens that data extraction to every 3 minutes (a **website refresh**, `SYNC_INTERVAL_SECONDS = 180`, or by hand) and checks real stock at checkout. Between refreshes, in-store sales, supplier deliveries and store-side cancellations change the real stock without the website knowing. Customers therefore put items in their bag that the website says are in stock but no store can supply; checkout checks real stock **before payment** and blocks them, so the stale number costs a sale and the customer's trust instead of a cancelled paid order. It can also hide stock that is really there. The prototype integrates the three operational systems into one data warehouse, refreshes the website number on a schedule straight from the store system, and uses the warehouse to report how stale the website was, what each website refresh corrected, and which customers were affected. Operational systems talk to each other directly; the warehouse only records and analyses.
 
 ## 2. Solution architecture
 
@@ -420,7 +420,7 @@ Times are relative to the build day, so "time since refresh" and "overdue" are a
 | CDC + micro-batch ETL in the same transaction | The user requirement is that every sale, supplier delivery and order is in the warehouse immediately, so the website refresh and reports never miss an event. Running the full extract-transform-load inside the source transaction guarantees source and warehouse cannot diverge, with no ETL scheduler to run in the lab. |
 | Staging in source format | Keeps the extracted evidence unchanged (cartons, UTC, source store codes, transaction IDs), so every transformation is visible and re-runnable. |
 | Website number comes from the store system, not the warehouse | A data warehouse is for analysis. The number the website shows is operational and the store system already holds it, so the online store reads it there directly — as checkout does. The warehouse records each website refresh and reports on it, so analytics never sits in the path of trading. |
-| Website refresh every 3 minutes, plus a manual "refresh now" | The business problem is staleness, so how long the website can be wrong matters. A short interval (tutor feedback: a few minutes, not 30) keeps the window small without refreshing on every sale. The interval lives in one configuration value so it can be changed without touching SQL. The manual trigger stays so the demo can build a stale state and show the correction on cue. |
+| Website refresh every 3 minutes, plus a manual "refresh now" | The business problem is staleness, so how long the website can be wrong matters. A short interval (tutor feedback, 6 Oct: every few minutes) keeps the window small without refreshing on every sale. The interval lives in one configuration value so it can be changed without touching SQL. The manual trigger stays so the demo can build a stale state and show the correction on cue. |
 | Scheduler as a small Python process in the lab's `python` container | No new container and no database extension (such as pg_cron) is needed; the lab stays as supplied. The website refresh logic stays in SQL (`online.sync_website_stock`); the scheduler only decides *when*. |
 | Website deducts its own orders immediately | The website knows its own sales. Only changes it cannot see (other channels, supplier deliveries, store-side cancellations) need the website refresh. |
 | One pickup store per order; missing lines transferred in from the nearest store that has them | Click-and-collect means one pickup location for the customer. Taking a missing line from the next-nearest store and transferring it keeps the order together instead of failing it, which is how multi-store retailers fulfil click-and-collect. |
@@ -439,7 +439,7 @@ Times are relative to the build day, so "time since refresh" and "overdue" are a
 | SCD type 1 dimensions | A price change rewrites history; `rpt_daily_sales` values sales at the current price. | SCD type 2 for product prices, or store the sale price on the fact. |
 | Reports as views over the full fact | Simple and always current; cost grows with history. | Periodic snapshot fact for daily stock, partitioning by `date_key`, materialised views. |
 | Each order item comes from one store | An item that only several stores together could supply (e.g. 2 beds, 1 at each of two stores) is blocked at checkout, reported with the reason "no single store had enough". | Split an item across several transfers. |
-| The website number can be up to 3 minutes stale on the product page | Customers can add items that turn out to be unavailable at checkout — a lost sale and a frustrated customer, though never a cancelled payment. | Check real stock when the item is added to the bag too, or refresh on every stock change (event-driven). |
+| The website number can be up to 3 minutes stale on the product page | Customers can add items that turn out to be unavailable at checkout: a potential lost sale and a frustrated customer, though never a cancelled payment. | Check real stock when the item is added to the bag too, or refresh on every stock change (event-driven). |
 | Only stores holding an item are offered for pickup | A customer cannot choose a store that has none of the items, even if it is closer. | Offer every store and transfer everything in. |
 | Overdue orders are cancelled by a job someone runs | `cancel_overdue_orders` is run by hand. | Run it on a schedule, like the website refresh. |
 | Transfers are instant to record | Dispatch and receive are explicit steps but have no courier, transit time or cost. | Transfer scheduling and transit-time estimates. |
@@ -461,7 +461,7 @@ Times are relative to the build day, so "time since refresh" and "overdue" are a
 | vi.b Integrated data warehouse (≥ 1) | `workspace/db/05_warehouse.sql` (+ `07_sync.sql`) |
 | vi.c SQL scripts: create, extract, transform, load, synthetic data | `01_schemas.sql`; `06_etl.sql` (extract → transform → validate → load); `seed/01_reference_data.sql`, `seed/02_business_history.sql` |
 | vi.d Reports (≥ 3) | `workspace/db/08_reports.sql` (6 reports) |
-| vi.e End-to-end testing | `workspace/tests/check_demo.py` (104 checks), `check_scheduler.py` (17), `check_dashboard.py` (38), `demo/vedio_demo_script.sql`, [demo/demo_runbook.md](../demo/demo_runbook.md) |
+| vi.e End-to-end testing | `workspace/tests/check_demo.py` (104 checks), `check_scheduler.py` (17), `check_dashboard.py` (38), `demo/video_demo_script.sql`, [demo/demo_runbook.md](../demo/demo_runbook.md) |
 
 ### File map
 
@@ -480,8 +480,8 @@ workspace/scripts/pethaven_db.py        shared settings, incl. SYNC_INTERVAL_SEC
 workspace/scripts/build.py              rebuild pethaven_demo
 workspace/scripts/demo.py               demo commands (incl. scheduler start / stop / status)
 workspace/scripts/sync_scheduler.py     runs the website refresh every SYNC_INTERVAL_SECONDS
-demo/demo_runbook.md                   classroom presentation runbook (steps + SQL)
-demo/vedio_demo_script.sql             recorded end-to-end test (T1-T11)
+demo/video_demo_script.sql             recorded end-to-end test video, incl. dashboard (T1-T11)
+demo/demo_runbook.md                   presentation plan (slides + video sped up, 10 min)
 workspace/tests/check_demo.py           104 behaviour checks on pethaven_check
 workspace/tests/check_scheduler.py      17 checks that the scheduler refreshes at its interval
 workspace/tests/check_dashboard.py      38 dashboard API checks

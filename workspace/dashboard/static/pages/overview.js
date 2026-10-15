@@ -50,8 +50,7 @@ export default {
     function draw() {
       const root = clear(top);
       root.append(h("div", { class: "page-head" },
-        h("div", {}, h("h1", {}, "Overview"),
-          h("p", { class: "subtitle" }, "How the business did in the last 7 days, and where the stock problem cost sales."))));
+        h("div", {}, h("h1", {}, "Overview"))));
       if (error) return root.append(card({ label: "Error", body: errorState(error, () => load().catch(() => {})) }));
       if (!data) return root.append(card({ label: "Loading", body: loading("Loading overview") }));
       root.append(kpis(), h("div", { class: "overview-grid owner" },
@@ -63,7 +62,7 @@ export default {
       return h("a", { class: `kpi ${tone}`, href: `#/${page}${params ? `?${params}` : ""}`, onclick },
         h("span", { class: "kpi-label" }, label),
         h("strong", { class: "kpi-value" }, value),
-        h("span", { class: "kpi-note" }, note));
+        note ? h("span", { class: "kpi-note" }, note) : null);
     }
 
     function kpis() {
@@ -71,23 +70,19 @@ export default {
       const running = s.scheduler_status === "running";
       const store = sales["in-store"], online = sales.online;
       return h("div", { class: "kpis" },
-        tile({ label: "Sales (7 days)", page: "inventory",
+        tile({ label: "Sales", page: "inventory",
           value: money.format(store.value + online.value),
           note: `in-store ${money.format(store.value)} · online ${money.format(online.value)}`,
           tone: "neutral" }),
-        tile({ label: "Units sold (7 days)", page: "inventory",
-          value: fmt.num(store.units + online.units),
-          note: `${fmt.num(store.units)} in-store · ${fmt.num(online.units)} online`,
-          tone: "neutral" }),
-        tile({ label: "Potential lost sales (7 days)", page: "overview", onclick: showLost(),
+        tile({ label: "Potential lost sales", page: "overview", onclick: showLost(),
           value: money.format(l.value),
           note: l.units
-            ? `${fmt.units(l.units)} · ${pct.format(l.share_of_online_demand)} of online demand`
+            ? `${pct.format(l.share_of_online_demand)} of online demand`
             : "No checkout was blocked",
           tone: l.units ? "bad" : "good" }),
         tile({ label: "Out of stock", page: "inventory", params: "low=1",
           value: `${fmt.num(oos.shelves)} shel${oos.shelves === 1 ? "f" : "ves"}`,
-          note: oos.shelves ? `empty in ${plural(oos.stores, "store", "stores")} · see Needs attention` : "every store has every product",
+          note: oos.shelves ? `in ${plural(oos.stores, "store", "stores")}` : "every store has every product",
           tone: oos.shelves ? "bad" : "good" }),
         tile({ label: "Website accuracy", page: "website",
           value: w.out_of_date ? `${w.out_of_date} wrong` : "All correct",
@@ -102,11 +97,8 @@ export default {
 
     // ---------- which part of the business needs the owner ----------
     function attention() {
-      const { website: w, sync: s, quality: q, stores } = data;
+      const { website: w, quality: q, stores } = data;
       const items = [];
-      if (s.scheduler_status !== "running")
-        items.push(h("li", { class: "todo-warn" }, dot(), h("span", { class: "todo-text" }, "The automatic website refresh is not running"),
-          h("a", { href: "#/website" }, "See website stock")));
       if (w.out_of_date)
         items.push(h("li", { class: "todo-bad" }, dot(), h("span", { class: "todo-text" }, `${plural(w.out_of_date, "product shows", "products show")} the wrong stock on the website`),
           h("a", { href: "#/website" }, "See website stock")));
@@ -124,7 +116,6 @@ export default {
       }
       return card({
         id: "attention", title: "Needs attention",
-        subtitle: "Stores are listed when a checkout was blocked, a product is out of stock or an order is overdue.",
         body: items.length
           ? h("ul", { class: "todo" }, items)
           : state("", "All stores are running normally", "The website matches the stores, and no store has a blocked checkout, an empty shelf or an overdue order."),
@@ -139,7 +130,6 @@ export default {
       const max = Math.max(1, ...rows.map((r) => r.units));
       return card({
         id: "best-sellers", title: "Best sellers",
-        subtitle: "Top 8 products by units sold in the last 7 days.",
         actions: h("a", { href: "#/inventory" }, "Stock and sales"),
         body: rows.length
           ? h("div", { class: "bs" },
@@ -147,16 +137,15 @@ export default {
                 h("span", {}, h("i", { class: "bs-swatch bs-swatch-store" }), "In-store"),
                 h("span", {}, h("i", { class: "bs-swatch bs-swatch-online" }), "Online")),
               h("ol", { class: "bs-list" }, rows.map((r) => h("li", { class: "bs-row" },
-                h("span", { class: "bs-name" }, r.product_name, h("span", { class: "cell-sub" }, r.product_code,
-                  r.out_of_stock_stores ? [" · ", h("a", { class: "bs-flag", href: `#/inventory?q=${r.product_code}&layout=product` },
-                    `out of stock in ${r.out_of_stock_stores} of ${data.store_count} stores`)] : null)),
+                h("span", { class: "bs-name" }, r.product_name, r.out_of_stock_stores ? h("span", { class: "cell-sub" },
+                  h("a", { class: "bs-flag", href: `#/inventory?q=${encodeURIComponent(r.product_name)}&layout=product` },
+                    `out of stock in ${r.out_of_stock_stores} of ${data.store_count} stores`)) : null),
                 h("span", { class: "bs-track", role: "img", "aria-label": `${r.in_store} in-store, ${r.online} online` },
                   h("span", { class: "bs-store", style: `width:${(r.in_store / max) * 100}%` }),
                   h("span", { class: "bs-online", style: `width:${(r.online / max) * 100}%` })),
                 h("span", { class: "bs-value" }, fmt.units(r.units),
-                  h("span", { class: "cell-sub" }, `${(r.units / 7).toFixed(1)} a day · ${money.format(r.value)}`))))))
+                  h("span", { class: "cell-sub" }, money.format(r.value)))))))
           : state("", "No sales in the last 7 days", ""),
-        foot: "Online sales count at the pickup store, less cancellations. Values at current price. A best seller with an empty shelf in any store is marked in red.",
       });
     }
 

@@ -265,7 +265,7 @@ Report 1 gives available, reserved and on-hand units for every store and product
 
 #### UC4: click and collect orders (store staff)
 
-Report 5 lists open click and collect orders for each store, most urgent first: lines to send to another store, lines in transit, orders ready to collect and orders overdue. An order is ready only when every item is at the pickup store, and it becomes overdue when it has been ready for more than 3 days without being collected, so a late transfer never makes an order overdue.
+Report 5 lists open click and collect orders for each store, most urgent first: lines to send to another store, lines in transit, orders ready to collect and orders overdue. An order is ready only when every item is at the pickup store, and it becomes overdue when it has been ready for more than 3 days without being collected, so a late transfer never makes an order overdue. The counts at the top use two units: overdue and ready count whole orders, while "to send" and "in transit" count item lines, because one order can take items from several stores. Each item line shows its own status; an item from another store moves from waiting to be sent, to in transit, to ready for collection. Overdue is the only status that belongs to the whole order, so it is marked next to the order number. The order time is when the customer paid and the items were held. Orders are identified by order number only; no customer names are stored.
 
 > **[TODO Figure]** Dashboard, Click & collect orders, with the overdue order at Parramatta and the Bondi order waiting for two items in transit.
 

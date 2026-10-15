@@ -178,7 +178,8 @@ export function segmented(label, options, value, onChange) {
  * Accessible data table.
  * columns: [{key, label, num, render(row) -> Node|string, sub(row)}]
  */
-export function table({ columns, rows, caption, rowKey, selectedKey, onSelect, empty, rowClass }) {
+// detail(row), if given, opens under the selected row.
+export function table({ columns, rows, caption, rowKey, selectedKey, onSelect, empty, rowClass, detail }) {
   if (!rows.length) return empty || state("", "No rows", "");
   const tbody = h("tbody");
   for (const r of rows) {
@@ -203,6 +204,7 @@ export function table({ columns, rows, caption, rowKey, selectedKey, onSelect, e
         c.sub ? h("span", { class: "cell-sub" }, c.sub(r)) : null));
     }
     tbody.append(tr);
+    if (selected && detail) tbody.append(h("tr", { class: "row-detail" }, h("td", { colspan: columns.length }, detail(r))));
   }
   return h("div", { class: "table-wrap" },
     h("table", {},

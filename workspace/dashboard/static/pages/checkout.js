@@ -78,12 +78,10 @@ export default {
         .sort((a, b) => b.attempted_at.localeCompare(a.attempted_at));
       const store = params.pickup && all.find((r) => r.pickup_store_code === params.pickup);
       const shown = showAll ? rows : rows.slice(0, SHOWN);
-      const units = rows.reduce((n, r) => n + (r.requested || 0), 0);
-      const value = rows.reduce((n, r) => n + (r.value || 0), 0);
       const showAllStores = h("button", { class: "btn btn-small", type: "button", onclick: () => app.setParams({ pickup: "", attempt: "", event: "" }) }, "All stores");
       return card({
         ...head,
-        subtitle: `${store ? `Pickup at ${store.pickup_store.replace("PetHaven ", "")} only. ` : ""}Online items no store could supply, newest first. Nobody was charged. Select one to see the checkout.`,
+        subtitle: store ? `Pickup at ${store.pickup_store.replace("PetHaven ", "")} only.` : null,
         actions: params.pickup ? showAllStores : null,
         body: h("div", {},
           table({
@@ -104,7 +102,6 @@ export default {
           rows.length > SHOWN ? h("div", { class: "table-note" },
             h("button", { class: "btn-link", type: "button", onclick: () => { showAll = !showAll; render(); } },
               showAll ? `Show the latest ${SHOWN}` : `Show all ${rows.length}`)) : null),
-        foot: rows.length ? `All recorded: ${rows.length} item${rows.length === 1 ? "" : "s"} · ${fmt.units(units)} · ${money.format(value)}.` : null,
       });
     }
 

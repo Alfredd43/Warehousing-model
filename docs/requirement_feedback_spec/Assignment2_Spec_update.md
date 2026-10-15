@@ -46,7 +46,7 @@ All three systems use the same item number for a product, but nobody could see h
 
 Parts 1 and 2 make the problem smaller and stop it from charging customers for missing stock, but they do not remove it. Between refreshes the website number can still be wrong for up to 3 minutes, and a customer can still be blocked at checkout. The website is not refreshed on every sale because the three systems are separate: refreshing on every transaction would tie them together and add load to every sale, while the checkout check already protects the moment that matters.
 
-PetHaven therefore needs to measure the remaining gap: how often the website is wrong, by how much, for which products and stores, and how many checkouts it blocks. That needs records from all three systems, which each record stock in their own way (section 2.1). The ETL validates and converts them, and the warehouse combines them into one consistent view. Of the dashboard's data use cases (section 9), UC1 and UC2 measure the gap (how wrong the website is, and which checkouts it blocked); UC3 and UC4 show which stores are running low and where the real stock is.
+PetHaven therefore needs to see what the remaining gap costs and where it comes from: how much is sold in store and online, how many sales are lost at checkout and why, and whether the website number matches the stores. That needs records from all three systems, which each record stock in their own way (section 2.1). The ETL validates and converts them, and the warehouse combines them into one consistent view. Of the dashboard's data use cases (section 9), UC1 shows the business impact (what sold and what was lost at checkout) and UC2 checks the cause (whether the website number is right and the refresh is running); UC3 and UC4 support the stores: which products a store is running low on, and which click & collect orders staff must prepare.
 
 ```text
 Business problem: stock is not updated in real time between in-store and online
@@ -222,34 +222,34 @@ Report views:
 
 ## 9. Dashboard: four data use cases
 
-The dashboard is the main business-facing output. It reads only the warehouse report views (plus the online system's checkout records as the source evidence for UC2). Pages: Overview, Website stock, Store stock, and Orders & potential lost sales.
+The dashboard is the main business-facing output. It reads only the warehouse report views (plus the online system's checkout records as the source evidence for UC1's lost sales). Pages: Overview (UC1, with Potential lost sales as its detail), Website stock (UC2), Store stock (UC3) and Click & collect orders (UC4).
 
 A data use case is one way a PetHaven user relies on the integrated data: who uses it, the question it answers, the decision it supports, and the report and dashboard page that deliver it. The four use cases below are what the reports and dashboard are built for (brief item vi.d, at least 3).
 
-Three roles use the dashboard. The **owner** is affected most by stock that customers cannot buy (lost sales and unhappy customers) and is the one who decides whether the solution is kept, so the owner's use cases have high impact. **Store managers** manage stock across the stores (medium impact). **Store staff** serve customers and handle click & collect orders: holding stock, transfers between stores, collections (low impact: day-to-day questions).
+Three roles use the dashboard, and each sees only the information it acts on. The **owner** looks after the whole business. Online is a channel to grow sales, and when website stock is wrong that channel loses sales. The owner is affected most and decides whether the solution is kept, so the owner's two use cases have high impact: UC1 shows the result (what sold and what was lost), UC2 the cause (whether the website number is right and the refresh is running). The owner does not watch individual shelves; if a product sells well, the owner asks the stores to keep more of it. **Store managers** look after the stock of their own store and reorder it (medium impact). **Store staff** at the click & collect counter prepare online orders: sending items to other stores, receiving transfers and handing orders over (low impact: day-to-day questions).
 
 ```text
                      DATA WAREHOUSE
                            │
                        DASHBOARD
         ┌──────────────────┼──────────────────┐
- Inventory position   Store comparison   Cross-system issues
-     UC3 + UC4                              UC1 + UC2
+      Owner          Store managers      Store staff
+    UC1 + UC2             UC3                UC4
 ```
 
 | Use case | User | Impact | Question it answers | Decision it supports |
 | --- | --- | --- | --- | --- |
-| UC1 Measure website accuracy | Owner | High | How inaccurate is website stock compared with real store stock, and what did the last refresh correct? | Whether the 3-minute refresh interval is short enough |
-| UC2 Measure the impact | Owner (final decision-maker) | High | Which checkouts were blocked because of inaccurate stock, for which products and stores, and why? | Which products and stores need attention; whether blocks come from a stale number or from stock split across stores |
-| UC3 Spot low stock | Store managers | Medium | Which stores have lower stock levels and may require replenishment? | Which stores to reorder for (the reorder itself is made outside this system) |
-| UC4 Locate stock | Store staff (main), store managers | Low | Where is stock available or reserved across PetHaven stores? | Which store can serve a customer, or send stock to another store |
+| UC1 See the business impact | Owner (final decision-maker) | High | In the last 7 days, how much did we sell in store and online, which products sell best and how fast, and how many sales did we lose at checkout, and why? | Which products need attention: best sellers to keep in stock, and products and stores that lose sales |
+| UC2 Check the website stock | Owner | High | Does the website show what the stores really have, and is the automatic refresh running? | Whether the online channel is working, or the refresh needs attention |
+| UC3 Spot low stock | Store managers | Medium | Which products is my store running low on? | What to reorder for my store (the order itself is placed outside this system) |
+| UC4 Prepare click & collect orders | Store staff | Low | Which orders must I send, receive or hand over, and which are overdue? | Which order to handle first |
 
 | Use case | Dashboard page | Source view | What it shows | Scope note |
 | --- | --- | --- | --- | --- |
-| UC1 | Website stock | Report 2 | Website vs real stock, discrepancy, status, last refresh and its corrections | The refresh corrects the website; the warehouse measures and records the discrepancy |
-| UC2 | Orders & potential lost sales | Report 3 + `online.checkout_attempt*` | Blocked checkout attempts: product, pickup store, website number shown, real stock, reason | The online system blocks the checkout; a blocked checkout is a potential, not confirmed, lost sale |
-| UC3 | Store stock | Report 1 | Available stock by store for one product, ranked; low-stock alerts per store | Identifies low stock; does **not** decide or execute replenishment |
-| UC4 | Store stock (open click & collect orders: Orders & potential lost sales → Click & collect orders) | Report 1 (Report 5) | Shelf (= available), reserved and on hand per store and product | Available = shelf (section 5.1); reserved = held for click & collect orders |
+| UC1 | Overview → Potential lost sales | Report 4 (sales per product and channel) + Report 3 (with sales value) + `online.checkout_attempt*` | Units and value sold in store and online; best sellers and units per day; sales lost at checkout (units, value, share of online demand) and why; owner-level alerts | Share of online demand lost = units blocked ÷ (units sold online + units blocked). A blocked checkout is a potential, not confirmed, lost sale. Sales value only: there are no cost prices (no profit) and no returns in the data |
+| UC2 | Website stock | Report 2 | Website vs real stock per product, refresh status, last refresh and its corrections | The refresh corrects the website; the warehouse measures and records the discrepancy |
+| UC3 | Store stock | Report 1 | Available, reserved and on hand per product for one store; low-stock flag (2 or fewer) | Identifies low stock; does **not** decide or execute replenishment. Out-of-stock and low-stock alerts belong here, not on the owner's Overview |
+| UC4 | Click & collect orders | Report 5 | Open order lines for one store: to send, in transit, ready to collect, overdue; whether the whole order is ready; waiting time | Ordered by urgency (overdue first). Overdue orders are cancelled by the overdue job (`demo.py cancel-overdue`) |
 
 ## 10. End-to-end testing and the recorded demo video
 
@@ -280,8 +280,8 @@ The script ends with an automatic test summary; every row must be PASS:
 | T3 | Supplier: UTC converted to Sydney time |
 | T4 | Store: P018 sales at S04 and S05 in the warehouse |
 | T5 | Online: blocked checkout captured with website 2 vs actual 0 |
-| T6 | UC4: warehouse stock equals the store system (P001 Chatswood = 73) |
-| T7 | UC1: after the refresh, the website matches the stores for every product |
+| T6 | UC3: warehouse stock equals the store system (P001 Chatswood = 73) |
+| T7 | UC2: after the refresh, the website matches the stores for every product |
 | T8 | Traceability: no staging row left pending |
 | T9 | Reconciliation: warehouse matches the store system |
 | T10 | Data quality: no rejected source rows |

@@ -45,7 +45,7 @@ PGHOST=localhost python workspace/dashboard/server.py --port 8080
 | --- | --- | --- | --- |
 | Overview (start page) | Summary across UC1-UC4, mainly for the owner | What needs attention now? Website accuracy, next refresh, stock alerts, potential lost sales, open click & collect orders, units sold, with a "Needs attention" list linking to each page | `/api/overview` over `dw.rpt_online_vs_actual`, `rpt_online_staleness`, `rpt_current_stock_by_store`, `rpt_checkout_blocked`, `rpt_open_reservations`, `rpt_daily_sales` |
 | Website stock | UC1 Website accuracy (owner, high); Report 2 | Does the website show what the stores can supply? How often does it refresh, when was the last refresh (automatic or manual), when is the next one? What did the last refresh change? | `dw.rpt_online_vs_actual`, `dw.rpt_online_staleness` (incl. scheduler status and interval), `dw.rpt_last_sync_changes`, `dw.sync_run` / `dw.sync_change` |
-| Store stock | UC3 Low stock (store managers, medium) and UC4 Stock position (store staff, low); Report 1 | Which stores are low on stock? Where is stock available or reserved, and which events explain it? | `dw.rpt_current_stock_by_store`, `dw.fact_stock_event` (event history), `dw.rpt_daily_sales` (Sales history tab) |
+| Store stock | UC3 Low stock (store managers, medium) and UC4 Stock position (store staff, low); Report 1 | Which stores are low on stock? Where is stock available or reserved, and which events explain it? | `dw.rpt_current_stock_by_store`, `dw.fact_stock_event` (event history), units sold per product in the last 7 days (stock and sales chart) |
 | Orders & potential lost sales | UC2 Blocked checkouts (owner, high); Report 3, plus open click & collect orders (Report 5) for store staff | What happened when a customer checked out, and where are open orders? | `dw.rpt_checkout_blocked` + `online.checkout_attempt*` (source record), `dw.rpt_open_reservations` |
 
 **Reload** only reads the reports again. It never refreshes the website stock or runs the ETL. Filters and selections are kept in the URL, so a reload or a shared link shows the same view.
@@ -64,8 +64,8 @@ All runs used the isolated `pethaven_check` database; the dashboard checks never
 
 | Check | Command | Result |
 | --- | --- | --- |
-| Existing business rules | `docker compose exec python python /workspace/tests/check_demo.py` | 104 / 104 PASS |
-| Dashboard API | `docker compose exec python python /workspace/tests/check_dashboard.py` | 38 / 38 PASS |
+| Existing business rules | `docker compose exec python python /workspace/tests/check_demo.py` | 105 / 105 PASS |
+| Dashboard API | `docker compose exec python python /workspace/tests/check_dashboard.py` | 45 / 45 PASS |
 | Automatic refresh | `docker compose exec python python /workspace/tests/check_scheduler.py` | 17 / 17 PASS |
 | Overlay start-up | the command in section 1 | Container `student-dashboard` up on 127.0.0.1:8080; with the lab on another network it showed the 503 "database unavailable" state until it was attached with `docker network connect` |
 

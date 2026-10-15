@@ -100,6 +100,16 @@ def main() -> int:
     rows = r["data"]["rows"]
     check("D1 stock equals dw.rpt_current_stock_by_store (rows, available, reserved)",
           tuple(view), (len(rows), sum(x["available"] for x in rows), sum(x["reserved"] for x in rows)))
+    per_store = {}
+    for x in rows:
+        per_store[x["store_name"]] = per_store.get(x["store_name"], 0) + x["sold_7_days"]
+    check("D1 units sold per store (7 days) add up to Report 4, dw.rpt_daily_sales",
+          {n: int(u) for n, u in sql("""SELECT store_name, sum(units_sold) FROM dw.rpt_daily_sales
+                                          WHERE full_date > current_date - 7 GROUP BY store_name""") if u},
+          {n: u for n, u in per_store.items() if u})
+    check("D1 Report 4 per product (dw.rpt_product_sales) adds up to Report 4 by category (units, value)",
+          tuple(float(x) for x in sql("""SELECT sum(units_sold), sum(sales_value_at_current_price) FROM dw.rpt_daily_sales""")[0]),
+          tuple(float(x) for x in sql("""SELECT sum(units_sold), sum(sales_value_at_current_price) FROM dw.rpt_product_sales""")[0]))
     s2, r2 = get("/stock?from=2020-01-01&to=2020-01-02")
     check("D6 current stock ignores history date parameters", rows, r2["data"]["rows"])
 
@@ -119,15 +129,40 @@ def main() -> int:
           (sql("SELECT count(*) FROM dw.rpt_online_vs_actual")[0][0],
            sql("SELECT count(*) FROM dw.rpt_online_vs_actual WHERE status <> 'matches'")[0][0]),
           (ov["website"]["products"], ov["website"]["out_of_date"]))
-    check("D8 overview: stock alerts equal dw.rpt_current_stock_by_store",
-          tuple(sql("""SELECT count(*) FILTER (WHERE in_store_quantity = 0),
-                              count(*) FILTER (WHERE in_store_quantity BETWEEN 1 AND 2)
-                         FROM dw.rpt_current_stock_by_store""")[0]),
-          (ov["stock"]["out_of_stock"], ov["stock"]["low_stock"]))
-    check("D8 overview: open and overdue orders equal dw.rpt_open_reservations",
-          tuple(sql("""SELECT count(DISTINCT order_no), count(DISTINCT order_no) FILTER (WHERE overdue)
-                         FROM dw.rpt_open_reservations""")[0]),
-          (ov["orders"]["open_orders"], ov["orders"]["overdue"]))
+    sales = {ch: (int(u), float(v)) for ch, u, v in sql("""
+        SELECT channel, sum(units_sold), sum(sales_value_at_current_price)
+          FROM dw.rpt_daily_sales WHERE full_date > current_date - 7 GROUP BY channel""")}
+    check("D8 overview: 7-day sales equal dw.rpt_daily_sales (units, value per channel)",
+          sales, {ch: (x["units"], float(x["value"])) for ch, x in ov["sales_7_days"].items() if x["units"]})
+    best = ov["best_sellers"]
+    check("D8 overview: best sellers add up to the units sold in their channels", True,
+          len(best) <= 8 and all(b["units"] == b["in_store"] + b["online"] for b in best)
+          and [b["units"] for b in best] == sorted((b["units"] for b in best), reverse=True))
+    empty = dict(sql("""SELECT product_code, count(*) FILTER (WHERE in_store_quantity = 0)
+                          FROM dw.rpt_current_stock_by_store GROUP BY product_code"""))
+    check("D8 overview: best sellers mark how many stores have each one out of stock (Report 1)",
+          ({b["product_code"]: empty.get(b["product_code"], 0) for b in best},
+           sql("SELECT count(*) FROM dw.dim_store WHERE channel = 'physical'")[0][0]),
+          ({b["product_code"]: b["out_of_stock_stores"] for b in best}, ov["store_count"]))
+    lost_units, lost_value = sql("""
+        SELECT coalesce(sum(b.quantity_in_bag), 0), coalesce(sum(b.quantity_in_bag * p.unit_price), 0)
+          FROM dw.rpt_checkout_blocked b JOIN dw.dim_product p USING (product_code)
+         WHERE b.attempted_at > now() - interval '7 days'""")[0]
+    online = ov["sales_7_days"]["online"]["units"]
+    check("D8 overview: lost sales and share of online demand follow dw.rpt_checkout_blocked",
+          (int(lost_units), float(lost_value),
+           round(lost_units / (online + lost_units), 4) if online + lost_units else None),
+          (ov["lost_sales"]["units"], float(ov["lost_sales"]["value"]), ov["lost_sales"]["share_of_online_demand"]))
+    check("D8 overview: stores needing attention match their reports (out of stock, overdue orders)",
+          {r[0]: (r[1], r[2]) for r in sql("""
+              SELECT s.store_code,
+                     (SELECT count(*) FROM dw.rpt_current_stock_by_store c
+                       WHERE c.store_code = s.store_code AND c.in_store_quantity = 0),
+                     (SELECT count(DISTINCT r.order_no) FROM dw.rpt_open_reservations r
+                       WHERE r.pickup_store = s.store_name AND r.overdue)
+                FROM dw.dim_store s WHERE s.channel = 'physical'""") if r[1] or r[2]},
+          {x["store_code"]: (x["out_of_stock"], x["overdue_orders"]) for x in ov["stores"]
+           if x["out_of_stock"] or x["overdue_orders"]})
     check("D8 overview: scheduler state comes from the staleness report",
           sql("SELECT scheduler_status FROM dw.rpt_online_staleness")[0][0], ov["sync"]["scheduler_status"])
 
@@ -198,6 +233,13 @@ def main() -> int:
               (y["data"]["run"]["sync_id"],))[0][0], len(y["data"]["website_changes"]))
     check("D1 store balance changes are separate", True,
           all(x["measure"] in ("in_store", "reserved") for x in y["data"]["store_changes"]))
+    hist = get("/website-stock")[1]["data"]["history"]
+    check("D1 refresh history equals dw.rpt_refresh_history, newest first",
+          [tuple(x) for x in sql("""SELECT sync_id, website_numbers_corrected, units_overstated
+                                      FROM dw.rpt_refresh_history ORDER BY sync_id DESC LIMIT 10""")],
+          [(x["sync_id"], x["website_numbers_corrected"], x["units_overstated"]) for x in hist])
+    check("D1 the newest refresh in the history is the manual one, with the same corrections as the last refresh",
+          ("manual", len(y["data"]["website_changes"])), (hist[0]["triggered_by"], hist[0]["website_numbers_corrected"]))
     check("D8 after the sync the overview shows no wrong website numbers", 0,
           get("/overview")[1]["data"]["website"]["out_of_date"])
 

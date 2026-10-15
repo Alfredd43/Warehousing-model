@@ -409,6 +409,18 @@ def main() -> int:
     check("R26 no overdue orders left; in-transit order 5 untouched", (0, 2),
           (one("SELECT count(*)::int FROM dw.rpt_open_reservations WHERE overdue"),
            one("SELECT count(*)::int FROM store_ops.reservation WHERE web_order_ref='5' AND status='in_transit'")))
+    # The same job ten days later, tried and rolled back: every ready order would
+    # go, but order 5 is still waiting for a transfer, so it is never "not collected".
+    ready_orders = one("SELECT count(DISTINCT order_no)::int FROM dw.rpt_open_reservations WHERE order_ready")
+    with conn.cursor() as cur:
+        cur.execute("SAVEPOINT ten_days_later")
+    later = one("SELECT store_ops.cancel_overdue_orders(3, now() + interval '10 days')")
+    kept = one("SELECT count(*)::int FROM store_ops.reservation WHERE web_order_ref='5' AND status IN ('held', 'in_transit')")
+    with conn.cursor() as cur:
+        cur.execute("ROLLBACK TO SAVEPOINT ten_days_later")
+    conn.commit()
+    check("R26 overdue counts from when the whole order is ready: only ready orders are cancelled, order 5 is kept",
+          (ready_orders, 3), (later, kept))
 
     print("\n-- Run sync")
     pending = one("SELECT pending_events::int FROM dw.rpt_online_staleness")

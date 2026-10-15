@@ -160,37 +160,60 @@ def overview(conn, params) -> Result:
         SELECT scheduler_status, extract(epoch FROM sync_interval)::integer AS interval_seconds,
                next_sync_at, last_sync_at, last_sync_trigger, pending_events
           FROM dw.rpt_online_staleness""")
-    stock = row(conn, """
-        SELECT count(*) FILTER (WHERE in_store_quantity = 0)          AS out_of_stock,
-               count(*) FILTER (WHERE in_store_quantity BETWEEN 1 AND 2) AS low_stock
-          FROM dw.rpt_current_stock_by_store""")
-    stock["rows"] = rows(conn, """
-        SELECT store_code, store_name, product_code, product_name, in_store_quantity AS available,
-               reserved_quantity AS reserved
-          FROM dw.rpt_current_stock_by_store WHERE low_stock
-         ORDER BY in_store_quantity, product_code, store_code LIMIT 8""")
-    lost = row(conn, """
-        SELECT count(*) AS items, coalesce(sum(quantity_in_bag), 0) AS units
-          FROM dw.rpt_checkout_blocked WHERE attempted_at > now() - interval '7 days'""")
-    lost["rows"] = rows(conn, """
-        SELECT attempted_at, product_code, product_name, quantity_in_bag AS units, pickup_store,
-               CASE WHEN starts_with(reason, 'stock sold since the last refresh') THEN 'stale' ELSE 'split' END AS reason_code
-          FROM dw.rpt_checkout_blocked ORDER BY attempted_at DESC LIMIT 4""")
-    orders = row(conn, """
-        SELECT count(DISTINCT order_no)                                   AS open_orders,
-               count(DISTINCT order_no) FILTER (WHERE order_ready)        AS ready,
-               count(DISTINCT order_no) FILTER (WHERE NOT order_ready)    AS not_ready,
-               count(DISTINCT order_no) FILTER (WHERE overdue)            AS overdue
-          FROM dw.rpt_open_reservations""")
-    sales = rows(conn, """
-        SELECT channel, sum(units_sold)::integer AS units
+    sales = {r["channel"]: r for r in rows(conn, """
+        SELECT channel, sum(units_sold)::integer AS units, sum(sales_value_at_current_price) AS value
           FROM dw.rpt_daily_sales WHERE full_date > current_date - 7
-         GROUP BY channel ORDER BY channel""")
-    return Result({"website": website, "sync": sync, "stock": stock, "lost_sales": lost, "orders": orders,
-                   "sales_7_days": {r["channel"]: r["units"] for r in sales}, "quality": quality_summary(conn)},
-                  scope="All five stores; potential lost sales and sales over the last 7 days",
-                  provenance=["dw.rpt_online_vs_actual", "dw.rpt_online_staleness", "dw.rpt_current_stock_by_store",
-                              "dw.rpt_checkout_blocked", "dw.rpt_open_reservations", "dw.rpt_daily_sales"])
+         GROUP BY channel""")}
+    # Best sellers: Report 4 per product (in-store = till sales; online = paid
+    # order items less cancellations).
+    best = rows(conn, """
+        SELECT s.product_code, s.product_name,
+               coalesce(sum(s.units_sold) FILTER (WHERE s.channel = 'in-store'), 0)::integer AS in_store,
+               coalesce(sum(s.units_sold) FILTER (WHERE s.channel = 'online'), 0)::integer AS online,
+               sum(s.units_sold)::integer AS units,
+               sum(s.sales_value_at_current_price) AS value,
+               -- A best seller with an empty shelf is the owner's concern; the shelves are not.
+               (SELECT count(*) FROM dw.rpt_current_stock_by_store c
+                 WHERE c.product_code = s.product_code AND c.in_store_quantity = 0)::integer AS out_of_stock_stores
+          FROM dw.rpt_product_sales s
+         WHERE s.full_date > current_date - 7
+         GROUP BY s.product_code, s.product_name
+        HAVING sum(s.units_sold) > 0
+         ORDER BY units DESC, value DESC, s.product_code LIMIT 8""")
+    lost = row(conn, """
+        SELECT count(*) AS items, coalesce(sum(b.quantity_in_bag), 0)::integer AS units,
+               coalesce(sum(b.quantity_in_bag * p.unit_price), 0) AS value
+          FROM dw.rpt_checkout_blocked b JOIN dw.dim_product p USING (product_code)
+         WHERE b.attempted_at > now() - interval '7 days'""")
+    online_units = sales.get("online", {}).get("units") or 0
+    demand = online_units + lost["units"]
+    lost["share_of_online_demand"] = round(lost["units"] / demand, 4) if demand else None
+    # Which store has a problem: lost sales, empty shelves, overdue orders.
+    stores = rows(conn, """
+        SELECT s.store_code, s.store_name,
+               (SELECT count(*) FROM dw.rpt_checkout_blocked b
+                 WHERE b.pickup_store = s.store_name AND b.attempted_at > now() - interval '7 days') AS blocked,
+               (SELECT count(*) FROM dw.rpt_current_stock_by_store c
+                 WHERE c.store_code = s.store_code AND c.in_store_quantity = 0)                  AS out_of_stock,
+               (SELECT count(DISTINCT r.order_no) FROM dw.rpt_open_reservations r
+                 WHERE r.pickup_store = s.store_name AND r.overdue)                               AS overdue_orders
+          FROM dw.dim_store s
+         WHERE s.channel = 'physical'
+         ORDER BY s.store_code""")
+    out_of_stock = row(conn, """
+        SELECT count(*) AS shelves, count(DISTINCT store_code) AS stores
+          FROM dw.rpt_current_stock_by_store WHERE in_store_quantity = 0""")
+    return Result({"website": website, "sync": sync, "out_of_stock": out_of_stock,
+                   "sales_7_days": {ch: {"units": sales.get(ch, {}).get("units") or 0,
+                                         "value": sales.get(ch, {}).get("value") or 0}
+                                    for ch in ("in-store", "online")},
+                   "best_sellers": best, "store_count": len(stores), "lost_sales": lost,
+                   "stores": [s for s in stores if s["blocked"] or s["out_of_stock"] or s["overdue_orders"]],
+                   "quality": quality_summary(conn)},
+                  scope="All five stores; sales and potential lost sales over the last 7 days",
+                  provenance=["dw.rpt_online_vs_actual", "dw.rpt_online_staleness", "dw.rpt_daily_sales",
+                              "dw.rpt_product_sales", "dw.rpt_checkout_blocked", "dw.rpt_current_stock_by_store",
+                              "dw.rpt_open_reservations"])
 
 
 # --- Page A: Website & Sync (Report 2) ------------------------------------------------
@@ -213,12 +236,26 @@ def website_stock(conn, params) -> Result:
     warnings = []
     if unlisted_online:
         warnings.append(f"{unlisted_online} online item(s) are not on the warehouse product list and are not compared.")
+    # How wrong the website was before each refresh: the latest refreshes, and
+    # a summary of the last 7 days.
+    history = rows(conn, """
+        SELECT sync_id, run_at, triggered_by, extract(epoch FROM since_previous)::integer AS since_previous_seconds,
+               stock_events_since_previous, website_numbers_corrected, products_too_high, products_too_low,
+               units_overstated, units_understated
+          FROM dw.rpt_refresh_history ORDER BY sync_id DESC LIMIT 10""")
+    history_7_days = row(conn, """
+        SELECT count(*) AS refreshes,
+               count(*) FILTER (WHERE website_numbers_corrected > 0) AS with_corrections,
+               coalesce(max(website_numbers_corrected), 0) AS most_corrected,
+               coalesce(sum(units_overstated), 0)::integer AS units_overstated
+          FROM dw.rpt_refresh_history WHERE run_at > now() - interval '7 days'""")
     return Result(
         {"comparison": comparison, "staleness": staleness, "quality": quality_summary(conn),
-         "unmapped_online_products": unlisted_online},
+         "unmapped_online_products": unlisted_online,
+         "history": history, "history_7_days": history_7_days},
         scope="All five stores combined; items on the warehouse product list",
         provenance=["dw.rpt_online_vs_actual (online.online_stock + dw.fact_stock_event)",
-                    "dw.rpt_online_staleness"],
+                    "dw.rpt_online_staleness", "dw.rpt_refresh_history"],
         warnings=warnings)
 
 
@@ -255,14 +292,23 @@ def sync_latest(conn, params) -> Result:
 
 # --- Page B: Store Inventory (Report 1) --------------------------------------------------
 def stock(conn, params) -> Result:
+    # Units sold in the last 7 days: Report 4 per product (in-store = till sales at
+    # that store; online = paid order items less cancellations, at the pickup store).
     data = rows(conn, """
-        SELECT store_code, store_name, product_code, product_name, category,
-               in_store_quantity AS available, reserved_quantity AS reserved,
-               total_on_hand AS on_hand, low_stock, last_event_at
-          FROM dw.rpt_current_stock_by_store
-         ORDER BY store_code, product_code""")
-    return Result({"rows": data}, scope="Current balance per physical store and product",
-                  provenance=["dw.rpt_current_stock_by_store"])
+        WITH sold AS (
+            SELECT store_code, product_code, sum(units_sold) AS units
+              FROM dw.rpt_product_sales
+             WHERE full_date > current_date - 7
+             GROUP BY store_code, product_code)
+        SELECT c.store_code, c.store_name, c.product_code, c.product_name, c.category,
+               c.in_store_quantity AS available, c.reserved_quantity AS reserved,
+               c.total_on_hand AS on_hand, c.low_stock, c.last_event_at,
+               coalesce(sold.units, 0)::integer AS sold_7_days
+          FROM dw.rpt_current_stock_by_store c
+          LEFT JOIN sold USING (store_code, product_code)
+         ORDER BY c.store_code, c.product_code""")
+    return Result({"rows": data}, scope="Current balance per physical store and product; units sold over the last 7 days",
+                  provenance=["dw.rpt_current_stock_by_store", "dw.rpt_product_sales"])
 
 
 EVENT_LABELS = {
@@ -310,15 +356,6 @@ def stock_events(conn, params) -> Result:
                   provenance=["dw.fact_stock_event", "dw.dim_store", "dw.dim_product", "dw.dim_date"])
 
 
-def sales(conn, params) -> Result:
-    data = rows(conn, """
-        SELECT full_date, day_name, is_weekend, store_name, channel, category,
-               units_sold, sales_value_at_current_price
-          FROM dw.rpt_daily_sales ORDER BY full_date, store_name, channel, category""")
-    return Result({"rows": data}, scope="Units sold per day, store, channel and category",
-                  provenance=["dw.rpt_daily_sales"])
-
-
 # --- Page C: Checkout & Fulfilment (Report 3) ----------------------------------------------
 REASON_LABELS = {
     "stale": "Combined stock insufficient",
@@ -333,6 +370,7 @@ def checkout_blocked(conn, params) -> Result:
         SELECT f.event_id::text AS event_id, f.source_ref, sc.attempt_no::text AS attempt_no,
                sc.stg_id::text AS stg_id, b.basket, sc.basket_id::text AS basket_id,
                b.attempted_at, b.product_code, b.product_name, b.quantity_in_bag AS requested,
+               b.quantity_in_bag * p.unit_price AS value,
                b.website_showed AS website_shown_then,
                b.actual_combined_at_checkout AS combined_available_then,
                ps.store_code AS pickup_store_code, b.pickup_store, b.reason AS report_reason,
@@ -398,10 +436,12 @@ def reservations(conn, params) -> Result:
     data = rows(conn, """
         SELECT r.order_no, r.pickup_store, pk.store_code AS pickup_store_code,
                r.product_code, r.product_name, r.units, r.taken_from, src.store_code AS source_store_code,
-               r.is_transfer, r.line_status, r.order_ready, r.reserved_at, r.waiting_for, r.overdue
+               r.is_transfer, r.line_status, r.order_ready, r.order_ready_at, r.reserved_at, r.waiting_for, r.overdue
           FROM dw.rpt_open_reservations r
           JOIN dw.dim_store pk  ON pk.store_name = r.pickup_store
           JOIN dw.dim_store src ON src.store_name = r.taken_from
          ORDER BY r.reserved_at, r.order_no::bigint, r.product_code""")
-    return Result({"rows": data}, scope="Click-and-collect order lines not yet collected or cancelled",
-                  provenance=["dw.rpt_open_reservations"])
+    stores = rows(conn, """
+        SELECT store_code, store_name FROM dw.dim_store WHERE channel = 'physical' ORDER BY store_code""")
+    return Result({"rows": data, "stores": stores}, scope="Click-and-collect order lines not yet collected or cancelled",
+                  provenance=["dw.rpt_open_reservations", "dw.dim_store"])

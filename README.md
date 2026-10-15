@@ -115,7 +115,7 @@ docker compose exec python python /workspace/scripts/demo.py scheduler start
 | `order 2026 P009 1 P018 1 [--pickup S02]` | New bag from a customer postcode: shows pickup options, then checks out (real stock checked before payment) |
 | `options 10` | Pickup options for bag 10 |
 | `remove 10 P013` / `checkout 10 [--pickup S02]` | After a blocked checkout: remove an item from bag 10 / check out again |
-| `cancel-overdue` | Cancel click-and-collect orders not collected within 3 days |
+| `cancel-overdue` | Cancel click-and-collect orders not collected within 3 days of the whole order being ready |
 | `dispatch 6` / `receive 6` | Send order 6's lines held at other stores to its pickup store / book them in there |
 | `collect 6` / `cancel 6` | Customer collects / cancels online order 6 |
 | `online` | Website number vs real stock per product |
@@ -142,7 +142,7 @@ Open <http://localhost:8080>. It opens on an **Overview** of what needs attentio
 docker compose exec python python /workspace/tests/check_demo.py
 ```
 
-Builds a separate database, `pethaven_check`, runs scripted business events and checks every rule in [docs/traceability.md](docs/traceability.md): immediate store updates, website staleness, bag, pickup options and checkout with the stock check before payment, first-to-checkout wins, transfers to the chosen store, blocked checkouts, overdue cancellation, online sales in the sales report, carton/UTC conversion, one item number in every system, transaction IDs in the lineage, rejection and recovery of unknown items, refresh before/after and reconciliation. It ends with `TOTAL: 104 checks - PASS 104, FAIL 0`.
+Builds a separate database, `pethaven_check`, runs scripted business events and checks every rule in [docs/traceability.md](docs/traceability.md): immediate store updates, website staleness, bag, pickup options and checkout with the stock check before payment, first-to-checkout wins, transfers to the chosen store, blocked checkouts, overdue cancellation, online sales in the sales report, carton/UTC conversion, one item number in every system, transaction IDs in the lineage, rejection and recovery of unknown items, refresh before/after and reconciliation. It ends with `TOTAL: 105 checks - PASS 105, FAIL 0`.
 
 The automatic refresh has its own checks (it starts the scheduler with a 2-second interval on `pethaven_check` and checks it refreshes at that interval). The run ends with `TOTAL: 17 checks - PASS 17, FAIL 0`:
 
@@ -150,7 +150,7 @@ The automatic refresh has its own checks (it starts the scheduler with a 2-secon
 docker compose exec python python /workspace/tests/check_scheduler.py
 ```
 
-The dashboard's API has its own checks, also on `pethaven_check`. The run ends with `TOTAL: 38 checks - PASS 38, FAIL 0`:
+The dashboard's API has its own checks, also on `pethaven_check`. The run ends with `TOTAL: 45 checks - PASS 45, FAIL 0`:
 
 ```bash
 docker compose exec python python /workspace/tests/check_dashboard.py
@@ -197,9 +197,9 @@ workspace/
   scripts/build.py                     rebuild pethaven_demo
   scripts/demo.py                      demo commands (incl. scheduler start / stop / status)
   scripts/sync_scheduler.py            runs the website refresh every SYNC_INTERVAL_SECONDS
-  tests/check_demo.py                  104 behaviour checks
+  tests/check_demo.py                  105 behaviour checks
   tests/check_scheduler.py             17 automatic-sync checks
-  tests/check_dashboard.py             38 dashboard API checks
+  tests/check_dashboard.py             45 dashboard API checks
   dashboard/server.py                  dashboard: local HTTP server and API routes
   dashboard/queries.py                 read-only queries over the report views
   dashboard/static/                    dashboard pages (HTML, CSS, JavaScript modules)

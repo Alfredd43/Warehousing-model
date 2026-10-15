@@ -16,9 +16,9 @@ docker compose exec python python /workspace/tests/check_dashboard.py
 | Measure | Result |
 | --- | --- |
 | Build (`build.py`) | All 10 SQL files applied without error |
-| Behaviour checks (`check_demo.py`) | 104 / 104 PASS, exit code 0 |
+| Behaviour checks (`check_demo.py`) | 105 / 105 PASS, exit code 0 |
 | Scheduler checks (`check_scheduler.py`, 2 s test interval) | 17 / 17 PASS; scheduled refreshes run at the test interval |
-| Dashboard API checks (`check_dashboard.py`) | 38 / 38 PASS |
+| Dashboard API checks (`check_dashboard.py`) | 45 / 45 PASS |
 | End-to-end test script (`demo/video_demo_script.sql`) | Recorded test video: runs top to bottom on a fresh build with no errors and ends with 11 PASS checks (T1-T11); |
 | Seed result | 155 source records staged → 146 fact rows loaded, 9 skipped, 0 rejected; 7 paid orders, 1 checkout blocked before payment; 2 refreshes; 0 events pending |
 | Reconciliation after seed and after every website refresh | 90 / 90 store-product pairs match; `store_mismatches = 0` |

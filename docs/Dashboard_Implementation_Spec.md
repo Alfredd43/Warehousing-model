@@ -16,7 +16,7 @@ The dashboard is the business-facing output of the prototype. It answers the fou
 | UC3 Spot low stock | Store managers | Medium | Which products is my store running low on? | Store stock |
 | UC4 Prepare click & collect orders | Store staff | Low | Which orders must I send, receive or hand over, and which are overdue? | Click & collect orders |
 
-Each role sees only what it acts on. The owner's pages (Overview, Potential lost sales, Website stock) show the whole business and no shelf alerts; out-of-stock and low-stock alerts belong to the store managers' page, and open orders to the store staff's page.
+Each role sees only what it acts on. The owner's pages (Overview, Potential lost sales, Website stock) show the whole business: which products sell, what was lost, and which store has a problem, without listing shelves or orders. Shelf detail belongs to the store managers' page, and open orders to the store staff's page.
 
 The dashboard only reads. It never records a sale, refreshes the website, or runs the ETL. Business events are made through the source systems' own functions (`demo.py`, or SQL in CloudBeaver).
 
@@ -34,7 +34,7 @@ It is a teaching prototype with synthetic data, not an online shop, payment serv
 
 | Brief evidence | Where on the dashboard | Subject knowledge |
 | --- | --- | --- |
-| Reports per data use case (at least 3) | Overview and Potential lost sales (Report 4, Report 3), Website stock (Report 2), Store stock (Report 1, Report 4), Click & collect orders (Report 5) | Fact and dimension joins; cross-system comparison |
+| Reports per data use case (at least 3) | Overview and Potential lost sales (Report 4, Report 3), Website stock (Report 2), Store stock (Report 1, with units sold per product by Report 4's rule), Click & collect orders (Report 5) | Fact and dimension joins; cross-system comparison |
 | Integrated warehouse in use | Every page reads `dw` report views; event history reads `dw.fact_stock_event` | Star schema; lineage through `source_ref` |
 | Data quality | Shared banner when the ETL rejected records or the warehouse disagrees with the store system | Validation and reconciliation |
 | End-to-end test | Shown in the recorded video, section 5 and 7 | Operational events followed by analysis |
@@ -52,7 +52,7 @@ It is a teaching prototype with synthetic data, not an online shop, payment serv
 | Low stock | 2 or fewer units on one store's shelf. A fixed prototype rule, not a reorder point. |
 | Blocked item | One item in one checkout attempt that no single store could supply. Found before payment, so nothing was charged. It is a potential lost sale, not a confirmed one. |
 | Paid | A successful checkout. No card payment is modelled. |
-| Overdue | A click & collect order not collected within 3 days of being held. |
+| Overdue | A click & collect order whose items have all been at the pickup store for more than 3 days without being collected. The 3 days start when the last item is ready, so a late transfer never makes an order overdue. |
 
 Further rules:
 
@@ -131,14 +131,60 @@ When a scheduled website refresh is due, the Website stock page reads its report
 
 ## 5. Overview (UC1, owner)
 
-Data: `dw.rpt_daily_sales` per product and channel (Report 4 is grouped by category today, so the per-product rows need a query over the same sales events), `dw.rpt_checkout_blocked` with each item's value at `dim_product.unit_price`, and the refresh and data quality status.
+The version 2.0 Overview stays; only the parts that belong to other roles are replaced. All figures cover the last 7 days unless stated.
 
-- Headline tiles for the last 7 days, each linking to its detail: **Sales** (units and value, in-store and online), **Potential lost sales** (units, value, and share of online demand lost = units blocked ÷ (units sold online + units blocked)), **Website stock** (matches the stores or not, refresh running or not).
-- **Best sellers**: a bar chart of units sold per product, in-store and online shown side by side, ranked, with units per day. Values are labelled "at current price", as on the Sales tab.
-- **Needs attention**, owner-level only: the automatic refresh is not running, checkouts were blocked, records are missing from the reports. When nothing needs attention it says so.
-- **Latest potential lost sales**, linking to the Potential lost sales page.
+Data: `dw.rpt_daily_sales` per product and channel (Report 4 is grouped by category today, so the per-product rows need a query over the same sales events), `dw.rpt_checkout_blocked` with each item's value at `dim_product.unit_price`, `dw.rpt_current_stock_by_store` and `dw.rpt_open_reservations` for the store summary, and the refresh and data quality status.
 
-The Overview shows no out-of-stock or low-stock lists and no open order counts; those are on Store stock (UC3) and Click & collect orders (UC4). There is no profit figure (no cost prices) and no returns figure (returns are not recorded).
+### 5.1 Headline tiles
+
+Four tiles in one row, each linking to its detail:
+
+| Tile | Shows | Links to | Change from version 2.0 |
+| --- | --- | --- | --- |
+| Sales | Sales value, units, in-store and online value | Store stock | Replaces Stock alerts and Units sold |
+| Potential lost sales | Value, units, and share of online demand lost | Potential lost sales | Adds value and share |
+| Website accuracy | Products where the website matches the stores (for example 18 of 18) | Website stock | Unchanged |
+| Next website refresh | Countdown, or "Not running" | Website stock | Unchanged |
+
+The Click & collect tile is removed; open orders are the store staff's page (UC4).
+
+**Share of online demand lost** = units blocked at checkout ÷ (units sold online + units blocked at checkout). Blocks only happen online, so the denominator is online demand, not all sales. Example from the sample data: 3 ÷ (16 + 3) = 16%. Sales value and lost value use the current shelf price and are labelled "at current price".
+
+### 5.2 Best sellers
+
+Takes the place of "Out of stock and running low".
+
+- The top 8 products by units sold, ranked by units.
+- One horizontal bar per product, split into in-store and online in two colours, with a legend.
+- Units per day (units sold ÷ 7) at the end of each bar, so the owner sees how fast each product sells.
+- A best seller with an empty shelf is marked in red under its name: "out of stock in 3 of 5 stores" (from `dw.rpt_current_stock_by_store`, 0 available), linking to Store stock for that product. This is the only stock detail on the owner's page: a best seller that cannot be bought is a decision for the owner, while an empty shelf of a slow seller is store work. Low stock (1 to 2 units) is not marked.
+- A link to Store stock, where every product's stock and 7-day sales are shown.
+
+Example from the sample data: Aquarium Starter Kit 40L (P018, 4th best seller) is out of stock in 3 of 5 stores; Cat Scratching Post 80cm and Orthopaedic Dog Bed Large in 1 each.
+
+### Layout
+
+Below the tiles, two equal columns that end on one line: **Needs attention** with **Potential lost sales** under it on the left, **Best sellers** on the right. One column on narrow screens. A selected checkout (section 8.1) opens full width below.
+
+### 5.3 Needs attention
+
+Lets the owner see at a glance which store has a problem, without listing shelves or orders. The detail stays on the store managers' and store staff's pages.
+
+- **System**: the automatic website refresh is not running; records are missing from the reports (shown only when the ETL rejected records or the warehouse disagrees with the store system).
+- **Stores**: one line per store that has a problem, counting only:
+  - checkouts blocked for that pickup store (a lost sale);
+  - products out of stock on that store's shelf (0 available);
+  - click & collect orders overdue at that store (ready for more than 3 days and not collected).
+
+  Each count links to the page that shows it, filtered to the store: Potential lost sales, Store stock, or Click & collect orders.
+- Low stock (1 to 2 units) and orders in transit are not listed: they are normal store work, shown on Store stock and Click & collect orders.
+- When nothing needs attention it says "All stores are running normally".
+
+Example from the sample data: Parramatta (2 products out of stock, 1 order overdue), Bondi (1 checkout blocked, 1 product out of stock), Chatswood (2 products out of stock).
+
+### 5.4 Removed
+
+"Out of stock and running low" (replaced by Best sellers, which mark only the best sellers that are out of stock) and "Latest potential lost sales" (the Potential lost sales tile and Needs attention already link to the detail). There is no profit figure (no cost prices), no returns figure (returns are not recorded), and no daily trend of sales and lost sales (a possible extension; the sample data has blocked checkouts on one day only).
 
 ## 6. Website stock (UC2, owner)
 
@@ -153,17 +199,22 @@ The website number is a five-store total, so this page has no store filter.
 
 ## 7. Store stock (UC3, store managers)
 
-Data: `dw.rpt_current_stock_by_store`, `dw.fact_stock_event`, `dw.rpt_daily_sales`.
+Data: `dw.rpt_current_stock_by_store`, and `dw.fact_stock_event` for units sold and the event history.
 
-Tabs: **Current stock** and **Sales**. A manager looks at one store, so the store filter comes first; all stores stay available for comparison.
+One view, no tabs. A manager looks at one store, so the store filter comes first; all stores stay available for comparison.
 
-Current stock:
+- Filters: store, product, category, **Low stock only**. They apply to the chart and the table.
+- **Stock left and units sold (7 days)**: a horizontal bar chart, one product per row, so the manager sees which products sell and which are running out in one place. The top bar is the stock (available and reserved, stacked); the bar under it is the units sold in the last 7 days. Products with the least available stock come first, and among equal stock the one that sold more. When the sold bar is longer than the stock bar, the product sold more last week than is left. The 10 with least stock are shown, with "Show all". With all stores selected the numbers are added up across stores. Selecting a product opens it by store.
+- Units sold follow Report 4's rule per product: in-store till sales at that store, plus online order items less cancellations at the pickup store.
 
-- Views: by store, or a list. Filters: store, product, category, **Low stock only**.
-- Columns: Store, Product, Category, Available, Reserved, On hand, Stock status. Status labels: Out of stock (0), Low stock (1 to 2), Available.
+  Example from the sample data, Bondi: Aquarium Starter Kit 40L 0 available and 1 sold; Orthopaedic Dog Bed Large 1 available and 2 sold; Cat Scratching Post 80cm 3 available and 4 sold.
+
+- One store selected: a single table titled with the store's name, one row per product in product-code order. Columns: Product, Category, Available, Reserved, On hand, Stock status, Last event.
+- All stores: a **View** switch picks how the table is grouped. **By store** (default) gives one block per store, one row per product (Product, Category, Available, Reserved, On hand, Stock status). **By product** gives one block per product with its total available across stores, one row per store (Store, Available, Reserved, On hand, Stock status).
+- Status labels: Out of stock (0), Low stock (1 to 2), Available.
 - Selecting a store and product opens its **event history**: every sale, delivery and order that changed that number, newest first, with event type, available change, reserved change, order or basket reference and source reference. A blocked checkout appears with zero change; it is a recorded outcome, not stock used.
 
-Sales: units sold per day by store, channel (in-store or online) and category, so a manager can see how fast a low product sells before reordering. Online sales count at the pickup store. "Sales value at current price" is labelled as such, because prices are not kept historically.
+The **Sales** tab of version 2.0 (units sold per day by store, channel and category) is removed. It could not say which product sold, and a daily total does not tell a manager what to reorder; the chart above does.
 
 ## 8. Potential lost sales (UC1 detail, owner) and Click & collect orders (UC4, store staff)
 
@@ -173,9 +224,12 @@ These were two tabs of one page in version 2.0. They serve different roles, so t
 
 The detail behind the Overview's lost-sales tile.
 
-- Columns: When, Product, Wanted, Value, Website showed, Stores had, Pickup store, Why.
-- Reason labels: "Website number was out of date" and "No single store had enough".
-- Filters: date range, product, pickup store, reason. The default shows all history, so the blocked checkout in the sample data is visible.
+A card on the Overview, kept short for the owner:
+
+- Three columns: **Product** (with the units wanted, the pickup store and when underneath), **Why** (with the numbers underneath: "website showed 7, stores had 2", or the stores' total when no single store had enough), and **Value**.
+- Reason labels: "Website out of date" and "No single store had enough".
+- Newest first, the latest 5 shown, with "Show all" when there are more. All history, so the blocked checkout in the sample data is visible. The footer gives the total items, units and value.
+- No filter bar. A store's "checkout blocked" link in Needs attention shows only that pickup store's items, with an **All stores** button to go back.
 - Selecting a row opens the **Source checkout record** from the online store: outcome, bag, pickup store, and for each item the website number captured at checkout ("Website snapshot (source)") next to the warehouse's reconstruction ("Report reconstruction"). If the two differ, the page shows both.
 
 ### 8.2 Click & collect orders (`dw.rpt_open_reservations`)
@@ -183,8 +237,8 @@ The detail behind the Overview's lost-sales tile.
 For the staff at one store's click & collect counter.
 
 - **My store** filter: lines this store must send (it is the source store) and orders collected here (it is the pickup store).
-- Count tiles in working order: Overdue (not collected within 3 days), To send, In transit, Ready to collect.
-- Order list sorted by urgency, overdue first: order, product, units, source store, pickup store, status (Waiting to be sent, In transit, Ready for collection), whether the whole order is ready, waiting time, overdue. "Order ready" comes from the report and is not recalculated from the visible rows.
+- Count tiles in working order: Overdue (ready for more than 3 days and not collected), To send, In transit, Ready to collect.
+- Order list sorted by urgency, overdue first: order, product, units, source store, pickup store, status (Waiting to be sent, In transit, Ready for collection), when the order was placed, whether the whole order is ready and since when, overdue. "Order ready" comes from the report and is not recalculated from the visible rows.
 - Orders are identified by order number; no customer names are stored.
 
 ## 9. API
@@ -198,9 +252,8 @@ All endpoints are `GET` and return JSON. Any other method returns 405 ("The dash
 | `/api/overview` | Overview tiles and lists |
 | `/api/website-stock` | Website vs stores per product, refresh status |
 | `/api/sync/latest` | The latest website refresh and the website numbers it corrected |
-| `/api/stock` | Current stock per store and product, with filters |
+| `/api/stock` | Current stock per store and product, with units sold in the last 7 days |
 | `/api/stock/events` | Event history for one product at one store, paged |
-| `/api/sales` | Daily sales with filters |
 | `/api/checkout/blocked` | Blocked items with stable event and attempt identifiers |
 | `/api/checkout/attempts/{id}` | One source checkout attempt and its items |
 | `/api/reservations` | Open click & collect order lines |

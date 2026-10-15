@@ -351,6 +351,16 @@ tbody tr.selected { background: var(--accent-soft); box-shadow: inset 3px 0 0 va
 .bar.web { background: linear-gradient(90deg, #FFA266, #F2692A); box-shadow: 0 2px 8px -2px rgba(242, 105, 42, .5); }
 .bar.wh { background: linear-gradient(90deg, #6B645C, #2E2B27); }
 .bar-val { font-weight: 700; color: var(--text); }
+/* Store stock: available + reserved stacked in one bar, sold on the line below. */
+.bar-stack { display: flex; height: 12px; border-radius: 999px; overflow: hidden; min-width: 2px; transform-origin: left; animation: grow .7s cubic-bezier(.2, .7, .2, 1) both; }
+.bar-stack i { display: block; min-width: 0; }
+.bar-stack .wh { background: linear-gradient(90deg, #6B645C, #2E2B27); }
+.bar-stack .res { background: var(--chart-reserved); }
+.sv-zero { color: var(--danger); }
+.sv-low { color: var(--warning); }
+#stock-vs-sold .bars { gap: 2px; }
+#stock-vs-sold .bar-row { padding: 6px 12px; }
+#stock-vs-sold .bar-pair { gap: 3px; }
 .swatch { border-radius: 50%; }
 @keyframes grow { from { transform: scaleX(0); } to { transform: scaleX(1); } }
 
@@ -405,7 +415,7 @@ tbody tr.selected { background: var(--accent-soft); box-shadow: inset 3px 0 0 va
 .nav .nav-group:first-child { padding-top: 0; }
 .kpis { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin-bottom: 22px; }
 .overview-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 22px; align-items: start; }
-@media (max-width: 1100px) { .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } .overview-grid { grid-template-columns: minmax(0, 1fr); } }
+
 .kpi { display: flex; flex-direction: column; gap: 4px; padding: 16px 18px 15px; border-radius: var(--radius-card); background: var(--surface); border: 1px solid var(--border); box-shadow: var(--shadow-card); color: var(--text); text-decoration: none; position: relative; overflow: hidden; transition: box-shadow .2s, transform .2s; }
 .kpi::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: var(--border-strong); }
 .kpi:hover { box-shadow: var(--shadow-lift); transform: translateY(-1px); }
@@ -427,8 +437,51 @@ tbody tr.selected { background: var(--accent-soft); box-shadow: inset 3px 0 0 va
 .todo-text { flex: 1; font-weight: 500; }
 .todo a { font-weight: 600; white-space: nowrap; }
 .summary-big { display: flex; align-items: center; gap: 12px; font-size: 16px; font-weight: 600; }
+.kpis-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+button.kpi { font: inherit; text-align: left; cursor: pointer; }
+.page-section { margin-top: 28px; scroll-margin-top: 80px; }
+/* Click & collect: fixed shared columns; every cell top-aligned and padded the
+   same, so an order's rowspan cells line up with its first item line. */
+.orders-table { table-layout: fixed; min-width: 880px; }
+.orders-table th, .orders-table td { padding: 11px 12px; vertical-align: top; overflow-wrap: anywhere; }
+.orders-table th:first-child, .orders-table td.order-cell { padding-left: 20px; }
+.orders-table tr.order-first td { border-top: 1px solid var(--border-strong); }
+.orders-table tbody tr:first-child td { border-top: 0; }
+.orders-table td.order-cell { font-weight: 600; white-space: nowrap; }
+#page .card + .card { margin-top: 18px; }
+.section-head { margin-bottom: 14px; }
+.section-head h2 { font-size: 20px; }
+.section-head p { color: var(--text-secondary); margin-top: 4px; }
+.todo-links { display: flex; flex-wrap: wrap; gap: 4px; justify-content: flex-end; color: var(--text-muted); }
+.bs { padding: 4px 20px 14px; }
+.bs-legend { display: flex; gap: 16px; font-size: 12.5px; color: var(--text-secondary); margin-bottom: 6px; }
+.bs-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.bs-swatch { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+.bs-swatch-store, .bs-store { background: #8C8478; }
+.bs-swatch-online, .bs-online { background: var(--accent); }
+.bs-list { list-style: none; margin: 0; padding: 0; }
+/* Owner overview: Needs attention over Potential lost sales | Best sellers. Both columns
+   stretch to the taller one, so the cards end on one line. */
+.overview-grid.owner { align-items: stretch; }
+.overview-col { display: flex; flex-direction: column; gap: 22px; min-width: 0; }
+.overview-col > #lost-sales { flex: 1; display: flex; flex-direction: column; }
+.overview-grid.owner > .card, #lost-sales > .card { flex: 1; display: flex; flex-direction: column; }
+.overview-grid.owner .card > .card-foot { margin-top: auto; }
+.page-section:empty { display: none; }
+.bs-flag { color: var(--danger); font-weight: 600; }
+.bs-row { display: grid; grid-template-columns: minmax(0, 12rem) minmax(0, 1fr) 7.5rem; gap: 12px; align-items: center; padding: 7px 0; border-bottom: 1px solid #F1EDE8; }
+.bs-row:last-child { border-bottom: 0; }
+.bs-name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bs-track { display: flex; height: 14px; border-radius: 3px; background: var(--surface-subtle, #F7F5F2); overflow: hidden; }
+.bs-value { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+.bs-value .cell-sub, .bs-name .cell-sub { font-weight: 400; }
+.bs-name .cell-sub { white-space: normal; }
+@media (max-width: 1100px) { .kpis, .kpis-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); } .overview-grid, .overview-grid.owner { grid-template-columns: minmax(0, 1fr); } }
 @media (max-width: 520px) {
-  .kpis { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; }
+  .kpis, .kpis-4 { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; }
+  .bs { padding: 4px 14px 12px; }
+  .bs-row { grid-template-columns: minmax(0, 1fr) 6.5rem; }
+  .bs-track { grid-column: 1 / -1; grid-row: 2; }
   .kpi { padding: 12px 14px; }
   .kpi-value { font-size: 20px; }
   .todo { padding: 4px 14px 12px; }

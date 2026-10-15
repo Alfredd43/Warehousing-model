@@ -1,16 +1,32 @@
-// Overview: the start page, mainly for the owner. What needs attention right now, in a few
-// numbers, each linking to the page with the detail.
+// Overview (UC1, owner): how the business did in the last 7 days, what the stock problem
+// cost, which products sell best, and which store has a problem. Shelf and order detail
+// stay on the store managers' and store staff's pages; the potential lost sales are a
+// card on this page.
 
 import { get } from "../api.js";
-import { h, clear, fmt, badge, card, state, loading, table, errorState, keepFocus, duration, countdown, syncTicker, SYNC_TRIGGER } from "../components/ui.js";
+import lostSales from "./checkout.js";
+import { h, clear, fmt, card, state, loading, errorState, keepFocus, duration, countdown, syncTicker, SYNC_TRIGGER } from "../components/ui.js";
 
-const REASON = { stale: "Website number was out of date", split: "No single store had enough" };
+const money = new Intl.NumberFormat("en-AU", { style: "currency", currency: "AUD", maximumFractionDigits: 0 });
+const pct = new Intl.NumberFormat("en-AU", { style: "percent", maximumFractionDigits: 0 });
+const plural = (n, one, many) => `${fmt.num(n)} ${n === 1 ? one : many}`;
 
 export default {
-  mount(root, app) {
+  mount(root, app, initialParams) {
     let data = null, error = null, token = 0;
+    // The lost sales card sits under Needs attention; a selected checkout opens full width below.
+    const top = h("div"), lostRoot = h("div", { id: "lost-sales" }), detailRoot = h("div", { class: "page-section" });
+    root.append(top, detailRoot);
+    const lost = lostSales.mount(lostRoot, app, initialParams, { detailRoot });
+    const LOST_RESET = { pickup: "", attempt: "", event: "" };
+    // Show the lost sales card, optionally filtered to one pickup store.
+    const showLost = (patch = {}) => (e) => {
+      e.preventDefault();
+      app.setParams({ ...LOST_RESET, ...patch });
+      lostRoot.scrollIntoView({ behavior: "smooth", block: "start" });
+    };
 
-    syncTicker(root, app, () => data?.sync);
+    syncTicker(top, app, () => data?.sync);
 
     async function load() {
       const my = ++token;
@@ -29,30 +45,50 @@ export default {
       render();
     }
 
-    function render() { keepFocus(root, draw); }
+    function render() { keepFocus(top, draw); }
 
     function draw() {
-      clear(root);
+      const root = clear(top);
       root.append(h("div", { class: "page-head" },
         h("div", {}, h("h1", {}, "Overview"),
-          h("p", { class: "subtitle" }, "What needs your attention across the five stores and the website."))));
+          h("p", { class: "subtitle" }, "How the business did in the last 7 days, and where the stock problem cost sales."))));
       if (error) return root.append(card({ label: "Error", body: errorState(error, () => load().catch(() => {})) }));
       if (!data) return root.append(card({ label: "Loading", body: loading("Loading overview") }));
-      root.append(kpis(), h("div", { class: "overview-grid" }, h("div", { class: "stack" }, attention(), lostCard()), stockCard()));
+      root.append(kpis(), h("div", { class: "overview-grid owner" },
+        h("div", { class: "overview-col" }, attention(), lostRoot), bestSellers()));
     }
 
     // ---------- headline numbers ----------
-    function tile({ label, value, note, tone, page, params }) {
-      return h("a", { class: `kpi ${tone}`, href: `#/${page}${params ? `?${params}` : ""}` },
+    function tile({ label, value, note, tone, page, params, onclick }) {
+      return h("a", { class: `kpi ${tone}`, href: `#/${page}${params ? `?${params}` : ""}`, onclick },
         h("span", { class: "kpi-label" }, label),
         h("strong", { class: "kpi-value" }, value),
         h("span", { class: "kpi-note" }, note));
     }
 
     function kpis() {
-      const { website: w, sync: s, stock: st, lost_sales: l, orders: o, sales_7_days: sales } = data;
+      const { website: w, sync: s, lost_sales: l, sales_7_days: sales, out_of_stock: oos } = data;
       const running = s.scheduler_status === "running";
+      const store = sales["in-store"], online = sales.online;
       return h("div", { class: "kpis" },
+        tile({ label: "Sales (7 days)", page: "inventory",
+          value: money.format(store.value + online.value),
+          note: `in-store ${money.format(store.value)} · online ${money.format(online.value)}`,
+          tone: "neutral" }),
+        tile({ label: "Units sold (7 days)", page: "inventory",
+          value: fmt.num(store.units + online.units),
+          note: `${fmt.num(store.units)} in-store · ${fmt.num(online.units)} online`,
+          tone: "neutral" }),
+        tile({ label: "Potential lost sales (7 days)", page: "overview", onclick: showLost(),
+          value: money.format(l.value),
+          note: l.units
+            ? `${fmt.units(l.units)} · ${pct.format(l.share_of_online_demand)} of online demand`
+            : "No checkout was blocked",
+          tone: l.units ? "bad" : "good" }),
+        tile({ label: "Out of stock", page: "inventory", params: "low=1",
+          value: `${fmt.num(oos.shelves)} shel${oos.shelves === 1 ? "f" : "ves"}`,
+          note: oos.shelves ? `empty in ${plural(oos.stores, "store", "stores")} · see Needs attention` : "every store has every product",
+          tone: oos.shelves ? "bad" : "good" }),
         tile({ label: "Website accuracy", page: "website",
           value: w.out_of_date ? `${w.out_of_date} wrong` : "All correct",
           note: w.out_of_date ? `of ${w.products} products show the wrong stock` : `${w.products} of ${w.products} products match the stores`,
@@ -61,83 +97,75 @@ export default {
           value: running ? h("span", { "data-until": s.next_sync_at }, countdown(s.next_sync_at)) : "Not running",
           note: running ? `every ${duration(s.interval_seconds)} · last ${fmt.time(s.last_sync_at)} (${SYNC_TRIGGER[s.last_sync_trigger] || s.last_sync_trigger})`
                         : "website only updates on a manual refresh",
-          tone: running ? "good" : "warn" }),
-        tile({ label: "Stock alerts", page: "inventory", params: "low=1",
-          value: `${st.out_of_stock} out · ${st.low_stock} low`,
-          note: "store shelves with 0 or 1–2 left",
-          tone: st.out_of_stock ? "bad" : st.low_stock ? "warn" : "good" }),
-        tile({ label: "Potential lost sales (7 days)", page: "checkout",
-          value: `${l.units} unit${l.units === 1 ? "" : "s"}`,
-          note: `${l.items} item${l.items === 1 ? "" : "s"} blocked at checkout`,
-          tone: l.items ? "warn" : "good" }),
-        tile({ label: "Click & collect", page: "checkout", params: "tab=reservations",
-          value: `${o.open_orders} open`,
-          note: `${o.ready} ready · ${o.not_ready} on the way${o.overdue ? ` · ${o.overdue} overdue` : ""}`,
-          tone: o.overdue ? "bad" : "good" }),
-        tile({ label: "Units sold (7 days)", page: "inventory", params: "view=sales",
-          value: fmt.num((sales["in-store"] || 0) + (sales.online || 0)),
-          note: `${fmt.num(sales["in-store"] || 0)} in-store · ${fmt.num(sales.online || 0)} online`,
-          tone: "neutral" }));
+          tone: running ? "good" : "warn" }));
     }
 
-    // ---------- to-do list ----------
+    // ---------- which part of the business needs the owner ----------
     function attention() {
-      const { website: w, sync: s, stock: st, orders: o, quality: q } = data;
+      const { website: w, sync: s, quality: q, stores } = data;
       const items = [];
-      const add = (tone, text, link, page, params) => items.push({ tone, text, link, page, params });
-      if (w.out_of_date) add("bad", `${w.out_of_date} product${w.out_of_date === 1 ? " shows" : "s show"} the wrong stock on the website`, "Check website stock", "website", "");
-      if (s.scheduler_status !== "running") add("warn", "The automatic website refresh is not running", "See website stock", "website", "");
-      if (o.overdue) add("bad", `${o.overdue} click & collect order${o.overdue === 1 ? " has" : "s have"} not been collected for over 3 days`, "View orders", "checkout", "tab=reservations&overdue=1");
-      if (st.out_of_stock) add("bad", `${st.out_of_stock} store shel${st.out_of_stock === 1 ? "f is" : "ves are"} out of stock`, "View stock", "inventory", "low=1");
-      if (st.low_stock) add("warn", `${st.low_stock} store shel${st.low_stock === 1 ? "f is" : "ves are"} running low (1–2 left)`, "View stock", "inventory", "low=1");
-      if (o.not_ready) add("info", `${o.not_ready} click & collect order${o.not_ready === 1 ? " is" : "s are"} waiting for items from another store`, "View orders", "checkout", "tab=reservations");
-      if (q.incomplete) add("warn", `${q.rejected_rows + q.mismatched_pairs} record${q.rejected_rows + q.mismatched_pairs === 1 ? "" : "s"} could not be loaded into the reports`);
+      if (s.scheduler_status !== "running")
+        items.push(h("li", { class: "todo-warn" }, dot(), h("span", { class: "todo-text" }, "The automatic website refresh is not running"),
+          h("a", { href: "#/website" }, "See website stock")));
+      if (w.out_of_date)
+        items.push(h("li", { class: "todo-bad" }, dot(), h("span", { class: "todo-text" }, `${plural(w.out_of_date, "product shows", "products show")} the wrong stock on the website`),
+          h("a", { href: "#/website" }, "See website stock")));
+      if (q.incomplete)
+        items.push(h("li", { class: "todo-warn" }, dot(), h("span", { class: "todo-text" },
+          `${plural(q.rejected_rows + q.mismatched_pairs, "record", "records")} could not be loaded into the reports`)));
+      for (const st of stores) {
+        const issues = [];
+        if (st.blocked) issues.push(h("a", { href: `#/overview?pickup=${st.store_code}`, onclick: showLost({ pickup: st.store_code }) }, plural(st.blocked, "checkout blocked", "checkouts blocked")));
+        if (st.out_of_stock) issues.push(h("a", { href: `#/inventory?store=${st.store_code}&low=1` }, plural(st.out_of_stock, "product out of stock", "products out of stock")));
+        if (st.overdue_orders) issues.push(h("a", { href: `#/orders?store=${st.store_code}&overdue=1` }, plural(st.overdue_orders, "order overdue", "orders overdue")));
+        items.push(h("li", { class: st.blocked || st.overdue_orders ? "todo-bad" : "todo-warn" }, dot(),
+          h("span", { class: "todo-text" }, h("b", {}, st.store_name.replace("PetHaven ", ""))),
+          h("span", { class: "todo-links" }, issues.flatMap((a, n) => (n ? [" · ", a] : [a])))));
+      }
       return card({
         id: "attention", title: "Needs attention",
+        subtitle: "Stores are listed when a checkout was blocked, a product is out of stock or an order is overdue.",
         body: items.length
-          ? h("ul", { class: "todo" }, items.map((i) => h("li", { class: `todo-${i.tone}` },
-              h("span", { class: "todo-dot", "aria-hidden": "true" }),
-              h("span", { class: "todo-text" }, i.text),
-              i.page ? h("a", { href: `#/${i.page}${i.params ? `?${i.params}` : ""}` }, i.link) : null)))
-          : state("", "Nothing needs attention", "The website matches the stores, and there are no stock or order problems."),
+          ? h("ul", { class: "todo" }, items)
+          : state("", "All stores are running normally", "The website matches the stores, and no store has a blocked checkout, an empty shelf or an overdue order."),
       });
     }
 
-    function stockCard() {
-      const rows = data.stock.rows;
-      return card({
-        id: "low-stock", title: "Out of stock and running low",
-        actions: h("a", { href: "#/inventory?low=1" }, "All stock alerts"),
-        body: table({
-          caption: "Store shelves with 2 or fewer units",
-          columns: [
-            { label: "Product", render: (r) => r.product_name, sub: (r) => r.product_code },
-            { label: "Store", render: (r) => r.store_name.replace("PetHaven ", "") },
-            { label: "On shelf", num: true, render: (r) => (r.available === 0 ? badge("0", "danger") : badge(String(r.available), "warning")) },
-          ],
-          rows, empty: state("", "No stock alerts", "Every store has at least 3 of every product."),
-        }),
-      });
-    }
+    function dot() { return h("span", { class: "todo-dot", "aria-hidden": "true" }); }
 
-    function lostCard() {
-      const rows = data.lost_sales.rows;
+    // ---------- what sells ----------
+    function bestSellers() {
+      const rows = data.best_sellers;
+      const max = Math.max(1, ...rows.map((r) => r.units));
       return card({
-        id: "lost-sales", title: "Latest potential lost sales",
-        actions: h("a", { href: "#/checkout" }, "All potential lost sales"),
-        body: table({
-          caption: "Latest items customers could not buy at checkout",
-          columns: [
-            { label: "When", render: (r) => fmt.dateTime(r.attempted_at) },
-            { label: "Product", render: (r) => r.product_name, sub: (r) => `${r.units} unit${r.units === 1 ? "" : "s"} · ${r.pickup_store.replace("PetHaven ", "")}` },
-            { label: "Why", render: (r) => REASON[r.reason_code] },
-          ],
-          rows, empty: state("", "No potential lost sales recorded", ""),
-        }),
+        id: "best-sellers", title: "Best sellers",
+        subtitle: "Top 8 products by units sold in the last 7 days.",
+        actions: h("a", { href: "#/inventory" }, "Stock and sales"),
+        body: rows.length
+          ? h("div", { class: "bs" },
+              h("div", { class: "bs-legend", "aria-hidden": "true" },
+                h("span", {}, h("i", { class: "bs-swatch bs-swatch-store" }), "In-store"),
+                h("span", {}, h("i", { class: "bs-swatch bs-swatch-online" }), "Online")),
+              h("ol", { class: "bs-list" }, rows.map((r) => h("li", { class: "bs-row" },
+                h("span", { class: "bs-name" }, r.product_name, h("span", { class: "cell-sub" }, r.product_code,
+                  r.out_of_stock_stores ? [" · ", h("a", { class: "bs-flag", href: `#/inventory?q=${r.product_code}&layout=product` },
+                    `out of stock in ${r.out_of_stock_stores} of ${data.store_count} stores`)] : null)),
+                h("span", { class: "bs-track", role: "img", "aria-label": `${r.in_store} in-store, ${r.online} online` },
+                  h("span", { class: "bs-store", style: `width:${(r.in_store / max) * 100}%` }),
+                  h("span", { class: "bs-online", style: `width:${(r.online / max) * 100}%` })),
+                h("span", { class: "bs-value" }, fmt.units(r.units),
+                  h("span", { class: "cell-sub" }, `${(r.units / 7).toFixed(1)} a day · ${money.format(r.value)}`))))))
+          : state("", "No sales in the last 7 days", ""),
+        foot: "Online sales count at the pickup store, less cancellations. Values at current price. A best seller with an empty shelf in any store is marked in red.",
       });
     }
 
     load().catch(() => {});
-    return { update() { render(); }, reload: () => load() };
+    // Arriving from a link to a lost sale: start at that card.
+    if (initialParams.pickup || initialParams.attempt) setTimeout(() => lostRoot.scrollIntoView({ block: "start" }), 300);
+    return {
+      update(next) { render(); lost.update(next); },
+      reload: () => Promise.all([load(), lost.reload()]),
+    };
   },
 };

@@ -455,9 +455,11 @@ $$;
 
 -- -----------------------------------------------------------------------------
 -- Housekeeping: cancel click-and-collect orders not collected within
--- p_days of being placed. Every held item goes back on the shelf where it
--- is now (cancel_order). Orders with an item still in transit are left for
--- the next run, since they cannot be cancelled until it arrives.
+-- p_days of the whole order being ready at the pickup store. An order is
+-- ready when every item is there: held at the pickup store itself, or
+-- arrived by transfer. Orders still waiting for an item are never cancelled
+-- as "not collected": the customer could not collect them yet. Every held
+-- item goes back on the shelf where it is now (cancel_order).
 -- Returns the number of orders cancelled.
 -- Example: SELECT store_ops.cancel_overdue_orders();
 -- -----------------------------------------------------------------------------
@@ -474,9 +476,9 @@ BEGIN
           FROM store_ops.reservation
          WHERE status IN ('held', 'in_transit', 'arrived')
          GROUP BY web_order_ref
-        HAVING min(reserved_at) < p_at - make_interval(days => p_days)
-           AND bool_and(status <> 'in_transit')
-         ORDER BY min(reserved_at)
+        HAVING bool_and(status = 'arrived' OR (status = 'held' AND store_no = pickup_store_no))
+           AND max(coalesce(arrived_at, reserved_at)) < p_at - make_interval(days => p_days)
+         ORDER BY max(coalesce(arrived_at, reserved_at))
     LOOP
         PERFORM store_ops.cancel_order(v_order, format('Not collected within %s days', p_days), p_at);
         v_count := v_count + 1;

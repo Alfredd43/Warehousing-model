@@ -5,13 +5,14 @@ import { h, clear, append, icon, fmt, announce } from "./components/ui.js";
 import overview from "./pages/overview.js";
 import website from "./pages/website.js";
 import inventory from "./pages/inventory.js";
-import checkout from "./pages/checkout.js";
+import orders from "./pages/orders.js";
 
+// Grouped by the role that uses each page (Spec 9).
 const PAGES = [
-  { id: "overview", label: "Overview", icon: "overview", module: overview },
-  { id: "website", label: "Website stock", icon: "website", module: website },
-  { id: "inventory", label: "Store stock", icon: "inventory", module: inventory },
-  { id: "checkout", label: "Orders & potential lost sales", icon: "checkout", module: checkout },
+  { id: "overview", label: "Overview", icon: "overview", module: overview, group: "Owner" },
+  { id: "website", label: "Website stock", icon: "website", module: website, group: "Owner" },
+  { id: "inventory", label: "Store stock", icon: "inventory", module: inventory, group: "Store managers" },
+  { id: "orders", label: "Click & collect orders", icon: "orders", module: orders, group: "Store staff" },
 ];
 
 const els = {
@@ -111,7 +112,12 @@ function renderBanner() {
 
 function renderNav() {
   clear(els.nav);
+  let group = null;
   for (const p of PAGES) {
+    if (p.group !== group) {
+      group = p.group;
+      els.nav.append(h("li", { class: "nav-group", "aria-hidden": "true" }, group));
+    }
     els.nav.append(h("li", {},
       h("a", { href: `#/${p.id}`, "aria-current": p.id === current.page ? "page" : undefined },
         icon(p.icon), h("span", {}, p.label))));

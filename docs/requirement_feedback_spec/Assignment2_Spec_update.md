@@ -118,7 +118,7 @@ All changes to a store's stock happen **immediately** when the action is recorde
 | Held line sent to the pickup store | `reservation` → `in_transit` | supplying store: reserved − qty (in transit, in no store) | unchanged (already deducted) |
 | Transferred line arrives | `reservation` → `arrived` | pickup store: reserved + qty | unchanged |
 | Customer collects a C&C order (only when every line is at the pickup store) | each `reservation` → `collected` | pickup store: reserved − qty (goods leave) | unchanged (already deducted) |
-| C&C order not collected within 3 days | the overdue job (`cancel_overdue_orders`) cancels it like the row below | as below | unchanged until the next refresh |
+| C&C order not collected within 3 days of the whole order being ready | the overdue job (`cancel_overdue_orders`) cancels it like the row below | as below | unchanged until the next refresh |
 | C&C order cancelled before collection (not while a line is in transit) | each `reservation` → `cancelled`, with reason | where the units are: reserved − qty, shelf + qty | unchanged until the next refresh |
 
 ### 4.2 Supplier system
@@ -214,9 +214,9 @@ Report views:
 | # | View | Answers |
 | --- | --- | --- |
 | 1 | `dw.rpt_current_stock_by_store` | Shelf vs reserved, on hand and low stock per store and product |
-| 2 | `dw.rpt_online_vs_actual`, `rpt_online_staleness`, `rpt_last_sync_changes` | Website number vs real stock, time since the last refresh, events pending, before/after of the last refresh |
+| 2 | `dw.rpt_online_vs_actual`, `rpt_online_staleness`, `rpt_last_sync_changes`, `rpt_refresh_history` | Website number vs real stock, time since the last refresh, events pending, before/after of the last refresh, how wrong the website was before each refresh |
 | 3 | `dw.rpt_checkout_blocked` | Bag items blocked at checkout: pickup store, what the website showed, real stock, reason |
-| 4 | `dw.rpt_daily_sales` | Units sold per day, store, channel and category |
+| 4 | `dw.rpt_daily_sales`, `rpt_product_sales` | Units sold per day, store, channel and category; the same per product |
 | 5 | `dw.rpt_open_reservations` | Open C&C order lines: source store, transfer status, order ready, overdue |
 | 6 | `dw.rpt_reconciliation`, `etl.v_data_quality` | Warehouse vs store system; rejected source records |
 
@@ -240,16 +240,16 @@ Three roles use the dashboard, and each sees only the information it acts on. Th
 | Use case | User | Impact | Question it answers | Decision it supports |
 | --- | --- | --- | --- | --- |
 | UC1 See the business impact | Owner (final decision-maker) | High | In the last 7 days, how much did we sell in store and online, which products sell best and how fast, and how many sales did we lose at checkout, and why? | Which products need attention: best sellers to keep in stock, and products and stores that lose sales |
-| UC2 Check the website stock | Owner | High | Does the website show what the stores really have, and is the automatic refresh running? | Whether the online channel is working, or the refresh needs attention |
+| UC2 Check the website stock | Owner | High | Does the website show what the stores really have, is the automatic refresh running, and how wrong was the website before each refresh? | Whether the online channel is working, or the refresh needs attention |
 | UC3 Spot low stock | Store managers | Medium | Which products is my store running low on? | What to reorder for my store (the order itself is placed outside this system) |
 | UC4 Prepare click & collect orders | Store staff | Low | Which orders must I send, receive or hand over, and which are overdue? | Which order to handle first |
 
 | Use case | Dashboard page | Source view | What it shows | Scope note |
 | --- | --- | --- | --- | --- |
-| UC1 | Overview → Potential lost sales | Report 4 (sales per product and channel) + Report 3 (with sales value) + `online.checkout_attempt*` | Units and value sold in store and online; best sellers and units per day; sales lost at checkout (units, value, share of online demand) and why; owner-level alerts | Share of online demand lost = units blocked ÷ (units sold online + units blocked). A blocked checkout is a potential, not confirmed, lost sale. Sales value only: there are no cost prices (no profit) and no returns in the data |
-| UC2 | Website stock | Report 2 | Website vs real stock per product, refresh status, last refresh and its corrections | The refresh corrects the website; the warehouse measures and records the discrepancy |
-| UC3 | Store stock | Report 1 | Available, reserved and on hand per product for one store; low-stock flag (2 or fewer) | Identifies low stock; does **not** decide or execute replenishment. Out-of-stock and low-stock alerts belong here, not on the owner's Overview |
-| UC4 | Click & collect orders | Report 5 | Open order lines for one store: to send, in transit, ready to collect, overdue; whether the whole order is ready; waiting time | Ordered by urgency (overdue first). Overdue orders are cancelled by the overdue job (`demo.py cancel-overdue`) |
+| UC1 | Overview → Potential lost sales | Report 4 (`rpt_product_sales`: sales per product and channel) + Report 3 (with sales value) + `online.checkout_attempt*` | Units and value sold in store and online; best sellers and units per day, marking a best seller that is out of stock and in how many stores; sales lost at checkout (units, value, share of online demand) and why; website status; which stores have a problem (checkouts blocked, products out of stock, orders overdue) | Share of online demand lost = units blocked ÷ (units sold online + units blocked). A blocked checkout is a potential, not confirmed, lost sale. Sales value only: there are no cost prices (no profit) and no returns in the data |
+| UC2 | Website stock | Report 2 | Website vs real stock per product, refresh status, last refresh and its corrections, refresh history (`rpt_refresh_history`) | The refresh corrects the website; the warehouse measures and records the discrepancy |
+| UC3 | Store stock | Report 1 | Available, reserved and on hand per product for one store; low-stock flag (2 or fewer) | Identifies low stock; does **not** decide or execute replenishment. Shelf-level alerts belong here; the owner's Overview only counts out-of-stock products per store |
+| UC4 | Click & collect orders | Report 5 | Open order lines for one store: to send, in transit, ready to collect, overdue; when it was placed; whether the whole order is ready and since when | Ordered by urgency (overdue first). Overdue orders are cancelled by the overdue job (`demo.py cancel-overdue`) |
 
 ## 10. End-to-end testing and the recorded demo video
 
@@ -287,7 +287,7 @@ The script ends with an automatic test summary; every row must be PASS:
 | T10 | Data quality: no rejected source rows |
 | T11 | Validation: P019 rejected with a reason, then loaded once after approval |
 
-Before recording, the automated checks must also pass: `check_demo.py` (104), `check_scheduler.py` (17) and `check_dashboard.py` (38), each `FAIL 0`.
+Before recording, the automated checks must also pass: `check_demo.py` (105), `check_scheduler.py` (17) and `check_dashboard.py` (45), each `FAIL 0`.
 
 ### 10.4 Running order and timing (about 10 minutes)
 
@@ -325,7 +325,7 @@ The tutor's format (13 Oct): at most 10 minutes (going over is marked down), 3 o
 | vi.b Integrated data warehouse (≥ 1) | `dw` (`workspace/db/05_warehouse.sql`) |
 | vi.c Commented SQL scripts with synthetic data, ETL | `workspace/db/01`–`08`, `workspace/db/seed/` |
 | vi.d Reports and dashboard per data use case (≥ 3) | Four data use cases UC1–UC4 (section 9), Reports 1–6 (`08_reports.sql`), dashboard (`workspace/dashboard/`) |
-| vi.e End-to-end testing and recorded demo video | `demo/video_demo_script.sql` (recorded video, T1-T11), `workspace/tests/` (104 + 17 + 38 checks) |
+| vi.e End-to-end testing and recorded demo video | `demo/video_demo_script.sql` (recorded video, T1-T11), `workspace/tests/` (105 + 17 + 45 checks) |
 
 ## 12. Word list
 
@@ -346,4 +346,4 @@ The tutor's format (13 Oct): at most 10 minutes (going over is marked down), 3 o
 | Discrepancy | Website number minus real combined available stock. |
 | Website refresh | The operational job in which the website extracts the store system's shelf totals: every 3 minutes, or by hand. Code names still say "sync" (`online.sync_website_stock()`, `dw.sync_run`). |
 | Reconciliation | Comparing warehouse totals with the store system's live stock. |
-| End-to-end test | The recorded scenario that drives all three sources through ETL, the warehouse and the dashboard, ending in T1–T10 PASS. |
+| End-to-end test | The recorded scenario that drives all three sources through ETL, the warehouse and the dashboard, ending in T1–T11 PASS. |

@@ -58,7 +58,7 @@ export default {
       const all = stock.data.comparison;
       const wrong = all.filter((r) => r.comparison !== "equal");
       root.append(statusLine(), summary(all, wrong));
-      root.append(h("div", { class: "stack" }, wrong.length ? wrongCard(wrong) : null, allProductsCard(all), syncCard()));
+      root.append(h("div", { class: "stack" }, wrong.length ? wrongCard(wrong) : null, allProductsCard(all), syncCard(), historyCard()));
     }
 
     function statusLine() {
@@ -155,6 +155,45 @@ export default {
                 rows: d.website_changes,
               })
             : h("p", { class: "secondary", style: "padding:0 20px 18px" }, "Nothing needed correcting: the website was already right.")),
+      });
+    }
+
+    // ---------- is the refresh interval short enough? ----------
+    // Time between refreshes: minutes when scheduled, hours or days in the sample data.
+    function gap(sec) {
+      if (sec === null || sec === undefined) return "—";
+      if (sec < 3600) return duration(sec);
+      if (sec < 172800) return `${Math.round(sec / 3600)} h`;
+      return `${Math.round(sec / 86400)} days`;
+    }
+
+    function historyCard() {
+      const rows = stock.data.history;
+      const w = stock.data.history_7_days;
+      const summary = w.refreshes
+        ? `Last 7 days: ${fmt.num(w.refreshes)} refresh${w.refreshes === 1 ? "" : "es"}; ${fmt.num(w.with_corrections)} found the website wrong, `
+          + `at most ${fmt.num(w.most_corrected)} product${w.most_corrected === 1 ? "" : "s"} at once; `
+          + `${fmt.units(w.units_overstated)} shown online that the stores no longer had.`
+        : "No refresh in the last 7 days.";
+      return card({
+        id: "refresh-history", title: "Refresh history",
+        subtitle: "How wrong the website was just before each refresh, newest first. If most refreshes find wrong numbers, the interval may be too long.",
+        body: h("div", {},
+          h("p", { class: "card-body", style: "padding-bottom:0;margin:0" }, summary),
+          table({
+            caption: "Website numbers each refresh corrected",
+            columns: [
+              { label: "Refresh", render: (r) => fmt.dateTime(r.run_at), sub: (r) => SYNC_TRIGGER[r.triggered_by] || r.triggered_by },
+              { label: "Since previous", num: true, render: (r) => gap(r.since_previous_seconds) },
+              { label: "Stock changes in between", num: true, render: (r) => fmt.num(r.stock_events_since_previous) },
+              { label: "Website numbers corrected", num: true, render: (r) => fmt.num(r.website_numbers_corrected) },
+              { label: "Too high", num: true, render: (r) => (r.products_too_high ? `${r.products_too_high} (${fmt.units(r.units_overstated)})` : "—") },
+              { label: "Too low", num: true, render: (r) => (r.products_too_low ? `${r.products_too_low} (${fmt.units(r.units_understated)})` : "—") },
+            ],
+            rows, rowKey: (r) => r.sync_id,
+            empty: state("", "No refresh has run yet", ""),
+          })),
+        foot: "Too high = customers could order stock that had gone. Too low = stock in the stores could not be sold online. Stock changes = sales, deliveries and orders recorded since the previous refresh.",
       });
     }
 

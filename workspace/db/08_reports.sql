@@ -8,8 +8,10 @@
 --   Report 2  dw.rpt_online_staleness         refresh interval, time since last refresh, next refresh, pending events
 --             dw.rpt_online_vs_actual         website number vs real total per product
 --             dw.rpt_last_sync_changes        before/after of the most recent sync
+--             dw.rpt_refresh_history          how wrong the website was before each refresh
 --   Report 3  dw.rpt_checkout_blocked         bag items blocked at checkout although the website showed them
 --   Report 4  dw.rpt_daily_sales              units sold per day, store, channel (in-store / online) and category
+--             dw.rpt_product_sales            the same, per product (best sellers, units sold per store)
 --   Report 5  dw.rpt_open_reservations        click-and-collect order lines not yet collected (incl. transfers)
 --   Report 6  dw.rpt_reconciliation           warehouse vs live store system
 --             etl.v_data_quality              source records rejected by the ETL (06_etl.sql)
@@ -131,6 +133,32 @@ SELECT r.sync_id,
 COMMENT ON VIEW dw.rpt_last_sync_changes IS
 'Report 2 (before/after). Every store and website number the most recent website refresh changed.';
 
+-- One row per website refresh: how long since the previous one, how many
+-- stock events happened in between, and how wrong the website was just
+-- before it (the website numbers it corrected). Too high = customers could
+-- order stock that had gone; too low = stock in the stores could not be
+-- sold online.
+CREATE VIEW dw.rpt_refresh_history AS
+SELECT r.sync_id,
+       r.source_sync_no,
+       r.run_at,
+       r.triggered_by,
+       r.run_at - lag(r.run_at) OVER (ORDER BY r.sync_id)                       AS since_previous,
+       r.events_processed                                                       AS stock_events_since_previous,
+       count(c.sync_id) FILTER (WHERE c.changed)                                AS website_numbers_corrected,
+       count(c.sync_id) FILTER (WHERE c.after_qty < c.before_qty)               AS products_too_high,
+       count(c.sync_id) FILTER (WHERE c.after_qty > c.before_qty)               AS products_too_low,
+       coalesce(sum(c.before_qty - c.after_qty) FILTER (WHERE c.after_qty < c.before_qty), 0)::integer
+                                                                                AS units_overstated,
+       coalesce(sum(c.after_qty - c.before_qty) FILTER (WHERE c.after_qty > c.before_qty), 0)::integer
+                                                                                AS units_understated,
+       r.store_mismatches
+  FROM dw.sync_run r
+  LEFT JOIN dw.sync_change c ON c.sync_id = r.sync_id AND c.measure = 'online_available'
+ GROUP BY r.sync_id;
+COMMENT ON VIEW dw.rpt_refresh_history IS
+'Report 2 (history). One row per website refresh: time since the previous refresh, stock events in between, and the website numbers it corrected (products too high / too low just before it, and by how many units). Shows whether the refresh interval keeps the website close enough to the stores.';
+
 -- Report 3 ------------------------------------------------------------------
 CREATE VIEW dw.rpt_checkout_blocked AS
 SELECT f.order_ref                                 AS basket,
@@ -207,6 +235,36 @@ SELECT d.full_date,
 COMMENT ON VIEW dw.rpt_daily_sales IS
 'Report 4. Units sold per day, store, channel and category (star-schema roll-up through dim_date). In-store = till sales; online = paid click-and-collect items less cancellations, credited to the pickup store. Value uses the current shelf price (dim_product is SCD type 1).';
 
+-- The same sales rule per product, for best sellers (owner) and units sold
+-- per store next to its stock (store managers).
+CREATE VIEW dw.rpt_product_sales AS
+WITH sales AS (
+    SELECT f.date_key, f.store_key, f.product_key, 'in-store'::text AS channel, f.units
+      FROM dw.fact_stock_event f
+     WHERE f.event_type = 'store_sale'
+    UNION ALL
+    SELECT f.date_key, f.pickup_store_key, f.product_key, 'online',
+           CASE f.event_type WHEN 'reservation' THEN f.units ELSE -f.units END
+      FROM dw.fact_stock_event f
+     WHERE f.event_type IN ('reservation', 'cancellation')
+)
+SELECT d.full_date,
+       s.store_code,
+       s.store_name,
+       p.product_code,
+       p.product_name,
+       p.category,
+       x.channel,
+       sum(x.units)                     AS units_sold,
+       sum(x.units * p.unit_price)      AS sales_value_at_current_price
+  FROM sales x
+  JOIN dw.dim_date d    ON d.date_key = x.date_key
+  JOIN dw.dim_store s   ON s.store_key = x.store_key
+  JOIN dw.dim_product p ON p.product_key = x.product_key
+ GROUP BY d.full_date, s.store_code, s.store_name, p.product_code, p.product_name, p.category, x.channel;
+COMMENT ON VIEW dw.rpt_product_sales IS
+'Report 4 (per product). Units sold per day, store, product and channel, with the same rule as dw.rpt_daily_sales: in-store = till sales; online = paid click-and-collect items less cancellations, at the pickup store. Value at the current shelf price.';
+
 -- Report 5 ------------------------------------------------------------------
 CREATE VIEW dw.rpt_open_reservations AS
 WITH line AS (
@@ -218,6 +276,7 @@ WITH line AS (
                 FILTER (WHERE f.event_type = 'reservation'))[1]                    AS source_store_key,
            max(f.units)                                                            AS units,
            min(f.event_ts) FILTER (WHERE f.event_type = 'reservation')             AS reserved_at,
+           max(f.event_ts) FILTER (WHERE f.event_type = 'transfer_in')             AS arrived_at,
            (array_agg(f.event_type ORDER BY f.event_id DESC))[1]                   AS last_event
       FROM dw.fact_stock_event f
      WHERE f.event_type IN ('reservation', 'transfer_out', 'transfer_in', 'collection', 'cancellation')
@@ -232,6 +291,16 @@ WITH line AS (
            END AS line_status
       FROM line l
      WHERE l.last_event NOT IN ('collection', 'cancellation')
+), open_order AS (
+    -- The whole order is ready when every open line is; it became ready when
+    -- its last line did (held at the pickup store, or arrived by transfer).
+    SELECT o.*,
+           bool_and(o.line_status = 'ready for collection')
+               OVER (PARTITION BY o.order_ref)                                     AS order_ready,
+           max(CASE WHEN o.source_store_key = o.pickup_store_key THEN o.reserved_at
+                    ELSE o.arrived_at END)
+               OVER (PARTITION BY o.order_ref)                                     AS last_ready_at
+      FROM open_line o
 )
 SELECT o.order_ref                                       AS order_no,
        pk.store_name                                     AS pickup_store,
@@ -241,17 +310,19 @@ SELECT o.order_ref                                       AS order_no,
        src.store_name                                    AS taken_from,
        o.source_store_key <> o.pickup_store_key          AS is_transfer,
        o.line_status,
-       bool_and(o.line_status = 'ready for collection')
-           OVER (PARTITION BY o.order_ref)               AS order_ready,
+       o.order_ready,
+       CASE WHEN o.order_ready THEN o.last_ready_at END  AS order_ready_at,
        o.reserved_at,
        date_trunc('minute', now() - o.reserved_at)       AS waiting_for,
-       now() - o.reserved_at > interval '3 days'         AS overdue
-  FROM open_line o
+       -- The customer's 3 days start when the whole order is ready to collect,
+       -- so a late transfer never makes an order overdue.
+       o.order_ready AND now() - o.last_ready_at > interval '3 days' AS overdue
+  FROM open_order o
   JOIN dw.dim_store pk  ON pk.store_key = o.pickup_store_key
   JOIN dw.dim_store src ON src.store_key = o.source_store_key
   JOIN dw.dim_product p ON p.product_key = o.product_key;
 COMMENT ON VIEW dw.rpt_open_reservations IS
-'Report 5. Click-and-collect order lines not yet collected or cancelled: pickup store, store the stock was taken from, transfer status (waiting to be sent / in transit / ready for collection), whether the whole order is ready, and overdue = waiting more than 3 days.';
+'Report 5. Click-and-collect order lines not yet collected or cancelled: pickup store, store the stock was taken from, transfer status (waiting to be sent / in transit / ready for collection), whether the whole order is ready and since when, and overdue = the whole order has been ready for more than 3 days without being collected (the same rule as store_ops.cancel_overdue_orders).';
 
 -- Report 6 ------------------------------------------------------------------
 CREATE VIEW dw.rpt_reconciliation AS

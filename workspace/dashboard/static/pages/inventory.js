@@ -1,7 +1,7 @@
-// Store stock (Report 1: current stock by store) + sales history.
+// Store stock (Report 1: current stock by store) with units sold in the last 7 days.
 
 import { get } from "../api.js";
-import { h, clear, fmt, badge, card, state, loading, field, select, segmented, table, pager, tabs, errorState, keepFocus } from "../components/ui.js";
+import { h, clear, fmt, badge, card, state, loading, field, select, segmented, table, pager, errorState, keepFocus } from "../components/ui.js";
 
 function stockStatus(n) {
   if (n === 0) return { label: "Out of stock", kind: "danger" };
@@ -14,7 +14,7 @@ export default {
     let params = initialParams;
     let stock = null, stockErr = null;
     let events = null, eventsKey = null, eventsErr = null;
-    let sales = null, salesErr = null;
+    let expanded = false;
     let token = 0, evToken = 0;
 
     async function loadStock() {
@@ -58,12 +58,6 @@ export default {
       render();
     }
 
-    async function loadSales() {
-      salesErr = null;
-      try { sales = await get("/sales"); app.markRead(sales.meta); } catch (err) { salesErr = err; }
-      render();
-    }
-
     function render() { keepFocus(root, draw); }
 
     function draw() {
@@ -72,9 +66,6 @@ export default {
         h("div", {},
           h("h1", {}, "Store stock"),
           h("p", { class: "subtitle" }, "What each store has on the shelf, and what is held for online orders."))));
-      root.append(tabs([{ value: "stock", label: "Current stock" }, { value: "sales", label: "Sales" }],
-        params.view === "sales" ? "sales" : "stock", (v) => app.setParams({ view: v === "stock" ? "" : v }), "Inventory views"));
-      if (params.view === "sales") return drawSales();
       if (stockErr) return root.append(card({ label: "Error", body: errorState(stockErr, () => loadStock().catch(() => {})) }));
       if (!stock) return root.append(card({ label: "Loading", body: loading("Loading store stock") }));
       drawStock();
@@ -100,6 +91,7 @@ export default {
       let t;
       search.addEventListener("input", () => { clearTimeout(t); t = setTimeout(() => app.setParams({ q: search.value.trim() }), 200); });
       const any = params.store || params.cat || params.q || params.low;
+      const byProduct = params.layout === "product";
       root.append(h("div", { class: "filters", role: "search", "aria-label": "Filter stock" },
         field("Store", select([{ value: "", label: "All stores" }, ...stores.map(([c, n]) => ({ value: c, label: `${c} · ${n.replace("PetHaven ", "")}` }))],
           params.store || "", (v) => app.setParams({ store: v }), { "data-fk": "store" })),
@@ -108,35 +100,18 @@ export default {
         field("Product", search, { wide: true }),
         h("label", { class: "check" }, h("input", { type: "checkbox", "data-fk": "low", checked: !!params.low,
           onchange: (e) => app.setParams({ low: e.target.checked ? "1" : "" }) }), "Low stock only"),
-        segmented("View", [{ value: "matrix", label: "By store" }, { value: "table", label: "List" }],
-          params.layout === "table" ? "table" : "matrix", (v) => app.setParams({ layout: v === "matrix" ? "" : v })),
+        // One store selected: a single table for it. All stores: group by store or by product.
+        params.store ? null : segmented("View", [{ value: "store", label: "By store" }, { value: "product", label: "By product" }],
+          byProduct ? "product" : "store", (v) => app.setParams({ layout: v === "store" ? "" : v })),
         any ? h("button", { class: "btn", type: "button", onclick: () => app.setParams({ store: "", cat: "", q: "", low: "" }) }, "Clear filters") : null));
 
+      root.append(stockVsSoldCard(rows, new Map(stores).get(params.store)));
       if (params.product) root.append(productPanel(products));
       if (params.product && params.store_sel) root.append(historyCard());
 
-      if (params.layout !== "table") root.append(matrixCard(rows));
-      else root.append(card({
-        id: "stock-table", title: "Stock by store and product",
-        subtitle: `${rows.length} of ${all.length} store shelves.`,
-        body: table({
-          caption: "Available, reserved and on-hand units per store and product",
-          columns: [
-            { label: "Store", render: (r) => r.store_name.replace("PetHaven ", ""), sub: (r) => r.store_code },
-            { label: "Product", render: (r) => r.product_name, sub: (r) => r.product_code },
-            { label: "Category", key: "category" },
-            { label: "Available", num: true, render: (r) => fmt.num(r.available) },
-            { label: "Reserved", num: true, render: (r) => fmt.num(r.reserved) },
-            { label: "On hand", num: true, render: (r) => fmt.num(r.on_hand) },
-            { label: "Stock status", render: (r) => { const s = stockStatus(r.available); return badge(s.label, s.kind); } },
-          ],
-          rows, rowKey: (r) => `${r.store_code}-${r.product_code}`,
-          selectedKey: params.product && params.store_sel ? `${params.store_sel}-${params.product}` : undefined,
-          onSelect: (r) => app.setParams({ product: r.product_code, store_sel: r.store_code, hoff: "", hfrom: "", hto: "" }),
-          empty: state("", "No balances match these filters", "", h("button", { class: "btn", type: "button", onclick: () => app.setParams({ store: "", cat: "", q: "", low: "" }) }, "Clear filters")),
-        }),
-        foot: "Available = on the shelf, free to sell. Reserved = held for click & collect orders. Low stock = 2 or fewer available.",
-      }));
+      if (params.store) root.append(singleStoreCard(rows, new Map(stores).get(params.store)));
+      else if (byProduct) root.append(byProductCard(rows));
+      else root.append(byStoreCard(rows));
     }
 
     function productPanel(products) {
@@ -191,121 +166,158 @@ export default {
       });
     }
 
-    // "By store" view: one block per product, one row per store, with
-    // available, reserved and on-hand side by side (no measure switch).
-    function matrixCard(rows) {
-      const byProduct = new Map();
+    // ---------- stock tables ----------
+    const STOCK_FOOT = "Available = on the shelf, free to sell. Reserved = held for click & collect orders. Red = out of stock. Amber = low (1–2 left).";
+    const storeLabel = (name) => name.replace("PetHaven ", "");
+    const byCode = (a, b) => a.localeCompare(b);
+    const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+    const lowNote = (rows) => { const n = rows.filter((r) => r.low_stock).length; return n ? ` · ${n} low or out of stock` : ""; };
+    const noMatch = () => state("", "No balances match these filters", "",
+      h("button", { class: "btn", type: "button", onclick: () => app.setParams({ cat: "", q: "", low: "" }) }, "Clear filters"));
+
+    // Available, reserved, on hand and status: the cells every stock table shares.
+    function levelCells(r) {
+      const s = stockStatus(r.available);
+      const cls = r.available === 0 ? "cell-zero" : r.available <= 2 ? "cell-low" : "";
+      return [
+        h("td", { class: `num ${cls}`, title: `${r.available} available (${s.label})` }, fmt.num(r.available)),
+        h("td", { class: "num" }, fmt.num(r.reserved)),
+        h("td", { class: "num" }, fmt.num(r.on_hand)),
+        h("td", {}, badge(s.label, s.kind)),
+      ];
+    }
+
+    const rowHead = (label, sub) =>
+      h("th", { scope: "row", style: "background:none;font-weight:500;color:var(--text)" }, label, h("span", { class: "cell-sub" }, sub));
+
+    function stockRow(r, cells) {
+      const selected = params.product === r.product_code && params.store_sel === r.store_code;
+      const tr = h("tr", { class: `clickable${selected ? " selected" : ""}`, tabindex: "0", "data-fk": `srow-${r.product_code}-${r.store_code}` }, cells);
+      const pick = () => app.setParams({ product: r.product_code, store_sel: r.store_code, hoff: "", hfrom: "", hto: "" });
+      tr.addEventListener("click", pick);
+      tr.addEventListener("keydown", (e) => { if (e.key === "Enter") pick(); });
+      return tr;
+    }
+
+    const groupRow = (span, title, sub) => h("tr", { class: "group-row" },
+      h("td", { colspan: String(span) }, title, h("span", { class: "cell-sub", style: "font-weight:400" }, sub)));
+
+    function stockTable(caption, headers, tbody) {
+      return h("div", { class: "table-wrap" }, h("table", { class: "matrix" },
+        h("caption", { class: "sr-only" }, caption),
+        h("thead", {}, h("tr", {}, headers.map(([label, num]) => h("th", { scope: "col", class: num ? "num" : undefined }, label)))),
+        tbody));
+    }
+
+    function groupBy(rows, key) {
+      const groups = new Map();
       for (const r of rows) {
-        if (!byProduct.has(r.product_code)) byProduct.set(r.product_code, { code: r.product_code, name: r.product_name, stores: [] });
-        byProduct.get(r.product_code).stores.push(r);
+        if (!groups.has(r[key])) groups.set(r[key], []);
+        groups.get(r[key]).push(r);
       }
-      const tbody = h("tbody");
-      for (const p of byProduct.values()) {
-        tbody.append(h("tr", { class: "group-row" },
-          h("td", { colspan: "5" }, `${p.code} at each store`, h("span", { class: "cell-sub", style: "font-weight:400" }, p.name))));
-        for (const r of p.stores) {
-          const s = stockStatus(r.available);
-          const cls = r.available === 0 ? "cell-zero" : r.available <= 2 ? "cell-low" : "";
-          const selected = params.product === r.product_code && params.store_sel === r.store_code;
-          const tr = h("tr", { class: `clickable${selected ? " selected" : ""}`, tabindex: "0", "data-fk": `srow-${r.product_code}-${r.store_code}` },
-            h("th", { scope: "row", style: "background:none;font-weight:500;color:var(--text)" },
-              r.store_name.replace("PetHaven ", ""), h("span", { class: "cell-sub" }, r.store_code)),
-            h("td", { class: `num ${cls}`, title: `${r.store_name}: ${r.available} available (${s.label})` }, fmt.num(r.available)),
-            h("td", { class: "num" }, fmt.num(r.reserved)),
-            h("td", { class: "num" }, fmt.num(r.on_hand)),
-            h("td", {}, badge(s.label, s.kind)));
-          const pick = () => app.setParams({ product: r.product_code, store_sel: r.store_code, hoff: "", hfrom: "", hto: "" });
-          tr.addEventListener("click", pick);
-          tr.addEventListener("keydown", (e) => { if (e.key === "Enter") pick(); });
-          tbody.append(tr);
-        }
-      }
+      return groups;
+    }
+
+    const PRODUCT_HEADERS = [["Product"], ["Category"], ["Available", true], ["Reserved", true], ["On hand", true], ["Stock status"]];
+    const productCells = (r) => [rowHead(r.product_name, r.product_code), h("td", {}, r.category), ...levelCells(r)];
+
+    // Store filter set: one table for that store, one row per product.
+    function singleStoreCard(rows, name) {
+      const sorted = [...rows].sort((a, b) => byCode(a.product_code, b.product_code));
       return card({
-        id: "stock-matrix", title: "Stock by store",
-        subtitle: `${byProduct.size} product${byProduct.size === 1 ? "" : "s"} · select a store to see its event history.`,
-        body: rows.length ? h("div", { class: "table-wrap" }, h("table", { class: "matrix" },
-          h("caption", { class: "sr-only" }, "Available, reserved and on-hand units of each product at each store"),
-          h("thead", {}, h("tr", {},
-            h("th", { scope: "col" }, "Store"),
-            h("th", { scope: "col", class: "num" }, "Available"),
-            h("th", { scope: "col", class: "num" }, "Reserved"),
-            h("th", { scope: "col", class: "num" }, "On hand"),
-            h("th", { scope: "col" }, "Stock status"))),
-          tbody)) : state("", "No balances match these filters", ""),
-        foot: "Available = on the shelf, free to sell. Reserved = held for click & collect orders. Red = out of stock. Amber = low (1–2 left).",
+        id: "stock-store", title: `${name ? storeLabel(name) : "Store"} · ${params.store}`,
+        subtitle: `${plural(sorted.length, "product")}${lowNote(sorted)} · select a product to see its event history.`,
+        body: sorted.length ? stockTable(`Available, reserved and on-hand units of each product at ${name || params.store}`,
+          [...PRODUCT_HEADERS, ["Last event"]],
+          h("tbody", {}, sorted.map((r) => stockRow(r, [...productCells(r), h("td", {}, fmt.dateTime(r.last_event_at))])))) : noMatch(),
+        foot: STOCK_FOOT,
       });
     }
 
-    // ---------- sales history (secondary) ----------
-    function drawSales() {
-      if (salesErr) return root.append(card({ label: "Error", body: errorState(salesErr, loadSales) }));
-      if (!sales) { root.append(card({ label: "Loading", body: loading("Loading sales") })); return; }
-      const all = sales.data.rows;
-      const stores = [...new Set(all.map((r) => r.store_name))].sort();
-      const cats = [...new Set(all.map((r) => r.category))].sort();
-      const rows = all.filter((r) =>
-        (!params.sfrom || r.full_date >= params.sfrom) && (!params.sto || r.full_date <= params.sto) &&
-        (!params.sstore || r.store_name === params.sstore) && (!params.schan || r.channel === params.schan) &&
-        (!params.scat || r.category === params.scat));
-      const days = new Map();
-      for (const r of rows) {
-        const d = days.get(r.full_date) || { date: r.full_date, day: r.day_name, "in-store": 0, online: 0 };
-        d[r.channel] += r.units_sold;
-        days.set(r.full_date, d);
+    // All stores, "By store": one block per store, one row per product.
+    function byStoreCard(rows) {
+      const groups = groupBy([...rows].sort((a, b) => byCode(a.store_code, b.store_code) || byCode(a.product_code, b.product_code)), "store_code");
+      const tbody = h("tbody");
+      for (const [code, g] of groups) {
+        tbody.append(groupRow(PRODUCT_HEADERS.length, `${storeLabel(g[0].store_name)} · ${code}`, `${plural(g.length, "product")}${lowNote(g)}`));
+        for (const r of g) tbody.append(stockRow(r, productCells(r)));
       }
-      const dayRows = [...days.values()].sort((a, b) => a.date.localeCompare(b.date));
-      const max = Math.max(1, ...dayRows.flatMap((d) => [d["in-store"], d.online]));
-      const any = params.sfrom || params.sto || params.sstore || params.schan || params.scat;
-      root.append(h("div", { class: "filters" },
-        field("From", h("input", { type: "date", "data-fk": "sfrom", value: params.sfrom || "", onchange: (e) => app.setParams({ sfrom: e.target.value }) })),
-        field("To", h("input", { type: "date", "data-fk": "sto", value: params.sto || "", onchange: (e) => app.setParams({ sto: e.target.value }) })),
-        field("Store", select([{ value: "", label: "All stores" }, ...stores.map((s) => ({ value: s, label: s.replace("PetHaven ", "") }))], params.sstore || "", (v) => app.setParams({ sstore: v }), { "data-fk": "sstore" })),
-        field("Channel", select([{ value: "", label: "Both channels" }, { value: "in-store", label: "In-store" }, { value: "online", label: "Online" }], params.schan || "", (v) => app.setParams({ schan: v }), { "data-fk": "schan" })),
-        field("Category", select([{ value: "", label: "All categories" }, ...cats.map((c) => ({ value: c, label: c }))], params.scat || "", (v) => app.setParams({ scat: v }), { "data-fk": "scat" })),
-        any ? h("button", { class: "btn", type: "button", onclick: () => app.setParams({ sfrom: "", sto: "", sstore: "", schan: "", scat: "" }) }, "Clear filters") : null));
-      root.append(h("div", { class: "stack" },
-        card({
-          id: "sales-days", title: "Units sold per day", subtitle: "In-store till sales and online orders (credited to the pickup store).",
-          actions: h("div", { class: "legend" },
-            h("span", {}, h("i", { class: "swatch", style: "background:var(--chart-warehouse)" }), "In-store"),
-            h("span", {}, h("i", { class: "swatch", style: "background:var(--chart-website)" }), "Online")),
-          body: dayRows.length ? h("div", { class: "card-body" }, h("div", { class: "bars" }, dayRows.map((d) =>
-            h("div", { class: "bar-row", style: "cursor:default" },
-              h("span", { class: "bar-label" }, fmt.date(d.date), h("small", {}, d.day)),
-              h("span", { class: "bar-pair" },
-                h("span", { class: "bar-line" }, h("span", { class: "bar wh", style: `width:${Math.max(0, d["in-store"] / max * 100)}%` }), h("span", { class: "bar-val" }, `${fmt.num(d["in-store"])} in-store`)),
-                h("span", { class: "bar-line" }, h("span", { class: "bar web", style: `width:${Math.max(0, d.online / max * 100)}%` }), h("span", { class: "bar-val" }, `${fmt.signed(d.online)} online`))))))) : state("", "No sales match these filters", ""),
-        }),
-        card({
-          id: "sales-table", title: "Daily sales detail", subtitle: `${rows.length} rows · units sold per day, store, channel and category`,
-          body: table({
-            caption: "Units sold per day, store, channel and category",
-            columns: [
-              { label: "Date", render: (r) => fmt.date(r.full_date), sub: (r) => r.day_name },
-              { label: "Store", render: (r) => r.store_name.replace("PetHaven ", "") },
-              { label: "Channel", render: (r) => (r.channel === "online" ? "Online" : "In-store") },
-              { label: "Category", key: "category" },
-              { label: "Units sold", num: true, render: (r) => fmt.signed(r.units_sold).replace(/^\+/, "") },
-              { label: "Sales value at current price", num: true, render: (r) => `$${Number(r.sales_value_at_current_price).toFixed(2)}` },
-            ],
-            rows, empty: state("", "No sales match these filters", ""),
-          }),
-          foot: "Value = units × today's shelf price. Online can be negative on a day with more cancellations than orders.",
-        })));
+      return card({
+        id: "stock-by-store", title: "Stock by store",
+        subtitle: `${plural(groups.size, "store")} · select a product to see its event history.`,
+        body: rows.length ? stockTable("Available, reserved and on-hand units of each product, grouped by store", PRODUCT_HEADERS, tbody) : noMatch(),
+        foot: STOCK_FOOT,
+      });
+    }
+
+    // All stores, "By product": one block per product, one row per store.
+    function byProductCard(rows) {
+      const headers = [["Store"], ["Available", true], ["Reserved", true], ["On hand", true], ["Stock status"]];
+      const groups = groupBy([...rows].sort((a, b) => byCode(a.product_code, b.product_code) || byCode(a.store_code, b.store_code)), "product_code");
+      const tbody = h("tbody");
+      for (const [code, g] of groups) {
+        const total = g.reduce((n, r) => n + r.available, 0);
+        tbody.append(groupRow(headers.length, `${code} · ${g[0].product_name}`,
+          `${g[0].category} · ${fmt.num(total)} available across ${plural(g.length, "store")}${lowNote(g)}`));
+        for (const r of g) tbody.append(stockRow(r, [rowHead(storeLabel(r.store_name), r.store_code), ...levelCells(r)]));
+      }
+      return card({
+        id: "stock-by-product", title: "Stock by product",
+        subtitle: `${plural(groups.size, "product")} · select a store to see its event history.`,
+        body: rows.length ? stockTable("Available, reserved and on-hand units of each product at each store, grouped by product", headers, tbody) : noMatch(),
+        foot: STOCK_FOOT,
+      });
+    }
+
+    // ---------- stock left vs units sold, least stock first ----------
+    const SHOWN = 10;
+    function stockVsSoldCard(rows, storeName) {
+      const products = new Map();
+      for (const r of rows) {
+        const p = products.get(r.product_code) || { code: r.product_code, name: r.product_name, available: 0, reserved: 0, sold: 0 };
+        p.available += r.available; p.reserved += r.reserved; p.sold += r.sold_7_days;
+        products.set(r.product_code, p);
+      }
+      const list = [...products.values()].sort((a, b) => a.available - b.available || b.sold - a.sold || byCode(a.code, b.code));
+      const shown = expanded ? list : list.slice(0, SHOWN);
+      const max = Math.max(1, ...shown.map((p) => Math.max(p.available + p.reserved, p.sold)));
+      const pct = (n) => `width:${(n / max) * 100}%`;
+      const note = (p) => (p.available === 0 ? h("b", { class: "sv-zero" }, " · out of stock") : p.available <= 2 ? h("b", { class: "sv-low" }, " · low") : null);
+      return card({
+        id: "stock-vs-sold", title: `${storeName ? storeLabel(storeName) : "All stores"} · stock left and units sold (7 days)`,
+        subtitle: "Least stock first. When the sold bar is longer than the stock bar, the product sold more last week than is left. Select a product to see it by store.",
+        actions: h("div", { class: "legend" },
+          h("span", {}, h("i", { class: "swatch", style: "background:var(--chart-warehouse)" }), "Available"),
+          h("span", {}, h("i", { class: "swatch", style: "background:var(--chart-reserved)" }), "Reserved"),
+          h("span", {}, h("i", { class: "swatch", style: "background:var(--chart-website)" }), "Sold (7 days)")),
+        body: list.length ? h("div", { class: "card-body" }, h("div", { class: "bars" }, shown.map((p) =>
+          h("button", { class: "bar-row", type: "button", "aria-pressed": String(params.product === p.code), "data-fk": `sv-${p.code}`,
+            onclick: () => app.setParams({ product: p.code, store_sel: params.store || "", hoff: "", hfrom: "", hto: "" }) },
+            h("span", { class: "bar-label" }, p.name, h("small", {}, p.code, note(p))),
+            h("span", { class: "bar-pair" },
+              h("span", { class: "bar-line" },
+                h("span", { class: "bar-stack", style: pct(p.available + p.reserved) },
+                  h("i", { class: "wh", style: `flex:${p.available}` }), h("i", { class: "res", style: `flex:${p.reserved}` })),
+                h("span", { class: "bar-val" }, `${fmt.num(p.available)} available${p.reserved ? ` + ${fmt.num(p.reserved)} reserved` : ""}`)),
+              h("span", { class: "bar-line" },
+                h("span", { class: "bar web", style: pct(Math.max(0, p.sold)) }),
+                h("span", { class: "bar-val" }, `${fmt.num(p.sold)} sold`))))))) : noMatch(),
+        foot: h("span", {}, "Sold = in-store sales plus online orders collected at the store, less cancellations. ",
+          list.length > SHOWN ? h("button", { class: "btn-link", type: "button", onclick: () => { expanded = !expanded; render(); } },
+            expanded ? `Show the ${SHOWN} with least stock` : `Show all ${list.length} products`) : null),
+      });
     }
 
     loadStock().catch(() => {});
     loadEvents();
-    if (params.view === "sales") loadSales();
     return {
       update(next) {
         params = next;
-        if (params.view === "sales" && !sales && !salesErr) loadSales();
         render();
         loadEvents();
       },
       reload: async () => {
-        await Promise.all([loadStock(), params.view === "sales" ? loadSales() : null]);
+        await loadStock();
         await loadEvents(true);
       },
     };

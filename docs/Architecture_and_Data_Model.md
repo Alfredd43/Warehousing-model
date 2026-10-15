@@ -386,8 +386,10 @@ All in `dw`, as views, so they are always current:
 | 2 | `rpt_online_staleness` | What is the website refresh interval and is the scheduler running? How long since the last refresh (and was it scheduled or manual), when is the next one due, how many events are waiting, how many website numbers are wrong now, how many source rows failed to load? |
 | 2 | `rpt_online_vs_actual` | For each product: website number vs real combined stock (overstated → oversell risk; understated → lost sales). |
 | 2 | `rpt_last_sync_changes` | What did the last refresh change (before → after)? |
+| 2 | `rpt_refresh_history` | For each refresh: how long since the previous one, how many stock events in between, and how many website numbers were too high or too low just before it? Shows whether the refresh interval is short enough. |
 | 3 | `rpt_checkout_blocked` | Which bag items did customers try to buy because the website showed them in stock, but checkout blocked before payment? For which pickup store, what did the website show versus what was really there, and why (stale number, or stock split across stores)? |
 | 4 | `rpt_daily_sales` | Units sold per day, store, channel and category (roll-up through `dim_date`): in-store till sales at the selling store, and online sales (paid items less cancellations) at the pickup store. |
+| 4 | `rpt_product_sales` | The same sales per day, store, product and channel: best sellers for the owner, units sold next to each store's stock for store managers. |
 | 5 | `rpt_open_reservations` | Which click-and-collect order lines are still open, where are they coming from, are they waiting to be sent / in transit / ready, is the whole order ready, and which are overdue (> 3 days, cancelled by `store_ops.cancel_overdue_orders`)? |
 | 6 | `rpt_reconciliation` + `etl.v_data_quality` | Does the warehouse agree with the store system, and which source records were rejected? |
 
@@ -461,7 +463,7 @@ Times are relative to the build day, so "time since refresh" and "overdue" are a
 | vi.b Integrated data warehouse (≥ 1) | `workspace/db/05_warehouse.sql` (+ `07_sync.sql`) |
 | vi.c SQL scripts: create, extract, transform, load, synthetic data | `01_schemas.sql`; `06_etl.sql` (extract → transform → validate → load); `seed/01_reference_data.sql`, `seed/02_business_history.sql` |
 | vi.d Reports (≥ 3) | `workspace/db/08_reports.sql` (6 reports) |
-| vi.e End-to-end testing | `workspace/tests/check_demo.py` (104 checks), `check_scheduler.py` (17), `check_dashboard.py` (38), `demo/video_demo_script.sql`, [demo/demo_runbook.md](../demo/demo_runbook.md) |
+| vi.e End-to-end testing | `workspace/tests/check_demo.py` (105 checks), `check_scheduler.py` (17), `check_dashboard.py` (45), `demo/video_demo_script.sql`, [demo/demo_runbook.md](../demo/demo_runbook.md) |
 
 ### File map
 
@@ -482,9 +484,9 @@ workspace/scripts/demo.py               demo commands (incl. scheduler start / s
 workspace/scripts/sync_scheduler.py     runs the website refresh every SYNC_INTERVAL_SECONDS
 demo/video_demo_script.sql             recorded end-to-end test video, incl. dashboard (T1-T11)
 demo/demo_runbook.md                   presentation plan (slides + video sped up, 10 min)
-workspace/tests/check_demo.py           104 behaviour checks on pethaven_check
+workspace/tests/check_demo.py           105 behaviour checks on pethaven_check
 workspace/tests/check_scheduler.py      17 checks that the scheduler refreshes at its interval
-workspace/tests/check_dashboard.py      38 dashboard API checks
+workspace/tests/check_dashboard.py      45 dashboard API checks
 ```
 
 ## 13. Data dictionary

@@ -51,7 +51,7 @@ Fill in the speaker names once the group agrees. If the group has more or fewer 
 
 - Diagram: Store, Supplier, Online → ETL (staging → validate → transform → load) → star schema (`fact_stock_event` with product, store and date dimensions) → report views → dashboard. Use Figure 1 from the report.
 - One line each: same item number in every system; each system keeps its own transaction ID (`source_ref`); store codes mapped only through approved mappings; cartons → units, UTC → Sydney time.
-- The four data use cases, by impact: UC1 website accuracy and UC2 blocked checkouts (owner, high), UC3 low stock (store managers, medium), UC4 stock position (store staff, low).
+- The four data use cases, by impact: UC1 business impact (sales and potential lost sales) and UC2 website stock (owner, high), UC3 low stock (store managers, medium), UC4 click & collect orders (store staff, low).
 
 ### Slide 4: Learnings and limitations
 
@@ -77,7 +77,7 @@ Skip the video's opening (slides 1 and 2 already cover it) and play the rest at 
 | 1-2 Baseline and test inputs | One event in each source system: a supplier delivery in cartons, two in-store sales, an online checkout that is blocked because the website still shows 2. |
 | 3 ETL | How the data goes in: triggers copy each record to staging unchanged; the transform converts 5 cartons to 20 units, UTC to Sydney time, NSW-CHATS to S03; the ETL runs straight after every change. |
 | 4 Warehouse | Events from all three systems in one fact table, each with its source reference. |
-| 5 Reports and dashboard | UC1: website too high for P018, too low for P001; the manual refresh corrects both. UC2: the blocked checkout, nobody charged. UC3: low-stock stores. UC4: Chatswood now has 73. |
+| 5 Reports and dashboard | UC1 (Overview): sales in the last 7 days and the blocked checkout, nobody charged. UC2 (Website stock): too high for P018, too low for P001; the manual refresh corrects both, and the refresh history shows what each refresh found. UC3 (Store stock): low-stock stores; Chatswood now has 73. UC4 (Click & collect orders): one overdue order, one waiting for a transfer. |
 | 6 Traceability | One dashboard row traced back to the source checkout record. |
 | 7 Validation | P019 is not on the product list: both records are rejected with a reason, then load once after the data steward approves it. |
 | 8 Result | T1-T11 all PASS. |
@@ -103,5 +103,5 @@ Each member should be able to answer all of these.
 | Available vs reserved? | Available is the shelf. Reserved units were already taken off the shelf, so available is never shelf − reserved. |
 | Why can a checkout be blocked? | Two reasons: the website number was out of date, or there was enough stock in total but no single store had the whole quantity. |
 | Who uses the dashboard and why is the owner high impact? | Owner, store managers, store staff. The owner loses the sales and decides whether to keep the solution. |
-| How did you test it? | 104 behaviour checks, 17 scheduler checks, 38 dashboard checks, and the recorded end-to-end test ending in T1-T11 PASS. |
+| How did you test it? | 105 behaviour checks, 17 scheduler checks, 45 dashboard checks, and the recorded end-to-end test ending in T1-T11 PASS. |
 | What would a production version change? | Separate databases, asynchronous change capture, a managed scheduler, type 2 price history. |

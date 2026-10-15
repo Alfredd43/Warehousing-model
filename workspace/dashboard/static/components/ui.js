@@ -36,6 +36,7 @@ const ICONS = {
   checkout: "M6 6h15l-2 9H8L6 3H3M9 20a1 1 0 1 0 0-2 1 1 0 0 0 0 2zM18 20a1 1 0 1 0 0-2 1 1 0 0 0 0 2z",
   arrow: "M5 12h14M13 6l6 6-6 6",
   overview: "M4 4h7v7H4zM13 4h7v4h-7zM13 10h7v10h-7zM4 13h7v7H4z",
+  orders: "M9 3h6v3H9zM7 4.5H5V21h14V4.5h-2M9 11h6M9 15h4",
   sync: "M20 11a8 8 0 0 0-14.3-4.9L4 8M4 4v4h4M4 13a8 8 0 0 0 14.3 4.9L20 16M20 20v-4h-4",
   close: "M6 6l12 12M18 6L6 18",
 };

@@ -185,7 +185,30 @@ SELECT f.event_id, f.source_system, f.event_type, s.store_code, p.product_code,
 -- dashboard. Ordered by impact: UC1 and UC2 (owner, high), UC3 (store
 -- managers, medium), UC4 (store staff, low).
 
--- UC1 Website accuracy (owner, high): the website number vs real stock
+-- UC1 Business impact (owner, high): what was sold, and what the
+-- out-of-date website number cost at checkout
+SELECT channel, sum(units_sold) AS units, sum(sales_value_at_current_price) AS sales_value
+  FROM dw.rpt_daily_sales
+ WHERE full_date > current_date - 7
+ GROUP BY channel
+ ORDER BY channel;
+-- EXPECTED: in-store 69 units, $2,495.15; online 16 units, $971.60
+--           (the two P018 till sales count; the blocked checkout sold nothing)
+
+SELECT basket, product_code, quantity_in_bag, pickup_store,
+       website_showed, actual_combined_at_checkout AS actual, reason
+  FROM dw.rpt_checkout_blocked
+ ORDER BY attempted_at DESC
+ LIMIT 1;
+-- EXPECTED: basket 9, P018, 1, Bondi, website 2, actual 0,
+--           'stock sold since the last refresh - website number was out of date'
+-- DASHBOARD: Overview. Tiles: Sales (7 days) and Potential lost sales.
+--   Needs attention lists Bondi with the blocked checkout. In Potential
+--   lost sales click the newest P018 row: the customer checkout card shows
+--   "Blocked before payment", pickup at Bondi, website 2 vs stores 0. Say:
+--   nobody was charged; this is a potential lost sale.
+
+-- UC2 Website stock (owner, high): the website number vs real stock
 SELECT product_code, online_shown AS website, actual_in_store AS actual,
        overstated_by AS discrepancy, status
   FROM dw.rpt_online_vs_actual
@@ -200,27 +223,19 @@ SELECT product_code, online_shown AS website, actual_in_store AS actual,
 -- >>> WRITE (Online): refresh the website stock now (manual refresh)
 SELECT online.sync_website_stock() AS refresh_no;
 
-SELECT product_code, before_qty, after_qty, difference
-  FROM dw.rpt_last_sync_changes
- WHERE measure = 'online_available'
- ORDER BY product_code;
--- EXPECTED: P001 183 -> 203; P018 2 -> 0
+SELECT run_at, triggered_by, stock_events_since_previous,
+       website_numbers_corrected, products_too_high, products_too_low,
+       units_overstated, units_understated
+  FROM dw.rpt_refresh_history
+ ORDER BY sync_id DESC
+ LIMIT 1;
+-- EXPECTED: manual | 4 stock changes since the previous refresh |
+--           2 numbers corrected: 1 too high (P018, 2 units), 1 too low (P001, 20 units)
 -- DASHBOARD: Reload Website stock. Banner: "The website matches the stores
 --   for all 18 products." "What the last refresh corrected": P001 183 -> 203,
---   P018 2 -> 0, triggered manually.
-
--- UC2 Blocked checkouts (owner, high): what the out-of-date number cost
-SELECT basket, product_code, quantity_in_bag, pickup_store,
-       website_showed, actual_combined_at_checkout AS actual, reason
-  FROM dw.rpt_checkout_blocked
- ORDER BY attempted_at DESC
- LIMIT 1;
--- EXPECTED: basket 9, P018, 1, Bondi, website 2, actual 0,
---           'stock sold since the last refresh - website number was out of date'
--- DASHBOARD: Orders & potential lost sales -> Potential lost sales. Click the newest P018 row:
---   the customer checkout card shows "Blocked before payment", pickup at
---   Bondi, website 2 vs stores 0. Say: nobody was charged; this is a
---   potential lost sale.
+--   P018 2 -> 0, triggered manually. Refresh history: the new manual refresh
+--   at the top, 2 numbers corrected. Say: this history is how the owner
+--   judges whether the 3-minute interval is short enough.
 
 -- UC3 Low stock (store managers, medium): which stores need replenishment
 SELECT store_name,
@@ -231,19 +246,32 @@ SELECT store_name,
  ORDER BY low_stock_products DESC, store_code;
 -- EXPECTED: Chatswood 3 and Newtown 3 (P013, P017, P018);
 --           Parramatta, Bondi, Penrith 2 each (P013, P018)
--- DASHBOARD: Store stock -> Current stock, tick "Low stock only": P018 is red
---   (0) in every store. Say: the dashboard flags low stock; the reorder
---   itself is made outside this system.
 
--- UC4 Stock position (store staff, low): where stock is available or reserved
 SELECT store_name, in_store_quantity AS available, reserved_quantity AS reserved
   FROM dw.rpt_current_stock_by_store
  WHERE product_code = 'P001'
  ORDER BY store_code;
--- EXPECTED: Chatswood 73 = 53 + 20
--- DASHBOARD: Store stock, Product P001: Chatswood available 73. Click the
---   Chatswood row: its event history lists the supplier delivery
---   (+20, supplier SUP-01 order PO-3001).
+-- EXPECTED: Chatswood 73 = 53 + 20 (the supplier delivery)
+-- DASHBOARD: Store stock. The chart puts the products with least stock
+--   first, next to units sold in the last 7 days. Tick "Low stock only".
+--   Then Store = S03 Chatswood, click P001: available 73; its event history
+--   lists the supplier delivery (+20, supplier SUP-01 order PO-3001). Say:
+--   the dashboard flags low stock; the reorder itself is made outside this
+--   system.
+
+-- UC4 Click & collect orders (store staff, low): what to send, receive or
+-- hand over, most urgent first
+SELECT order_no, pickup_store, product_code, units, taken_from,
+       line_status, order_ready, overdue
+  FROM dw.rpt_open_reservations
+ ORDER BY overdue DESC, order_ready, order_no::bigint, product_code;
+-- EXPECTED: order 3 (Parramatta) ready and overdue; order 5 (Bondi) not ready:
+--           P013 and P017 in transit from Chatswood; orders 6 (Chatswood) and
+--           7 (Parramatta) ready
+-- DASHBOARD: Click & collect orders. Tiles: Overdue, To send, In transit,
+--   Ready to collect. Say: order 3 at Parramatta has been ready for more than
+--   3 days; order 5 at Bondi waits for two items in transit from Chatswood,
+--   so it is not ready even though one item is.
 
 
 -- =============================================================================
@@ -348,12 +376,12 @@ WITH po AS (
     UNION ALL SELECT 5,  'Online: blocked checkout captured (stale website)',
                          (SELECT product_code = 'P018' AND website_showed = 2
                                  AND actual_combined_at_checkout = 0 FROM blocked)
-    UNION ALL SELECT 6,  'UC4: warehouse stock = store system (P001 Chatswood)',
+    UNION ALL SELECT 6,  'UC3: warehouse stock = store system (P001 Chatswood)',
                          (SELECT r.in_store_quantity = ss.in_store_quantity
                             FROM dw.rpt_current_stock_by_store r, store_ops.store_stock ss
                            WHERE r.store_code = 'S03' AND r.product_code = 'P001'
                              AND ss.store_no = '103' AND ss.item_no = 'P001')
-    UNION ALL SELECT 7,  'UC1: website matches the stores after the refresh',
+    UNION ALL SELECT 7,  'UC2: website matches the stores after the refresh',
                          (SELECT count(*) = 0 FROM dw.rpt_online_vs_actual WHERE status <> 'matches')
     UNION ALL SELECT 8,  'Traceability: no staging row left pending',
                          (SELECT count(*) = 0 FROM etl.v_staging WHERE load_status NOT IN ('loaded', 'skipped'))

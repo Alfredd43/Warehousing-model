@@ -71,7 +71,7 @@
   <li><b>The warehouse records the reservation</b> automatically, as with shop sales.</li>
   <li><b>The customer collects</b> at Bondi, and the reserved bags leave the shop.</li>
 </ol>
-<p>If the customer cancels before collecting, the items go back on the shelf. If they never come, the overdue clean-up, which staff run by hand, cancels any order older than 3 days and puts the items back on the shelf. Either way, the website only finds out at the next refresh.</p>
+<p>If the customer cancels before collecting, the items go back on the shelf. If they never come, the overdue clean-up, which staff run by hand, cancels any order that has been ready for more than 3 days and puts the items back on the shelf. The 3 days start when the last item reaches the pickup store, so a late transfer is never counted against the customer. Either way, the website only finds out at the next refresh.</p>
 <p><b>Two customers, one item left:</b> putting something in a bag doesn't hold it. Whoever checks out first gets it. The other customer's checkout is stopped before payment, and the item stays in their bag.</p>
 
 <h2>3. An online customer buys items that are in different shops</h2>
@@ -120,7 +120,7 @@
   <tr><td>Online order</td><td>Customer picks from the shops that have their items; real stock checked before payment; set aside; website drops instantly</td></tr>
   <tr><td>Items in different shops</td><td>Each item set aside where it's found, sent to the chosen shop, collected together once all have arrived</td></tr>
   <tr><td>Two customers, one item left</td><td>Whoever checks out first gets it; the other is stopped before payment and keeps it in their bag</td></tr>
-  <tr><td>Not collected in 3 days</td><td>Cancelled when staff run the overdue clean-up, items back on the shelf</td></tr>
+  <tr><td>Not collected within 3 days of being ready</td><td>Cancelled when staff run the overdue clean-up, items back on the shelf</td></tr>
   <tr><td>Website shows stock that's gone</td><td>Checkout blocked before payment, no charge, recorded as a potential lost sale in Report 3</td></tr>
   <tr><td>Website refresh (every 3 minutes, or by hand)</td><td>Website corrected straight from the shops' shelf totals; the warehouse logs every change before → after</td></tr>
 </table>

@@ -51,7 +51,6 @@ GET_ROUTES = [
     (r"/api/sync/latest", queries.sync_latest),
     (r"/api/stock", queries.stock),
     (r"/api/stock/events", queries.stock_events),
-    (r"/api/sales", queries.sales),
     (r"/api/checkout/blocked", queries.checkout_blocked),
     (r"/api/checkout/attempts/(\d+)", queries.checkout_attempt),
     (r"/api/reservations", queries.reservations),

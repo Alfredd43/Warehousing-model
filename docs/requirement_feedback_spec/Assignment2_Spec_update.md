@@ -2,7 +2,7 @@
 
 12 Oct 2026 · Group 3 · Internal guide, not a submission
 
-This guide defines the business problem, the three source systems, the business actions that create their records, the stock rules, the integration and warehouse layer, the dashboard's four data use cases, and how the working prototype is tested end to end in the recorded demo video. The solution design that implements it is in [docs/Architecture_and_Data_Model.md](../docs/Architecture_and_Data_Model.md). The demo is scripted in [demo/demo_runbook.md](../demo/demo_runbook.md).
+This guide defines the business problem, the three source systems, the business actions that create their records, the stock rules, the integration and warehouse layer, the dashboard's four data use cases, and how the working prototype is tested end to end in the recorded demo video. The solution design that implements it is in [docs/Architecture_and_Data_Model.md](../Architecture_and_Data_Model.md). The demo is scripted in [demo/demo_runbook.md](../../demo/demo_runbook.md).
 
 PetHaven is fictional. Its size, operating arrangements and update rules below are fixed definitions for this project.
 
@@ -222,7 +222,7 @@ Report views:
 
 ## 9. Dashboard: four data use cases
 
-The dashboard is the main business-facing output. It reads only the warehouse report views (plus the online system's checkout records as the source evidence for UC1's lost sales). Pages: Overview (UC1, with Potential lost sales as its detail), Website stock (UC2), Store stock (UC3) and Click & collect orders (UC4).
+The dashboard is the main business-facing output. It reads only the warehouse report views, with two labelled exceptions: the online system's checkout records as the source evidence for UC1's lost sales, and supplier names from the supplier system (`supply.supplier`) in UC3's stock movements, because the warehouse has no supplier dimension. Pages: Overview (UC1, with Potential lost sales as its detail), Website stock (UC2), Store stock (UC3) and Click & collect orders (UC4).
 
 A data use case is one way a PetHaven user relies on the integrated data: who uses it, the question it answers, the decision it supports, and the report and dashboard page that deliver it. The four use cases below are what the reports and dashboard are built for (brief item vi.d, at least 3).
 
@@ -246,7 +246,7 @@ Three roles use the dashboard, and each sees only the information it acts on. Th
 
 | Use case | Dashboard page | Source view | What it shows | Scope note |
 | --- | --- | --- | --- | --- |
-| UC1 | Overview → Potential lost sales | Report 4 (`rpt_product_sales`: sales per product and channel) + Report 3 (with sales value) + `online.checkout_attempt*` | Units and value sold in store and online; best sellers and units per day, marking a best seller that is out of stock and in how many stores; sales lost at checkout (units, value, share of online demand) and why; website status; which stores have a problem (checkouts blocked, products out of stock, orders overdue) | Share of online demand lost = units blocked ÷ (units sold online + units blocked). A blocked checkout is a potential, not confirmed, lost sale. Sales value only: there are no cost prices (no profit) and no returns in the data |
+| UC1 | Overview → Potential lost sales | Report 4 (`rpt_product_sales`: sales per product and channel) + Report 3 (with sales value) + `online.checkout_attempt*` | Units and value sold in store and online; best sellers with units sold and value, marking a best seller that is out of stock and in how many stores; sales lost at checkout (units, value, share of online demand) and why; website status; which stores have a problem (checkouts blocked, products out of stock, orders overdue) | Share of online demand lost = units blocked ÷ (units sold online + units blocked). A blocked checkout is a potential, not confirmed, lost sale. Sales value only: there are no cost prices (no profit) and no returns in the data |
 | UC2 | Website stock | Report 2 | Website vs real stock per product, refresh status, last refresh and its corrections, refresh history (`rpt_refresh_history`) | The refresh corrects the website; the warehouse measures and records the discrepancy |
 | UC3 | Store stock | Report 1 | Available, reserved and on hand per product for one store; low-stock flag (2 or fewer) | Identifies low stock; does **not** decide or execute replenishment. Shelf-level alerts belong here; the owner's Overview only counts out-of-stock products per store |
 | UC4 | Click & collect orders | Report 5 | Open order lines for one store: to send, in transit, ready to collect, overdue; when it was placed; whether the whole order is ready and since when | Ordered by urgency (overdue first). Overdue orders are cancelled by the overdue job (`demo.py cancel-overdue`) |

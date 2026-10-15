@@ -147,7 +147,7 @@ def main() -> int:
     lost_units, lost_value = sql("""
         SELECT coalesce(sum(b.quantity_in_bag), 0), coalesce(sum(b.quantity_in_bag * p.unit_price), 0)
           FROM dw.rpt_checkout_blocked b JOIN dw.dim_product p USING (product_code)
-         WHERE b.attempted_at > now() - interval '7 days'""")[0]
+         WHERE b.attempted_at::date > current_date - 7""")[0]
     online = ov["sales_7_days"]["online"]["units"]
     check("D8 overview: lost sales and share of online demand follow dw.rpt_checkout_blocked",
           (int(lost_units), float(lost_value),

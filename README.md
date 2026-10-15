@@ -21,7 +21,7 @@ How it behaves:
 
 Documentation:
 
-- Business case and rules: [00_req_feedback/Assignment2_Spec_update.md](00_req_feedback/Assignment2_Spec_update.md)
+- Business case and rules: [docs/requirement_feedback_spec/Assignment2_Spec_update.md](docs/requirement_feedback_spec/Assignment2_Spec_update.md)
 - Solution design (architecture, conceptual/logical models, ETL, rationale, trade-offs): [docs/Architecture_and_Data_Model.md](docs/Architecture_and_Data_Model.md)
 - Rule → SQL → check mapping: [docs/traceability.md](docs/traceability.md)
 - Recorded end-to-end test (video script): [demo/video_demo_script.sql](demo/video_demo_script.sql)
@@ -134,7 +134,7 @@ The recorded end-to-end test is [demo/video_demo_script.sql](demo/video_demo_scr
 docker compose -f docker-compose.yml -f workspace/dashboard/compose.dashboard.yml up -d dashboard
 ```
 
-Open <http://localhost:8080>. It opens on an **Overview** of what needs attention (website accuracy, next refresh, stock alerts, blocked checkouts, open click & collect orders), then three pages that answer the four data use cases: **Website stock** (UC1, owner), **Orders & potential lost sales** (UC2, owner), and **Store stock** (UC3, store managers; UC4, store staff). It is read-only: sales, deliveries, orders and the manual refresh are made with `demo.py`. Website stock shows the automatic refresh's interval, the time since the last refresh and a countdown to the next one. The overlay adds a `dashboard` service and leaves the lab files unchanged. How to start and check it: [docs/dashboard_runbook.md](docs/dashboard_runbook.md).
+Open <http://localhost:8080>. Its pages answer the four data use cases, grouped by role: **Overview** (UC1, owner: sales, best sellers, potential lost sales and which store needs attention), **Website stock** (UC2, owner), **Store stock** (UC3, store managers) and **Click & collect orders** (UC4, store staff). It is read-only: sales, deliveries, orders and the manual refresh are made with `demo.py`. Website stock shows the automatic refresh's interval, the time since the last refresh and a countdown to the next one. The overlay adds a `dashboard` service and leaves the lab files unchanged. How to start and check it: [docs/dashboard_runbook.md](docs/dashboard_runbook.md).
 
 ### Step 6: Run the checks
 
@@ -208,6 +208,6 @@ demo/                                  presentation and end-to-end test material
   video_demo_script.sql                recorded end-to-end test video (~10 min): test inputs, ETL code, warehouse, reports and dashboard UC1-UC4, validation test, T1-T11 PASS/FAIL
   demo_runbook.md                      presentation plan (10 min): 3-4 slides, the video sped up, timing, questions
 docs/                                  design, traceability, dashboard runbook, implementation notes
-00_req_feedback/                       brief, Spec, tutor feedback, subject notes
+  requirement_feedback_spec/           brief, Spec, tutor feedback, subject notes
 data/                                  lab database files created by Docker (not in Git)
 ```

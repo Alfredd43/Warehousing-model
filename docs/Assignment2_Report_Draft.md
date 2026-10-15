@@ -234,7 +234,9 @@ The synthetic data covers five stores and 18 products, plus a new product (P019)
 
 ### 3.4 Reports and dashboard
 
-The reports are ten SQL views in the `dw` schema, grouped as Reports 1 to 6, and a local web dashboard presents them. The dashboard is organised around the four data use cases in section 2.4, in the same order, from high to low impact, and its menu is grouped by role: the owner, store managers and store staff. The dashboard only reads the reports; business events are made through the source systems' own functions.
+The prototype provides ten report views in the `dw` schema, grouped as Reports 1 to 6 in `workspace/db/08_reports.sql`. Report 6 also uses `etl.v_data_quality` to identify rejected source records. A local web dashboard presents four data use cases, meeting the assignment's requirement for at least three. Its menu follows the roles and impact ranking in section 2.4: the owner's two high-impact use cases come first, followed by store managers and store staff.
+
+The dashboard is read-only. Sales, deliveries, orders and website refreshes are recorded through the source systems' own functions. Most dashboard data comes from warehouse report views. The website comparison and reconciliation reports also read the live source balances they compare with the warehouse. Checkout details read the online system's original records, and the stock movements drawer reads supplier names from `supply.supplier`, because the warehouse has no supplier dimension. The dashboard's Reload button reads the reports again; it does not refresh website stock or run the ETL.
 
 **Table X. Data use cases, reports and dashboard pages**
 
@@ -247,51 +249,71 @@ The reports are ten SQL views in the `dw` schema, grouped as Reports 1 to 6, and
 
 #### UC1: business impact (owner)
 
-The Overview shows the last 7 days: sales in store and online (units and value), the best-selling products with units per day, and the potential lost sales, meaning items that checkout blocked before payment. It marks a best seller that is out of stock and in how many stores, and lists the stores that need attention: a blocked checkout, an empty shelf or an overdue order. Report 3 gives each blocked item: when, the pickup store, the quantity wanted, what the website showed, what the stores really had, and why. There are two reasons: the website number was out of date, or there was enough stock in total but no single store had the whole quantity. Selecting a row opens the customer's checkout record from the online store, so the owner can check the evidence behind the number. A blocked item is a potential lost sale; the report does not claim the customer never bought it later.
+The Overview helps the owner decide which products and stores need attention. Report 4 supplies sales value by channel and the best-selling products, with units sold and value. A best seller with an empty shelf is marked with the number of stores affected. Needs attention summarises blocked items at checkout, products out of stock and overdue orders by store, with links to their details.
+
+Sales, best sellers and the potential lost-sales figure cover the same 7 Sydney calendar days: today and the six preceding days. In-store sales count till-sale items at the selling store. Online sales count paid order items at the pickup store, less cancellations, whether or not the customer has collected them. Sales and potential lost-sales values use the current shelf price. Stock, website status and overdue orders show the current position.
+
+Potential lost sales measures items blocked at checkout before payment. Its share of online demand is calculated as units blocked divided by the sum of units sold online and units blocked, over the same period. The detail card lists every recorded blocked item, newest first; only the headline figure is limited to 7 days. Report 3 gives the time, pickup store, quantity wanted, website number, real combined stock and reason for each block. It distinguishes an out-of-date website number from stock split across stores, where the total is sufficient but no single store can supply the whole quantity. Selecting a row opens the original checkout record, including its captured website number, alongside the warehouse's reconstruction. A blocked item is a potential lost sale: nothing was charged, and the data does not establish whether the customer bought it later.
 
 > **[TODO Figure]** Dashboard, Overview, with the blocked P018 checkout selected and its source checkout record open.
 
 #### UC2: website stock (owner)
 
-Report 2 puts the website number next to the real combined shelf stock for every product and labels the difference. "Website too high" means customers may order stock that has gone; "Website too low" means stock in the stores cannot be sold online. The page shows whether the automatic refresh is running, when it last ran and when it runs next, what the last refresh corrected, and a refresh history: for each refresh, the time since the previous one, the stock changes in between and how many website numbers were wrong just before it. The owner uses this history to judge whether a 3-minute interval is short enough.
+Report 2 compares the website number with the combined available shelf stock across all five stores, for products on the warehouse product list. The difference is website stock minus store stock. "Website too high" means the website shows more stock than the stores have; "Website too low" means available stock is hidden from online customers. The page shows whether automatic refresh is running, how long ago the last refresh ran and when the next is due while it is running.
 
-> **[TODO Figure]** Dashboard, Website stock, before the manual refresh (P018 "Website too high", P001 "Website too low"), and after it ("What the last refresh corrected" and the refresh history).
+Refresh history lists the latest refreshes, the time between them, the stock events in between and the website numbers corrected. Selecting a row expands the products' before and after quantities and their changes. The owner can use the history to decide whether the refresh needs attention or whether its interval should be reviewed.
+
+> **[TODO Figure]** Dashboard, Website stock, before the manual refresh (P018 "Website too high", P001 "Website too low"), and after it (the refresh history, with the manual refresh opened to show what it corrected).
 
 #### UC3: low stock (store managers)
 
-Report 1 gives available, reserved and on-hand units for every store and product, and flags a shelf with 2 or fewer units as low stock. The page puts each product's stock next to its units sold in the last 7 days, least stock first, so a manager sees what is running out. With "Low stock only" ticked, a manager sees which stores need replenishment. Selecting a product and store opens the event history behind the number: every sale, delivery and order, each with its source reference. The dashboard only flags low stock; the reorder itself is placed outside this system.
+Report 1 gives available, reserved and on-hand units for each product at each store. Available means shelf stock free to sell; reserved units have already left the shelf. On hand is available plus reserved. Low stock means 2 or fewer available units, including an empty shelf. Stock in transit belongs to no store and is excluded from these balances.
+
+A manager selects a store and uses the stock-and-sales chart to see which products are running out. It places current available and reserved stock beside units sold over the last 7 Sydney calendar days, with the least available stock first. Sales follow Report 4's rule: till sales at that store plus paid online order items assigned to it as the pickup store, less cancellations. The Low stock only filter narrows the products needing attention. Selecting a product in the chart narrows the table: with all stores selected, the table shows that product at each store; with one store selected, it keeps that store. The reorder itself is placed outside the prototype.
+
+Selecting a table row opens a stock movements drawer for that product at that store. It lists events newest first in business language, such as "Delivery from Pawfect Foods" or "Sent to Bondi for online order 5". Each event shows the quantity change and, where available, the supplier order or till receipt behind it, for that store only.
 
 > **[TODO Figure]** Dashboard, Store stock for Chatswood with P001 selected, showing the event history with supplier order PO-3001.
 
 #### UC4: click and collect orders (store staff)
 
-Report 5 lists open click and collect orders for each store, most urgent first: lines to send to another store, lines in transit, orders ready to collect and orders overdue. An order is ready only when every item is at the pickup store, and it becomes overdue when it has been ready for more than 3 days without being collected, so a late transfer never makes an order overdue. The counts at the top use two units: overdue and ready count whole orders, while "to send" and "in transit" count item lines, because one order can take items from several stores. Each item line shows its own status; an item from another store moves from waiting to be sent, to in transit, to ready for collection. Overdue is the only status that belongs to the whole order, so it is marked next to the order number. The order time is when the customer paid and the items were held. Orders are identified by order number only; no customer names are stored.
+Report 5 helps store staff decide which click and collect orders to handle first. With My store selected, the page shows orders collected there and the items that store supplies to other pickup stores. Orders are sorted by urgency, with overdue orders first. The order time is when the customer paid and the items were held. Orders are identified by number; no customer names are stored.
+
+An order is ready only when every item is at the pickup store. It becomes overdue after the whole order has been ready for more than 3 days without collection, so time spent waiting for a transfer does not make it overdue. Overdue and Ready to collect count whole orders; To send and In transit count item lines. Selecting Ready to collect keeps only whole ready orders and all their lines. The Status filter applies to individual lines, whose status changes from Waiting to be sent to In transit and then Ready for collection. Each item line has its own status; an overdue order also has a red Overdue tag under its number.
 
 > **[TODO Figure]** Dashboard, Click & collect orders, with the overdue order at Parramatta and the Bondi order waiting for two items in transit.
 
 #### Supporting reports
 
-Report 6 compares warehouse stock with the live store system and lists any source records the ETL rejected. When either finds a problem, a yellow banner appears on every dashboard page until the records load.
+Report 6 compares warehouse stock with the live store system, while `etl.v_data_quality` lists source records rejected by the ETL. If either check finds a problem, a yellow banner warns on every page that the figures may be incomplete, and clears when no rejected records or stock mismatches remain.
 
 > **[TODO Figure]** CloudBeaver, section 7 of `demo/video_demo_script.sql`: the two records rejected as "Unknown item P019" (`etl.v_data_quality`) before the item is added to the product list.
 
 ### 3.5 End-to-end testing
 
-The prototype was tested in two ways: automated checks, and a recorded end-to-end test that is also the demonstration video.
+Testing combines automated checks on an isolated database with a recorded end-to-end demonstration. The automated checks exercise business rules and report responses. The demonstration follows identifiable source transactions through staging, transformation, validation, the warehouse and the dashboard.
 
 #### Automated checks
 
-Three test scripts build a separate test database (`pethaven_check`) and run scripted business events. The first checks every business rule, from stock updates and checkout to transaction IDs, unknown-item rejection, the website refresh and reconciliation, and passes all 105 checks. The second starts the scheduler with a 2-second test interval and checks that it refreshes on time, is recorded as scheduled and can be stopped; it passes all 17 checks. The third tests the dashboard's read-only interface against the report views and passes all 45 checks.
+Three test scripts build the separate `pethaven_check` database and run scripted business events, preserving the data used for the demonstration in `pethaven_demo`.
+
+| Script | Coverage | Result |
+| --- | --- | --- |
+| `check_demo.py` | Stock updates, checkout, transfers, collection, cancellation, transaction references, unknown-item rejection, website refresh and reconciliation | 105 checks passed |
+| `check_scheduler.py` | A 2-second test interval, scheduled refresh records, stock corrections, single-scheduler enforcement and stopping the scheduler | 17 checks passed |
+| `check_dashboard.py` | Read-only API responses against the report views, input validation, error responses, source checkout details and data-quality warnings | 45 checks passed |
+
+The scheduler's short test interval checks its behaviour without waiting for the normal 3-minute cycle. Dashboard API checks compare returned values with SQL report results. Page layout and interactions were checked by hand in the browser at 1440, 1280, 768 and 375 px wide. The scripted business checks are sequential and do not establish behaviour under concurrent checkouts or production workloads.
 
 > **[TODO Figure]** Last lines of the three test runs: `PASS 105, FAIL 0`, `PASS 17, FAIL 0` and `PASS 45, FAIL 0`.
 
 #### Recorded end-to-end test
 
-Following the tutor's advice, the queries are recorded, not typed live. The script `demo/video_demo_script.sql` starts from a fresh build with the automatic refresh stopped, so the out-of-date website number stays on screen until the manual refresh. After a short statement of the business problem, it drives one scenario through all three source systems and follows it through every layer.
+Following the tutor's advice, the demonstration uses prepared queries and is recorded before the presentation. The script `demo/video_demo_script.sql` starts from a fresh build with automatic website refresh stopped, so the stale number remains visible until the manual refresh. After a brief statement of the business problem, it records events in all three source systems and follows them through the data pipeline. The presentation plays the recording at increased speed and explains the results.
 
 **Table X. End-to-end test scenario**
 
-| Step | System | Action | What it proves |
+| Step | System | Action | What is checked |
 | --- | --- | --- | --- |
 | 1 | Supplier | SUP-01 delivers 5 cartons of P001 to Chatswood (order PO-3001) | 5 cartons × 4 = 20 units; `NSW-CHATS` → S03; UTC → Sydney time |
 | 2 | Store | The last P018 sells at Newtown and at Penrith | In-store sales reach the warehouse at once; the website number is now out of date |
@@ -299,7 +321,11 @@ Following the tutor's advice, the queries are recorded, not typed live. The scri
 | 4 | Online | Manual website refresh | P001 183 → 203 and P018 2 → 0; the warehouse records the correction |
 | 5 | Supplier, store | P019, not on the warehouse product list, is delivered and sold | Both records are rejected with a reason, then load once after a data steward approves P019 |
 
-The video shows the ETL code for each step (extract, transform, validate, load), the staged records in their source format next to the transformed values, and the three events in one fact table. It then answers each data use case as a report query in CloudBeaver and on the dashboard page its user would open. For UC1, the website is too high for P018 and too low for P001 before the refresh, and matches every store after it. For UC2, the blocked checkout appears with its source record. For UC3, the stores low on stock are listed. For UC4, Chatswood's dog food rises from 53 to 73, with the delivery in its event history. One query traces the blocked checkout from the report back to the source record, and during the validation step the dashboard's data-quality banner appears and then clears.
+The recording shows the ETL code for extraction, transformation, validation and loading. Staged records retain their original quantities, codes, timestamps and transaction references. The corresponding warehouse rows show the converted units, mapped stores and Sydney business times. Supplier, store and online events are then shown together in the stock-event fact table.
+
+Each use case is shown first as a report query in CloudBeaver and then on its dashboard page. For UC1, sales and the blocked checkout appear on the Overview, and the checkout row opens its source record. For UC2, P018 is too high and P001 too low before the refresh; afterwards, the website matches the combined store stock and refresh history shows the corrections. For UC3, the low-stock list identifies products needing attention. Chatswood's P001 stock rises from 53 to 73, and its drawer shows the delivery and supplier order PO-3001. For UC4, order 3 at Parramatta is ready and overdue, while order 5 at Bondi remains unready because two items are in transit from Chatswood.
+
+A traceability query follows the blocked item from Report 3 to its warehouse event, staged record and original checkout attempt. The validation step then delivers and sells P019 before it is on the warehouse product list. Both transactions succeed in the source systems, but their records are rejected by the ETL with a reason. After a data steward adds P019 and the ETL is run, the waiting records load once. The dashboard's data-quality banner appears during the rejection and clears after loading.
 
 The script ends with 11 automatic checks, and all of them pass.
 
@@ -319,7 +345,7 @@ The script ends with 11 automatic checks, and all of them pass.
 | T10 | Data quality: no rejected source rows | PASS |
 | T11 | Validation: P019 rejected with a reason, then loaded once | PASS |
 
-Other cases, such as a checkout blocked because no single store had the whole quantity, transfers to the pickup store, collection and overdue cancellation, are in the sample data and covered by the automated checks.
+Other cases, including a checkout blocked because no single store has the whole quantity, transfers to the pickup store, collection and overdue cancellation, are covered by the automated checks. The results apply to the prototype's synthetic scenarios. They do not measure actual customer losses or establish that a 3-minute refresh interval is optimal for a live retailer.
 
 Demo video: [TODO link]
 

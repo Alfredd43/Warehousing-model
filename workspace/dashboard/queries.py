@@ -180,11 +180,13 @@ def overview(conn, params) -> Result:
          GROUP BY s.product_code, s.product_name
         HAVING sum(s.units_sold) > 0
          ORDER BY units DESC, value DESC, s.product_code LIMIT 8""")
+    # Same 7 Sydney calendar days as sales (the connection runs in Sydney time),
+    # so the share of online demand compares like with like.
     lost = row(conn, """
         SELECT count(*) AS items, coalesce(sum(b.quantity_in_bag), 0)::integer AS units,
                coalesce(sum(b.quantity_in_bag * p.unit_price), 0) AS value
           FROM dw.rpt_checkout_blocked b JOIN dw.dim_product p USING (product_code)
-         WHERE b.attempted_at > now() - interval '7 days'""")
+         WHERE b.attempted_at::date > current_date - 7""")
     online_units = sales.get("online", {}).get("units") or 0
     demand = online_units + lost["units"]
     lost["share_of_online_demand"] = round(lost["units"] / demand, 4) if demand else None
@@ -192,7 +194,7 @@ def overview(conn, params) -> Result:
     stores = rows(conn, """
         SELECT s.store_code, s.store_name,
                (SELECT count(*) FROM dw.rpt_checkout_blocked b
-                 WHERE b.pickup_store = s.store_name AND b.attempted_at > now() - interval '7 days') AS blocked,
+                 WHERE b.pickup_store = s.store_name AND b.attempted_at::date > current_date - 7) AS blocked,
                (SELECT count(*) FROM dw.rpt_current_stock_by_store c
                  WHERE c.store_code = s.store_code AND c.in_store_quantity = 0)                  AS out_of_stock,
                (SELECT count(DISTINCT r.order_no) FROM dw.rpt_open_reservations r
@@ -340,12 +342,25 @@ def stock_events(conn, params) -> Result:
           JOIN dw.dim_date d    ON d.date_key = f.date_key
           LEFT JOIN dw.dim_store pk ON pk.store_key = f.pickup_store_key"""
     total = value(conn, "SELECT count(*)" + joins + where, args)
+    # For a readable description: the supplier's name (read from the supplier
+    # system, which the warehouse has no dimension for), the source document
+    # number from source_ref, and the store a transfer came from.
     data = rows(conn, """
         SELECT f.event_id::text AS event_id, f.event_ts, d.full_date AS business_date, f.event_type,
                s.store_code, s.store_name, p.product_code, p.product_name,
                f.quantity_change AS available_change, f.reserved_change, f.units,
                f.order_ref, pk.store_code AS pickup_store_code, pk.store_name AS pickup_store_name,
-               f.source_system, f.source_ref, f.etl_run_id, f.loaded_at""" + joins + where + """
+               sup.supplier_name,
+               coalesce(substring(f.source_ref FROM 'order (PO-[0-9]+)'),
+                        'Receipt ' || substring(f.source_ref FROM 'receipt ([0-9]+)')) AS document,
+               src.store_name AS from_store_name,
+               f.source_system, f.source_ref, f.etl_run_id, f.loaded_at""" + joins + """
+          LEFT JOIN supply.supplier sup ON sup.supplier_id = substring(f.source_ref FROM 'supplier (SUP-[0-9]+)')
+          LEFT JOIN LATERAL (
+                SELECT ts.store_name FROM dw.fact_stock_event t JOIN dw.dim_store ts ON ts.store_key = t.store_key
+                 WHERE f.event_type = 'transfer_in' AND t.event_type = 'transfer_out'
+                   AND t.order_ref = f.order_ref AND t.product_key = f.product_key
+                 ORDER BY t.event_ts DESC LIMIT 1) src ON true""" + where + """
          ORDER BY f.event_ts DESC, f.event_id DESC
          LIMIT %(limit)s OFFSET %(offset)s""", args)
     for r in data:
@@ -353,7 +368,8 @@ def stock_events(conn, params) -> Result:
     return Result(paged(data, total, limit, offset),
                   scope="Warehouse stock events" + (" (date filter applies to event history only)"
                                                     if date_from or date_to else ""),
-                  provenance=["dw.fact_stock_event", "dw.dim_store", "dw.dim_product", "dw.dim_date"])
+                  provenance=["dw.fact_stock_event", "dw.dim_store", "dw.dim_product", "dw.dim_date",
+                              "supply.supplier (supplier names, read from the supplier system)"])
 
 
 # --- Page C: Checkout & Fulfilment (Report 3) ----------------------------------------------

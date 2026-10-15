@@ -202,9 +202,10 @@ SELECT basket, product_code, quantity_in_bag, pickup_store,
  LIMIT 1;
 -- EXPECTED: basket 9, P018, 1, Bondi, website 2, actual 0,
 --           'stock sold since the last refresh - website number was out of date'
--- DASHBOARD: Overview. Tiles: Sales (7 days) and Potential lost sales.
+-- DASHBOARD: Overview. Tiles: Sales and Potential lost sales (last 7 days).
 --   Needs attention lists Bondi with the blocked checkout. In Potential
---   lost sales click the newest P018 row: the customer checkout card shows
+--   lost sales click the newest Aquarium Starter Kit 40L (P018) row: the
+--   customer checkout card shows
 --   "Blocked before payment", pickup at Bondi, website 2 vs stores 0. Say:
 --   nobody was charged; this is a potential lost sale.
 
@@ -217,8 +218,9 @@ SELECT product_code, online_shown AS website, actual_in_store AS actual,
 -- EXPECTED: P001 183 vs 203 (-20, understated); P018 2 vs 0 (+2, overstated)
 -- DASHBOARD: Website stock. Banner: "2 of 18 products show the wrong stock on
 --   the website: 1 too high ...; 1 too low ...". Status line: automatic
---   refresh not running. Table: P001 "Website too low" by 20, P018
---   "Website too high" by 2.
+--   refresh not running. Table (products by name): Adult Dry Dog Food
+--   Chicken 3kg (P001) "Website too low" by 20, Aquarium Starter Kit 40L
+--   (P018) "Website too high" by 2.
 
 -- >>> WRITE (Online): refresh the website stock now (manual refresh)
 SELECT online.sync_website_stock() AS refresh_no;
@@ -232,10 +234,10 @@ SELECT run_at, triggered_by, stock_events_since_previous,
 -- EXPECTED: manual | 4 stock changes since the previous refresh |
 --           2 numbers corrected: 1 too high (P018, 2 units), 1 too low (P001, 20 units)
 -- DASHBOARD: Reload Website stock. Banner: "The website matches the stores
---   for all 18 products." "What the last refresh corrected": P001 183 -> 203,
---   P018 2 -> 0, triggered manually. Refresh history: the new manual refresh
---   at the top, 2 numbers corrected. Say: this history is how the owner
---   judges whether the 3-minute interval is short enough.
+--   for all 18 products." Refresh history: the new manual refresh at the
+--   top, 2 numbers corrected. Click it: P001 183 -> 203, P018 2 -> 0. Say:
+--   this history is how the owner judges whether the 3-minute interval is
+--   short enough.
 
 -- UC3 Low stock (store managers, medium): which stores need replenishment
 SELECT store_name,
@@ -253,9 +255,13 @@ SELECT store_name, in_store_quantity AS available, reserved_quantity AS reserved
  ORDER BY store_code;
 -- EXPECTED: Chatswood 73 = 53 + 20 (the supplier delivery)
 -- DASHBOARD: Store stock. The chart puts the products with least stock
---   first, next to units sold in the last 7 days. Tick "Low stock only".
---   Then Store = S03 Chatswood, click P001: available 73; its event history
---   lists the supplier delivery (+20, supplier SUP-01 order PO-3001). Say:
+--   first, next to units sold in the last 7 days. Tick "Low stock only",
+--   then untick it. Set Store = Chatswood. The chart shows only the 10
+--   products with least stock, and P001 is not among them, so click "Show
+--   all 18 products" under the chart, then Adult Dry Dog Food Chicken 3kg
+--   (P001) in the chart, then its row in the table: the stock movements
+--   drawer shows 73 on shelf and, at the top, "Delivery from Pawfect Foods"
+--   +20 with PO-3001 underneath. Say:
 --   the dashboard flags low stock; the reorder itself is made outside this
 --   system.
 
@@ -269,7 +275,8 @@ SELECT order_no, pickup_store, product_code, units, taken_from,
 --           P013 and P017 in transit from Chatswood; orders 6 (Chatswood) and
 --           7 (Parramatta) ready
 -- DASHBOARD: Click & collect orders. Tiles: Overdue, To send, In transit,
---   Ready to collect. Say: order 3 at Parramatta has been ready for more than
+--   Ready to collect. Order 3 has the red Overdue tag. Say: order 3 at
+--   Parramatta has been ready for more than
 --   3 days; order 5 at Bondi waits for two items in transit from Chatswood,
 --   so it is not ready even though one item is.
 

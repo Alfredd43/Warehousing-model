@@ -2,7 +2,7 @@
 
 This document is the solution design behind the prototype in `workspace/`. It covers the architecture, the conceptual and logical data models, the ETL, the website refresh, the reports, the reasons for the design and its trade-offs, and a short data dictionary ([section 13](#13-data-dictionary)). Section numbers follow the report structure in the brief (section v. Solution Design, section vi. Prototype); [section 12](#12-mapping-to-the-assignment-brief) maps each brief item to the files that implement it.
 
-- Business rules and scope: [Spec](../00_req_feedback/Assignment2_Spec_update.md)
+- Business rules and scope: [Spec](requirement_feedback_spec/Assignment2_Spec_update.md)
 - Rule → SQL → check mapping: [traceability.md](traceability.md)
 - Verification results and limitations: [implementation_notes.md](implementation_notes.md)
 - Recorded end-to-end test: [video_demo_script.sql](../demo/video_demo_script.sql); presentation plan: [demo_runbook.md](../demo/demo_runbook.md)

@@ -59,15 +59,17 @@ export default {
       const stores = res.data.stores;
       const name = (code) => (stores.find((x) => x.store_code === code)?.store_name || code).replace("PetHaven ", "");
       const mine = params.store;
-      const keep = (r) => (!params.rstatus || r.line_status === params.rstatus) && (!params.overdue || r.overdue);
-      const any = params.rstatus || params.overdue;
+      // rstatus filters item lines; ready and overdue keep or drop whole orders.
+      const keep = (r) => (!params.rstatus || r.line_status === params.rstatus) && (!params.overdue || r.overdue)
+        && (!params.ready || r.order_ready);
+      const any = params.rstatus || params.overdue || params.ready;
 
       root.append(h("div", { class: "filters", role: "search", "aria-label": "Filter click and collect orders" },
         field("My store", select([{ value: "", label: "All stores" }, ...stores.map((x) => ({ value: x.store_code, label: name(x.store_code) }))],
           mine || "", (v) => app.setParams({ store: v }), { "data-fk": "store" })),
         field("Status", select([{ value: "", label: "All statuses" }, ...Object.entries(LINE_STATUS).map(([v, st]) => ({ value: v, label: st.label }))], params.rstatus || "", (v) => app.setParams({ rstatus: v }), { "data-fk": "rstatus" })),
         h("label", { class: "check" }, h("input", { type: "checkbox", "data-fk": "overdue", checked: !!params.overdue, onchange: (e) => app.setParams({ overdue: e.target.checked ? "1" : "" }) }), "Overdue only"),
-        any ? h("button", { class: "btn", type: "button", onclick: () => app.setParams({ rstatus: "", overdue: "" }) }, "Clear filters") : null));
+        any ? h("button", { class: "btn", type: "button", onclick: () => app.setParams({ rstatus: "", overdue: "", ready: "" }) }, "Clear filters") : null));
 
       // A store's work: lines it must send (it is the source) and orders collected there.
       root.append(counts(all.filter((r) => !mine || r.pickup_store_code === mine || r.source_store_code === mine), mine));
@@ -150,10 +152,10 @@ export default {
       const tile = (label, value, tone, patch) => h("button", { class: `kpi ${tone}`, type: "button", onclick: () => app.setParams(patch) },
         h("span", { class: "kpi-label" }, label), h("strong", { class: "kpi-value" }, value));
       return h("div", { class: "kpis kpis-4" },
-        tile("Overdue", count(overdue, "order", "orders"), overdue ? "bad" : "good", { overdue: "1", rstatus: "" }),
-        tile("To send", count(toSend, "item", "items"), toSend ? "warn" : "good", { rstatus: "waiting to be sent", overdue: "" }),
-        tile("In transit", count(inTransit, "item", "items"), "neutral", { rstatus: "in transit", overdue: "" }),
-        tile("Ready to collect", count(ready, "order", "orders"), "good", { rstatus: "ready for collection", overdue: "" }));
+        tile("Overdue", count(overdue, "order", "orders"), overdue ? "bad" : "good", { overdue: "1", rstatus: "", ready: "" }),
+        tile("To send", count(toSend, "item", "items"), toSend ? "warn" : "good", { rstatus: "waiting to be sent", overdue: "", ready: "" }),
+        tile("In transit", count(inTransit, "item", "items"), "neutral", { rstatus: "in transit", overdue: "", ready: "" }),
+        tile("Ready to collect", count(ready, "order", "orders"), "good", { ready: "1", rstatus: "", overdue: "" }));
     }
 
     load().catch(() => {});

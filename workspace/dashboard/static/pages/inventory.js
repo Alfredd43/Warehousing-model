@@ -1,7 +1,7 @@
 // Store stock (Report 1: current stock by store) with units sold in the last 7 days.
 
 import { get } from "../api.js";
-import { h, clear, fmt, badge, card, state, loading, field, select, segmented, table, pager, errorState, keepFocus } from "../components/ui.js";
+import { h, clear, fmt, badge, card, state, loading, field, select, segmented, errorState, keepFocus } from "../components/ui.js";
 
 function stockStatus(n) {
   if (n === 0) return { label: "Out of stock", kind: "danger" };
@@ -13,7 +13,8 @@ export default {
   mount(root, app, initialParams) {
     let params = initialParams;
     let stock = null, stockErr = null;
-    let events = null, eventsKey = null, eventsErr = null;
+    let events = null, eventsKey = null, eventsErr = null, eventsMore = false;
+    let drawerOpen = false;
     let expanded = false;
     let token = 0, evToken = 0;
 
@@ -34,29 +35,39 @@ export default {
       render();
     }
 
-    function eventQuery() {
-      if (!params.product || !params.store_sel) return null;
-      return { product: params.product, store: params.store_sel, from: params.hfrom, to: params.hto, offset: params.hoff, limit: 25 };
-    }
-
-    async function loadEvents(force = false) {
-      const q = eventQuery();
-      const key = JSON.stringify(q);
-      if (!q) { events = null; eventsKey = null; return; }
-      if (!force && key === eventsKey) return;
+    // Stock movements of one product at one store, newest first, 20 at a time.
+    const PAGE = 20;
+    async function loadEvents({ force = false, more = false } = {}) {
+      const key = params.product && params.store_sel ? `${params.product}@${params.store_sel}` : null;
+      if (!key) { events = null; eventsKey = null; return; }
+      if (!force && !more && key === eventsKey) return;
       const my = ++evToken;
-      eventsKey = key; events = null; eventsErr = null;
+      const offset = more ? events.rows.length : 0;
+      if (!more) { eventsKey = key; events = null; }
+      eventsErr = null; eventsMore = more;
       render();
       try {
-        const r = await get("/stock/events", q);
+        const r = await get("/stock/events", { product: params.product, store: params.store_sel, limit: PAGE, offset });
         if (my !== evToken) return;
-        events = r;
+        events = { rows: [...(more ? events.rows : []), ...r.data.rows], total: r.data.total };
       } catch (err) {
         if (my !== evToken) return;
         eventsErr = err;
       }
+      eventsMore = false;
       render();
     }
+
+    function closeDrawer() {
+      const row = `srow-${params.product}-${params.store_sel}`;
+      app.setParams({ product: "", store_sel: "" });
+      root.querySelector(`[data-fk="${row}"]`)?.focus();
+    }
+    const onKey = (e) => {
+      if (!root.isConnected) { document.removeEventListener("keydown", onKey); return; }
+      if (e.key === "Escape" && params.product && params.store_sel) closeDrawer();
+    };
+    document.addEventListener("keydown", onKey);
 
     function render() { keepFocus(root, draw); }
 
@@ -105,39 +116,68 @@ export default {
         any ? h("button", { class: "btn", type: "button", onclick: () => app.setParams({ store: "", cat: "", q: "", low: "" }) }, "Clear filters") : null));
 
       root.append(stockVsSoldCard(filteredRows({ search: false }), new Map(stores).get(params.store)));
-      if (params.product && params.store_sel) root.append(historyCard(new Map(products).get(params.product), new Map(stores).get(params.store_sel)));
 
       if (params.store) root.append(singleStoreCard(rows, new Map(stores).get(params.store)));
       else if (byProduct) root.append(byProductCard(rows));
       else root.append(byStoreCard(rows));
+
+      const open = !!(params.product && params.store_sel);
+      if (open) root.append(movesDrawer(new Map(products).get(params.product), new Map(stores).get(params.store_sel), !drawerOpen));
+      drawerOpen = open;
     }
 
-    function historyCard(productName, storeName) {
-      const from = h("input", { type: "date", "data-fk": "hfrom", value: params.hfrom || "", onchange: (e) => app.setParams({ hfrom: e.target.value, hoff: "" }) });
-      const to = h("input", { type: "date", "data-fk": "hto", value: params.hto || "", onchange: (e) => app.setParams({ hto: e.target.value, hoff: "" }) });
+    // ---------- stock movements drawer ----------
+    // One line per warehouse stock event, in plain words, with the source
+    // document (supplier order or till receipt) underneath.
+    function describe(r) {
+      const order = r.order_ref;
+      switch (r.event_type) {
+        case "supplier_delivery": return r.supplier_name ? `Delivery from ${r.supplier_name}` : "Supplier delivery";
+        case "store_sale": return "Sold in store";
+        case "reservation": return `Held for online order ${order}`
+          + (r.pickup_store_code && r.pickup_store_code !== r.store_code ? `, pickup at ${storeLabel(r.pickup_store_name)}` : "");
+        case "transfer_out": return `Sent to ${storeLabel(r.pickup_store_name)} for online order ${order}`;
+        case "transfer_in": return r.from_store_name
+          ? `Received from ${storeLabel(r.from_store_name)} for online order ${order}` : `Received for online order ${order}`;
+        case "collection": return `Collected by customer, order ${order}`;
+        case "cancellation": return r.available_change > 0 ? `Order ${order} cancelled, back on shelf` : `Order ${order} cancelled`;
+        case "checkout_blocked": return `Checkout blocked, ${fmt.units(r.units)} wanted`;
+        default: return r.event_label;
+      }
+    }
+
+    function change(r) {
+      const parts = [];
+      if (r.available_change) parts.push(`${fmt.signed(r.available_change)}${r.reserved_change ? " shelf" : ""}`);
+      if (r.reserved_change) parts.push(`${fmt.signed(r.reserved_change)} held`);
+      return parts.length ? parts.join(", ") : "nothing moved";
+    }
+
+    function movesDrawer(productName, storeName, entering) {
+      const bal = stock.data.rows.find((r) => r.product_code === params.product && r.store_code === params.store_sel);
       let body;
-      if (eventsErr) body = errorState(eventsErr, () => loadEvents(true));
-      else if (!events) body = loading("Loading events");
-      else body = h("div", {}, table({
-        caption: "Warehouse stock events for the selected store and product, newest first",
-        columns: [
-          { label: "Event time", render: (r) => fmt.dateTime(r.event_ts) },
-          { label: "Event type", render: (r) => r.event_label, sub: (r) => (r.event_type === "checkout_blocked" ? "Outcome only: no stock moved" : null) },
-          { label: "Available change", num: true, render: (r) => fmt.signed(r.available_change) },
-          { label: "Reserved change", num: true, render: (r) => fmt.signed(r.reserved_change) },
-          { label: "Units involved", num: true, render: (r) => fmt.num(r.units) },
-          { label: "Order / basket", render: (r) => (r.order_ref ? (/^\d+$/.test(r.order_ref) ? `Order ${r.order_ref}` : r.order_ref) : "—"),
-            sub: (r) => (r.pickup_store_code && r.pickup_store_code !== r.store_code ? `Pickup store ${r.pickup_store_code}` : (r.pickup_store_code ? "Pickup here" : "")) },
-        ],
-        rows: events.data.rows,
-        empty: state("", "No events for this store and product", params.hfrom || params.hto ? "Try a wider date range." : ""),
-      }), pager(events.data, (off) => app.setParams({ hoff: off ? String(off) : "" })));
-      return card({
-        id: "event-history", title: `${productName || params.product} at ${storeName ? storeLabel(storeName) : params.store_sel}`,
-        actions: [field("From", from), field("To", to),
-          params.hfrom || params.hto ? h("button", { class: "btn", type: "button", onclick: () => app.setParams({ hfrom: "", hto: "", hoff: "" }) }, "Clear dates") : null],
-        body,
-      });
+      if (eventsErr && !events) body = errorState(eventsErr, () => loadEvents({ force: true }));
+      else if (!events) body = loading("Loading stock movements");
+      else if (!events.rows.length) body = state("", "No stock movements recorded", "");
+      else body = h("div", {},
+        h("ol", { class: "moves" }, events.rows.map((r) => h("li", { class: "move" },
+          h("span", { class: "move-time" }, fmt.dateTime(r.event_ts)),
+          h("span", { class: "move-what" }, describe(r), r.document ? h("span", { class: "cell-sub" }, r.document) : null),
+          h("span", { class: `move-change${r.available_change < 0 ? " neg" : r.available_change > 0 ? " pos" : ""}` }, change(r))))),
+        eventsErr ? errorState(eventsErr, () => loadEvents({ more: true })) : null,
+        events.rows.length < events.total ? h("div", { class: "table-note" },
+          h("button", { class: "btn-link", type: "button", "data-fk": "moves-more", disabled: eventsMore || undefined,
+            onclick: () => loadEvents({ more: true }) }, eventsMore ? "Loading" : "Show more")) : null);
+      return h("div", { class: "drawer-layer" },
+        h("div", { class: "drawer-scrim", onclick: closeDrawer }),
+        h("aside", { class: `drawer${entering ? " drawer-enter" : ""}`, role: "dialog", "aria-modal": "true", "aria-labelledby": "drawer-title" },
+          h("div", { class: "drawer-head" },
+            h("div", {},
+              h("h2", { id: "drawer-title" }, productName || params.product),
+              h("p", {}, [storeName ? storeLabel(storeName) : params.store_sel,
+                bal ? ` · ${fmt.num(bal.available)} on shelf · ${fmt.num(bal.reserved)} held` : ""])),
+            h("button", { class: "btn btn-small", type: "button", "data-fk": "drawer-close", "aria-label": "Close", onclick: closeDrawer }, "✕")),
+          h("div", { class: "drawer-body" }, body)));
     }
 
     // ---------- stock tables ----------
@@ -164,7 +204,10 @@ export default {
     function stockRow(r, cells) {
       const selected = params.product === r.product_code && params.store_sel === r.store_code;
       const tr = h("tr", { class: `clickable${selected ? " selected" : ""}`, tabindex: "0", "data-fk": `srow-${r.product_code}-${r.store_code}` }, cells);
-      const pick = () => app.setParams({ product: r.product_code, store_sel: r.store_code, hoff: "", hfrom: "", hto: "" });
+      const pick = () => {
+        app.setParams({ product: r.product_code, store_sel: r.store_code });
+        root.querySelector('[data-fk="drawer-close"]')?.focus();
+      };
       tr.addEventListener("click", pick);
       tr.addEventListener("keydown", (e) => { if (e.key === "Enter") pick(); });
       return tr;
@@ -258,7 +301,7 @@ export default {
         body: list.length ? h("div", { class: "card-body" }, h("div", { class: "bars" }, shown.map((p) =>
           // Selecting a product narrows the stock table below to it.
           h("button", { class: "bar-row", type: "button", "aria-pressed": String(params.q === p.name), "data-fk": `sv-${p.code}`,
-            onclick: () => app.setParams({ q: params.q === p.name ? "" : p.name, layout: "product", product: "", store_sel: "", hoff: "", hfrom: "", hto: "" }) },
+            onclick: () => app.setParams({ q: params.q === p.name ? "" : p.name, layout: "product", product: "", store_sel: "" }) },
             h("span", { class: "bar-label" }, p.name, note(p) ? h("small", {}, note(p)) : null),
             h("span", { class: "bar-pair" },
               h("span", { class: "bar-line" },
@@ -283,7 +326,7 @@ export default {
       },
       reload: async () => {
         await loadStock();
-        await loadEvents(true);
+        await loadEvents({ force: true });
       },
     };
   },

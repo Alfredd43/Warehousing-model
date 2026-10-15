@@ -168,6 +168,24 @@ tr.group-row .btn-link { white-space: nowrap; }
 .tabs button { border: 0; background: none; padding: 10px 14px; cursor: pointer; color: var(--text-secondary); border-bottom: 2px solid transparent; margin-bottom: -1px; white-space: nowrap; }
 .tabs button[aria-selected="true"] { color: var(--text); font-weight: 600; border-bottom-color: var(--accent); }
 
+/* ---------- drawer (stock movements) ---------- */
+.drawer-layer { position: fixed; inset: 0; z-index: 40; }
+.drawer-scrim { position: absolute; inset: 0; background: rgba(36, 35, 32, .25); }
+.drawer { position: absolute; top: 0; right: 0; bottom: 0; width: min(460px, 100vw); display: flex; flex-direction: column; background: var(--surface); border-left: 1px solid var(--border); box-shadow: -12px 0 40px -20px rgba(31, 29, 26, .35); }
+.drawer-enter { animation: drawer-in .22s cubic-bezier(.2, .7, .2, 1); }
+@keyframes drawer-in { from { transform: translateX(24px); opacity: 0; } to { transform: none; opacity: 1; } }
+.drawer-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 20px 20px 14px; border-bottom: 1px solid var(--border); }
+.drawer-head h2 { margin: 0; font-size: 17px; }
+.drawer-head p { margin: 4px 0 0; color: var(--text-secondary); font-size: 13px; }
+.drawer-body { overflow-y: auto; padding: 4px 0 16px; }
+.moves { list-style: none; margin: 0; padding: 0; }
+.move { display: grid; grid-template-columns: 7.5rem minmax(0, 1fr) auto; gap: 4px 12px; padding: 12px 20px; border-bottom: 1px solid var(--border); align-items: start; }
+.move-time { color: var(--text-secondary); font-size: 12.5px; }
+.move-change { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--text-secondary); }
+.move-change.pos { color: var(--success); }
+.move-change.neg { color: var(--text); }
+@media (max-width: 520px) { .move { grid-template-columns: minmax(0, 1fr) auto; } .move-time { grid-column: 1 / -1; } }
+
 /* ---------- tables ---------- */
 .table-wrap { overflow-x: auto; }
 table { width: 100%; border-collapse: collapse; }

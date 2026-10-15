@@ -1,13 +1,13 @@
 # PetHaven dashboard: specification
 
-Version 3.0 · 15 October 2026
-Status: brief for the change agreed on 15 October. The data use cases were reorganised so that each role sees only the information it acts on (section 1). Sections 1 and 4 to 8 describe the target; until the change is built, the running dashboard still follows version 2.0 (in the Git history). How to start and check it is in [dashboard_runbook.md](dashboard_runbook.md).
+Version 3.2 · 16 October 2026
+Status: describes the running dashboard. Version 3.0 (15 October) reorganised the data use cases so that each role sees only the information it acts on (section 1). Version 3.1 (16 October) removed most explanatory text from the pages, because titles, column names and labels already say what each part shows; the definitions are in section 2 and in the report. Version 3.2 (16 October) brought the data sources, time ranges, links and check counts in this document into line with the code: lost sales now use the same 7 Sydney calendar days as sales, and the Ready to collect tile filters whole ready orders. How to start and check it is in [dashboard_runbook.md](dashboard_runbook.md).
 
 Version 1.0 (6 October) was the brief for building the dashboard. It also asked for an Integration & Quality page and a business demo panel that wrote to the database. Both were removed on 13 October: the dashboard became read-only, and the end-to-end demonstration moved to the recorded video ([demo/video_demo_script.sql](../demo/video_demo_script.sql)), as the tutor asked. The version 1.0 text is in the Git history.
 
 ## 1. Purpose and scope
 
-The dashboard is the business-facing output of the prototype. It answers the four data use cases in the [Spec, section 9](../00_req_feedback/Assignment2_Spec_update.md), ordered by impact:
+The dashboard is the business-facing output of the prototype. It answers the four data use cases in the [Spec, section 9](requirement_feedback_spec/Assignment2_Spec_update.md), ordered by impact:
 
 | Use case | User | Impact | Question | Page |
 | --- | --- | --- | --- | --- |
@@ -16,7 +16,7 @@ The dashboard is the business-facing output of the prototype. It answers the fou
 | UC3 Spot low stock | Store managers | Medium | Which products is my store running low on? | Store stock |
 | UC4 Prepare click & collect orders | Store staff | Low | Which orders must I send, receive or hand over, and which are overdue? | Click & collect orders |
 
-Each role sees only what it acts on. The owner's pages (Overview, Potential lost sales, Website stock) show the whole business: which products sell, what was lost, and which store has a problem, without listing shelves or orders. Shelf detail belongs to the store managers' page, and open orders to the store staff's page.
+Each role sees only what it acts on. The owner's pages (Overview, with its Potential lost sales card, and Website stock) show the whole business: which products sell, what was lost, and which store has a problem, without listing shelves or orders. Shelf detail belongs to the store managers' page, and open orders to the store staff's page.
 
 The dashboard only reads. It never records a sale, refreshes the website, or runs the ETL. Business events are made through the source systems' own functions (`demo.py`, or SQL in CloudBeaver).
 
@@ -24,11 +24,11 @@ It is a teaching prototype with synthetic data, not an online shop, payment serv
 
 ### 1.1 Sources
 
-- [Assignment requirements](../00_req_feedback/Assignment2_Requirements.md), items vi.a to vi.e.
-- [Spec](../00_req_feedback/Assignment2_Spec_update.md): business rules, stock definitions, data use cases.
+- [Assignment requirements](requirement_feedback_spec/Assignment2_Requirements.md), items vi.a to vi.e.
+- [Spec](requirement_feedback_spec/Assignment2_Spec_update.md): business rules, stock definitions, data use cases.
 - [Architecture and data model](Architecture_and_Data_Model.md).
 - [Report view definitions](../workspace/db/08_reports.sql). The SQL is the authority for fields and calculations.
-- Tutor feedback: [29 Sep](../00_req_feedback/29_Sep_tutor_workshop_feedback.md), [6 Oct](../00_req_feedback/06_Oct_tutor_workshop_feedback.md), [13 Oct](../00_req_feedback/13_Oct_tutor_workshop_feedback.md).
+- Tutor feedback: [29 Sep](requirement_feedback_spec/29_Sep_tutor_workshop_feedback.md), [6 Oct](requirement_feedback_spec/06_Oct_tutor_workshop_feedback.md), [13 Oct](requirement_feedback_spec/13_Oct_tutor_workshop_feedback.md).
 
 ### 1.2 How it meets the brief
 
@@ -119,9 +119,11 @@ The two reference images set the style and colours, not the content.
 
 ## 4. Layout and shared behaviour
 
-Navigation, in this order: **Overview**, **Potential lost sales**, **Website stock**, **Store stock**, **Click & collect orders**. The sidebar groups them by role: Owner (the first three), Store managers, Store staff. Sidebar brand **PetHaven**, subtitle **Inventory data solution**.
+Navigation, in this order: **Overview**, **Website stock**, **Store stock**, **Click & collect orders**. The sidebar groups them by role: Owner (the first two), Store managers, Store staff. Potential lost sales is a card on the Overview, not a page of its own. Sidebar brand **PetHaven**, subtitle **Inventory data solution**.
 
-Top bar: page name, a "Synthetic data · Lab prototype" label, the time the reports were read, and a **Reload** button. Reload only reads the reports again; it never refreshes the website or runs the ETL.
+Top bar: page name, the time the reports were read ("Updated 1:24 am"), and a **Reload** button. Reload only reads the reports again; it never refreshes the website or runs the ETL.
+
+Little explanatory text. Pages have no subtitle, and a card has no subtitle or footnote when its title, column names and labels already say what it shows. Products and stores are shown by name; product and store codes are not shown, although the product search still accepts a code. Definitions belong in section 2 and in the report, not on screen.
 
 When the ETL has rejected records or the warehouse disagrees with the store system, a yellow banner appears on every page: "Some records are missing from the reports", with the counts. It clears once the records load.
 
@@ -131,24 +133,25 @@ When a scheduled website refresh is due, the Website stock page reads its report
 
 ## 5. Overview (UC1, owner)
 
-The version 2.0 Overview stays; only the parts that belong to other roles are replaced. All figures cover the last 7 days unless stated.
+The version 2.0 Overview stays; only the parts that belong to other roles are replaced. Sales, best sellers, potential lost sales and the blocked checkouts in Needs attention cover the last 7 days, counted as Sydney calendar days (today and the six days before); the labels do not repeat "(7 days)". Out of stock, website accuracy, the next refresh and overdue orders are current. The Potential lost sales card lists all history (section 8.1).
 
-Data: `dw.rpt_daily_sales` per product and channel (Report 4 is grouped by category today, so the per-product rows need a query over the same sales events), `dw.rpt_checkout_blocked` with each item's value at `dim_product.unit_price`, `dw.rpt_current_stock_by_store` and `dw.rpt_open_reservations` for the store summary, and the refresh and data quality status.
+Data: `dw.rpt_daily_sales` per channel and `dw.rpt_product_sales` per product (best sellers), `dw.rpt_checkout_blocked` with each item's value at `dim_product.unit_price`, `dw.rpt_current_stock_by_store` and `dw.rpt_open_reservations` for the store summary, and the refresh and data quality status.
 
 ### 5.1 Headline tiles
 
-Four tiles in one row, each linking to its detail:
+Five tiles, each linking to its detail:
 
-| Tile | Shows | Links to | Change from version 2.0 |
-| --- | --- | --- | --- |
-| Sales | Sales value, units, in-store and online value | Store stock | Replaces Stock alerts and Units sold |
-| Potential lost sales | Value, units, and share of online demand lost | Potential lost sales | Adds value and share |
-| Website accuracy | Products where the website matches the stores (for example 18 of 18) | Website stock | Unchanged |
-| Next website refresh | Countdown, or "Not running" | Website stock | Unchanged |
+| Tile | Shows | Links to |
+| --- | --- | --- |
+| Sales | Sales value; in-store and online value underneath | Store stock |
+| Potential lost sales | Lost value; share of online demand lost underneath | Potential lost sales card |
+| Out of stock | Empty shelves, and in how many stores | Store stock, low stock only |
+| Website accuracy | "All correct", or how many products show the wrong stock | Website stock |
+| Next website refresh | Countdown, or "Not running" | Website stock |
 
-The Click & collect tile is removed; open orders are the store staff's page (UC4).
+The Click & collect tile is removed; open orders are the store staff's page (UC4). The Units sold tile was removed in version 3.1: Best sellers shows units per product.
 
-**Share of online demand lost** = units blocked at checkout ÷ (units sold online + units blocked at checkout). Blocks only happen online, so the denominator is online demand, not all sales. Example from the sample data: 3 ÷ (16 + 3) = 16%. Sales value and lost value use the current shelf price and are labelled "at current price".
+**Share of online demand lost** = units blocked at checkout ÷ (units sold online + units blocked at checkout). Blocks only happen online, so the denominator is online demand, not all sales. Example from the sample data: 3 ÷ (16 + 3) = 16%. Sales value and lost value use the current shelf price.
 
 ### 5.2 Best sellers
 
@@ -156,8 +159,8 @@ Takes the place of "Out of stock and running low".
 
 - The top 8 products by units sold, ranked by units.
 - One horizontal bar per product, split into in-store and online in two colours, with a legend.
-- Units per day (units sold ÷ 7) at the end of each bar, so the owner sees how fast each product sells.
-- A best seller with an empty shelf is marked in red under its name: "out of stock in 3 of 5 stores" (from `dw.rpt_current_stock_by_store`, 0 available), linking to Store stock for that product. This is the only stock detail on the owner's page: a best seller that cannot be bought is a decision for the owner, while an empty shelf of a slow seller is store work. Low stock (1 to 2 units) is not marked.
+- Units sold and sales value at the end of each bar.
+- A best seller with an empty shelf is marked in red under its name: "out of stock in 3 of 5 stores" (from `dw.rpt_current_stock_by_store`, 0 available), linking to Store stock filtered to that product. This is the only stock detail on the owner's page: a best seller that cannot be bought is a decision for the owner, while an empty shelf of a slow seller is store work. Low stock (1 to 2 units) is not marked.
 - A link to Store stock, where every product's stock and 7-day sales are shown.
 
 Example from the sample data: Aquarium Starter Kit 40L (P018, 4th best seller) is out of stock in 3 of 5 stores; Cat Scratching Post 80cm and Orthopaedic Dog Bed Large in 1 each.
@@ -170,7 +173,7 @@ Below the tiles, two equal columns that end on one line: **Needs attention** wit
 
 Lets the owner see at a glance which store has a problem, without listing shelves or orders. The detail stays on the store managers' and store staff's pages.
 
-- **System**: the automatic website refresh is not running; records are missing from the reports (shown only when the ETL rejected records or the warehouse disagrees with the store system).
+- **System**: products showing the wrong stock on the website; records missing from the reports (shown only when the ETL rejected records or the warehouse disagrees with the store system). Whether the automatic refresh is running is shown on the Next website refresh tile, so it is not repeated here.
 - **Stores**: one line per store that has a problem, counting only:
   - checkouts blocked for that pickup store (a lost sale);
   - products out of stock on that store's shelf (0 available);
@@ -188,37 +191,43 @@ Example from the sample data: Parramatta (2 products out of stock, 1 order overd
 
 ## 6. Website stock (UC2, owner)
 
-Data: `dw.rpt_online_vs_actual`, `dw.rpt_online_staleness`, `dw.rpt_last_sync_changes`, `dw.sync_run`.
+Data: `dw.rpt_online_vs_actual`, `dw.rpt_online_staleness`, `dw.rpt_refresh_history`, `dw.sync_run`, `dw.sync_change`.
 
-- Status line: whether the automatic refresh is running, its interval, the countdown to the next refresh, and when the last refresh ran and whether it was automatic or manual.
+- Status line: whether the automatic refresh is running (with its interval and the countdown to the next refresh when it is), and how long ago the last refresh ran.
 - Banner: "The website matches the stores for all 18 products", or "N of 18 products show the wrong stock on the website", split into too high and too low.
-- **Products with the wrong number on the website**: Product, Website shows, Stores have, Difference. Selecting a product opens its stock by store.
-- **What the last refresh corrected**: when it ran (automatic or manual), how many website numbers it corrected, and a table of Product, Website before, Website after, Change, from `measure = 'online_available'` only.
+- **Products with the wrong number on the website** (only when there are any): Product, Website shows, Stores have, Difference, and a "Website too high" or "Website too low" label. Selecting a product opens it on Store stock.
+- **Refresh history**: the latest 10 refreshes, newest first, with the time since the previous refresh, the stock changes in between, the website numbers corrected, and the products too high and too low (with units). The owner uses it to judge whether the refresh interval is short enough. Selecting a refresh opens, under its row, the website numbers it corrected: Product, Website before, Website after, Change, from `measure = 'online_available'` only. Selecting it again closes it. This replaces the version 3.0 card "What the last refresh corrected", which showed the latest refresh only.
+- **All products** (collapsed): every product with the same columns, with a product search and a category filter.
 
 The website number is a five-store total, so this page has no store filter.
 
 ## 7. Store stock (UC3, store managers)
 
-Data: `dw.rpt_current_stock_by_store`, and `dw.fact_stock_event` for units sold and the event history.
+Data: `dw.rpt_current_stock_by_store`, `dw.rpt_product_sales` for units sold in the last 7 days, and `dw.fact_stock_event` for the event history.
 
 One view, no tabs. A manager looks at one store, so the store filter comes first; all stores stay available for comparison.
 
-- Filters: store, product, category, **Low stock only**. They apply to the chart and the table.
-- **Stock left and units sold (7 days)**: a horizontal bar chart, one product per row, so the manager sees which products sell and which are running out in one place. The top bar is the stock (available and reserved, stacked); the bar under it is the units sold in the last 7 days. Products with the least available stock come first, and among equal stock the one that sold more. When the sold bar is longer than the stock bar, the product sold more last week than is left. The 10 with least stock are shown, with "Show all". With all stores selected the numbers are added up across stores. Selecting a product opens it by store.
+- Filters: store, category, product, **Low stock only**. They apply to the table. The chart follows all of them except the product search, so it stays a list to pick a product from.
+- **Stock left and units sold** (with the store's name in front when one store is selected): a horizontal bar chart, one product per row, so the manager sees which products sell and which are running out in one place. The top bar is the stock (available and reserved, stacked); the bar under it is the units sold in the last 7 days. Products with the least available stock come first, and among equal stock the one that sold more. When the sold bar is longer than the stock bar, the product sold more last week than is left. The 10 with least stock are shown, with "Show all". With all stores selected the numbers are added up across stores. Selecting a product puts its name in the product search and switches the table to **By product**, so the table shows that product at each store; selecting it again clears the search.
 - Units sold follow Report 4's rule per product: in-store till sales at that store, plus online order items less cancellations at the pickup store.
 
   Example from the sample data, Bondi: Aquarium Starter Kit 40L 0 available and 1 sold; Orthopaedic Dog Bed Large 1 available and 2 sold; Cat Scratching Post 80cm 3 available and 4 sold.
 
 - One store selected: a single table titled with the store's name, one row per product in product-code order. Columns: Product, Category, Available, Reserved, On hand, Stock status, Last event.
-- All stores: a **View** switch picks how the table is grouped. **By store** (default) gives one block per store, one row per product (Product, Category, Available, Reserved, On hand, Stock status). **By product** gives one block per product with its total available across stores, one row per store (Store, Available, Reserved, On hand, Stock status).
+- All stores: a **View** switch picks how the table is grouped. **By store** (default) gives one block per store, with how many of its products are low or out of stock, and one row per product (Product, Category, Available, Reserved, On hand, Stock status). **By product** gives one block per product with its category and total available across stores, one row per store (Store, Available, Reserved, On hand, Stock status).
 - Status labels: Out of stock (0), Low stock (1 to 2), Available.
-- Selecting a store and product opens its **event history**: every sale, delivery and order that changed that number, newest first, with event type, available change, reserved change, order or basket reference and source reference. A blocked checkout appears with zero change; it is a recorded outcome, not stock used.
+- Selecting a row in the table opens a **stock movements** drawer on the right for that product at that store. Its header gives the product, the store and the current balance ("Chatswood · 73 on shelf · 0 held"). Below, every warehouse stock event for that product and store, newest first, 20 at a time with "Show more", one line each:
+  - when, and what happened in plain words: "Delivery from Pawfect Foods", "Sold in store", "Held for online order 5", "Sent to Bondi for online order 5", "Received from Chatswood for online order 5", "Collected by customer, order 2", "Order 4 cancelled, back on shelf", "Checkout blocked, 3 units wanted";
+  - the source document underneath where there is one: the supplier order number ("PO-3001") or the till receipt ("Receipt 8"), so a manager can find the paperwork; internal codes such as `SUP-01` or line numbers are not shown;
+  - the change on the right: "+20", "−2", "−4 shelf, +4 held", or "nothing moved" for a blocked checkout, which is a recorded outcome, not stock used.
+
+  The drawer closes with ✕, Escape or a click outside it.
 
 The **Sales** tab of version 2.0 (units sold per day by store, channel and category) is removed. It could not say which product sold, and a daily total does not tell a manager what to reorder; the chart above does.
 
 ## 8. Potential lost sales (UC1 detail, owner) and Click & collect orders (UC4, store staff)
 
-These were two tabs of one page in version 2.0. They serve different roles, so they become two pages.
+These were two tabs of one page in version 2.0. They serve different roles, so they were separated: Potential lost sales is now a card on the Overview, and Click & collect orders is its own page.
 
 ### 8.1 Potential lost sales (`dw.rpt_checkout_blocked`)
 
@@ -228,8 +237,8 @@ A card on the Overview, kept short for the owner:
 
 - Three columns: **Product** (with the units wanted, the pickup store and when underneath), **Why** (with the numbers underneath: "website showed 7, stores had 2", or the stores' total when no single store had enough), and **Value**.
 - Reason labels: "Website out of date" and "No single store had enough".
-- Newest first, the latest 5 shown, with "Show all" when there are more. All history, so the blocked checkout in the sample data is visible. The footer gives the total items, units and value.
-- No filter bar. A store's "checkout blocked" link in Needs attention shows only that pickup store's items, with an **All stores** button to go back.
+- Newest first, the latest 5 shown, with "Show all" when there are more. All history, so the blocked checkout in the sample data is visible. No subtitle or footer: the Overview tile already gives the total.
+- No filter bar. A store's "checkout blocked" link in Needs attention shows only that pickup store's items, with "Pickup at Bondi only." under the title and an **All stores** button to go back.
 - Selecting a row opens the **Source checkout record** from the online store: outcome, bag, pickup store, and for each item the website number captured at checkout ("Website snapshot (source)") next to the warehouse's reconstruction ("Report reconstruction"). If the two differ, the page shows both.
 
 ### 8.2 Click & collect orders (`dw.rpt_open_reservations`)
@@ -237,8 +246,10 @@ A card on the Overview, kept short for the owner:
 For the staff at one store's click & collect counter.
 
 - **My store** filter: lines this store must send (it is the source store) and orders collected here (it is the pickup store).
-- Count tiles in working order: Overdue (ready for more than 3 days and not collected), To send, In transit, Ready to collect.
-- Order list sorted by urgency, overdue first: order, product, units, source store, pickup store, status (Waiting to be sent, In transit, Ready for collection), when the order was placed, whether the whole order is ready and since when, overdue. "Order ready" comes from the report and is not recalculated from the visible rows.
+- Count tiles in working order: Overdue, To send, In transit, Ready to collect. Overdue and Ready to collect count whole orders; To send and In transit count item lines, because one order can take items from several stores. Each value carries its unit ("1 order", "2 items"). "Ready" comes from the report's `order_ready` and is not recalculated from the visible rows. Selecting a tile filters the tables: Overdue and Ready to collect keep whole orders with all their lines, while To send and In transit keep the matching item lines (the same as the Status filter).
+- One table per pickup store, orders sorted by urgency, overdue first. Columns: Order, Ordered (when the customer paid and the items were held), Product, Units, Source store, Status (Waiting to be sent, In transit, Ready for collection). Order and Ordered are shown once per order, beside all its lines.
+- Status belongs to each item line. Overdue is the only status of the whole order, so an overdue order has a red **Overdue** tag under its number; other orders have no tag.
+- With a store selected, a second table lists the lines it must send for orders collected at other stores, with Pickup store in place of Source store.
 - Orders are identified by order number; no customer names are stored.
 
 ## 9. API
@@ -250,10 +261,10 @@ All endpoints are `GET` and return JSON. Any other method returns 405 ("The dash
 | `/api/health` | Database available, database name, server time |
 | `/api/status` | Refresh scheduler state and the data quality summary for the banner |
 | `/api/overview` | Overview tiles and lists |
-| `/api/website-stock` | Website vs stores per product, refresh status |
-| `/api/sync/latest` | The latest website refresh and the website numbers it corrected |
+| `/api/website-stock` | Website vs stores per product, refresh status, refresh history |
+| `/api/sync/latest` | The latest website refresh, or the one given by `sync_id`, and the website numbers it corrected |
 | `/api/stock` | Current stock per store and product, with units sold in the last 7 days |
-| `/api/stock/events` | Event history for one product at one store, paged |
+| `/api/stock/events` | Stock events for one product at one store, paged, with the supplier name, the source document number and, for a transfer, the store it came from |
 | `/api/checkout/blocked` | Blocked items with stable event and attempt identifiers |
 | `/api/checkout/attempts/{id}` | One source checkout attempt and its items |
 | `/api/reservations` | Open click & collect order lines |
@@ -263,7 +274,7 @@ Responses use one envelope: `data`, plus `meta` with the read time, time zone, d
 ## 10. Data rules for the code
 
 - One database connection per request, closed after it. Read-only transactions.
-- Two reports deliberately mix sources: `rpt_online_vs_actual` compares the live website number with warehouse stock, and `rpt_reconciliation` compares the live store system with the warehouse. The source checkout record reads the online store directly. Label these honestly.
+- Two reports deliberately mix sources: `rpt_online_vs_actual` compares the live website number with warehouse stock, and `rpt_reconciliation` compares the live store system with the warehouse. The source checkout record reads the online store directly, and the stock movements drawer reads supplier names from the supplier system (`supply.supplier`), which has no warehouse dimension. Label these honestly.
 - Items not on the warehouse product list are not in the website comparison.
 - Only whitelisted sort columns and filters reach SQL; parameters are always bound.
 
@@ -289,16 +300,16 @@ Static files are served only from `static/`; there are no directory listings and
 | --- | --- |
 | No website refresh yet | "No refresh has run yet" |
 | Every product matches | A positive message, with the data still visible |
-| Last refresh changed nothing | "Nothing needed correcting: the website was already right." |
-| No blocked items for the filters | "No blocked item records match these filters" and Clear filters |
-| No open orders | "No open lines match these filters" |
+| A refresh changed nothing | "Nothing needed correcting: the website was already right." under its row |
+| No blocked items | "No checkout has been blocked", or for one pickup store "No blocked items for this pickup store" and All stores |
+| No open orders | "No open orders"; for a selected store, "No open orders are collected at this store." |
 | Database unavailable | An error panel with Retry; no zero-filled tables or mock data |
 
 Tables, headings and form labels are semantic HTML. Everything works by keyboard, nothing depends on hover, and colour is never the only signal.
 
 ## 13. Checks
 
-`check_dashboard.py` builds `pethaven_check`, starts the server in-process, makes business events with the source systems' own SQL functions and checks (38 checks, all PASS on 15 October 2026):
+`check_dashboard.py` builds `pethaven_check`, starts the server in-process, makes business events with the source systems' own SQL functions and checks (45 checks, all PASS on 16 October 2026, on the submitted code):
 
 - website comparison, stock, blocked items, reservations and overview tiles against their report views;
 - that current stock ignores date parameters;
@@ -310,4 +321,4 @@ Tables, headings and form labels are semantic HTML. Everything works by keyboard
 - Sydney business dates and the history date filter;
 - the 503 response when the database cannot be reached.
 
-The business rules underneath are covered by `check_demo.py` (104 checks) and the refresh scheduler by `check_scheduler.py` (17 checks). Browser checks were done at 1440, 1280, 768 and 375 px wide.
+The business rules underneath are covered by `check_demo.py` (105 checks) and the refresh scheduler by `check_scheduler.py` (17 checks), both all PASS in the same run. Browser checks were done at 1440, 1280, 768 and 375 px wide.

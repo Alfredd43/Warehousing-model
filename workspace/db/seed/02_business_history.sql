@@ -7,14 +7,14 @@
 -- Prerequisites: seed/01_reference_data.sql.
 -- Timeline (Sydney time, relative to the day the build runs):
 --   7 days ago 07:00  opening stock: one supplier delivery docket per store and supplier
---   7 days ago 08:00  sync #1 - the website gets its first real numbers
+--   7 days ago 08:00  sync #1: the website gets its first real numbers
 --   6..1 days ago     till sales (some multi-item receipts), restock supplier deliveries,
 --                     7 paid online orders (one 3-item order collected at
 --                     the customer's chosen store with 2 items coming from
 --                     another store and still in transit), 1 checkout
 --                     blocked before payment because the website number was
 --                     stale, 2 collections, 1 cancellation, 1 overdue collection
---   now               sync #2 - the "initial" sync for the demo; the website is
+--   now               sync #2: the "initial" sync for the demo; the website is
 --                     correct and nothing is pending
 -- Products are given by item number, which every system shares. Stores are
 -- given in each system's own store code (store 101, NSW-PARRA, ...).

@@ -186,51 +186,93 @@ docker compose exec python python /workspace/scripts/build.py
 
 ### 3.1 Source system databases and schemas
 
-The three source systems are the schemas `store_ops` (6 tables), `supply` (5 tables, including suppliers) and `online` (13 tables, including the scheduler's registration), each with its own business functions and triggers. The scheduler itself is `scripts/sync_scheduler.py`, started with `demo.py scheduler start`.
+The prototype has three source systems. In the Lab Environment each system is a separate schema in the `pethaven_demo` database. The schemas have no foreign keys to each other, so they behave like three independent operational systems. They only share the item number (for example P001), which is how the business identifies a product. Each system keeps its own store codes, transaction IDs, units and time zone, just as separate real systems would.
 
-> **[TODO Figure 7]** CloudBeaver navigator showing the five schemas in `pethaven_demo`, with the `store_ops` tables expanded.
+**Table 3.1. Source system schemas**
+
+| Schema | Source system | Tables | Functions | Triggers | Main tables |
+| --- | --- | --- | --- | --- | --- |
+| `store_ops` | Store system | 6 | 14 | 6 | store, product, store_stock, sale, sale_line, reservation |
+| `supply` | Supplier system | 5 | 2 | 3 | supplier, location, item, supplier_delivery, supplier_delivery_line |
+| `online` | Online system | 13 | 9 | 3 | product, online_stock, basket, checkout_attempt, web_order, stock_sync, and 7 more |
+
+The Store system (`store_ops`) records till sales and the live shelf and reserved stock for each of the five stores. It also handles click-and-collect holds, transfers and collections. A trigger on `sale_line` lowers the shelf stock as soon as a sale is recorded.
+
+The Supplier system (`supply`) records supplier deliveries. Each delivery is identified by a supplier ID and a supplier order number, and is recorded in cartons with a UTC timestamp. A trigger adds the delivered units (cartons × units per carton) to the store's shelf.
+
+The Online system (`online`) holds the website catalogue, the single stock number the website shows for each product, shopping bags, checkout attempts and paid orders. It also logs each website sync, including what changed before and after.
+
+Each source system is used only through its own functions, for example `store_ops.record_sale()`, `supply.record_supplier_delivery()` and `online.checkout()`. The other triggers in these schemas send each new record to the ETL layer (Section 3.2). Two more schemas, `etl` and `dw`, hold the integration layer and the data warehouse. The default `public` schema is not used.
+
+> **[TODO Figure 3.1]** CloudBeaver navigator showing the five schemas in `pethaven_demo`, with the `store_ops` tables expanded.
+
+> **[TODO Figure 3.2]** Overview of the schemas and their tables.
 
 ### 3.2 Integrated data warehouse
 
-The warehouse is the `dw` schema with the stock-event fact table, the three dimensions and the two website-refresh tables (`sync_run`, `sync_change`). After the build it holds 146 stock events, and all 90 store and product combinations match the store system.
+The integrated data warehouse is the `dw` schema. It uses a star schema with one fact table, three dimension tables, two sync tables and eight report views.
 
-> **[TODO Figure 8]** A few rows of `dw.fact_stock_event` in CloudBeaver, showing event type, signed quantities and source reference.
+**Table 3.2. Data warehouse tables**
+
+| Table | Type | Description |
+| --- | --- | --- |
+| `fact_stock_event` | Fact | One row for every change to one product's stock at one store |
+| `dim_product` | Dimension | Product code (the item number), name, category and price |
+| `dim_store` | Dimension | One code per store (S01–S05), plus ONLINE |
+| `dim_date` | Dimension | Sydney business date, day name and weekend flag |
+| `sync_run` | Sync | One row per website sync: scheduled or manual, and how many events it covered |
+| `sync_change` | Sync | What each sync changed (before → after) |
+
+The grain of `fact_stock_event` is one stock change for one product at one store. Events from all three source systems are stored in this one table. The `source_system` column shows where each event came from (SUPPLY, STORE or ONLINE), and `event_type` shows what happened: a supplier delivery, store sale, reservation, transfer out, transfer in, collection, cancellation or blocked checkout.
+
+Quantities are signed. `quantity_change` is the change to shelf stock and `reserved_change` is the change to reserved stock. For example, a sale of 3 units is stored as −3, and a delivery of 5 cartons is stored as +20 units. Because of this, current stock can be calculated by simply adding up the events.
+
+Before records reach the fact table, the ETL layer (`etl` schema) standardises them. It maps each system's store code to the warehouse store code through an approved mapping, converts cartons to units, and converts UTC to Sydney time. Every fact row keeps a `source_ref`, for example `SUPPLY:supplier SUP-01 order PO-1201 line 1`, and the ETL run that loaded it. This means any number in a report can be traced back to its original source record.
+
+After a fresh build, the warehouse contains 146 stock events, and all 90 store and product combinations match the Store system's live stock. The report views (`rpt_*`) read from these tables, and the dashboard uses them to compare stock across stores, measure how wrong the website number is, and analyse blocked checkouts.
+
+> **[TODO Figure 3.3]** The first 15 rows of the stock event fact table, with signed quantity changes and the source reference for each event.
 
 ### 3.3 SQL scripts and synthetic data
 
-All SQL is commented and runs on a clean database without errors. Table 2 maps each script to the part of the design it implements.
+All SQL for the prototype is in ten script files (about 2,760 lines) in `workspace/db`. Every file starts with a header comment that states its purpose, the part of the design it implements, its prerequisites and whether it can be rerun, and the code itself is commented throughout. The scripts are run in order by one command (`build.py`), each file in its own transaction, and they build the whole database on a clean server without errors. Table 2 maps each script to the solution design.
 
-**Table 2. SQL scripts**
+**Table 2. SQL scripts and the design components they implement**
 
-| Script | Implements |
-| --- | --- |
-| `01_schemas.sql` | The five schemas |
-| `02_store_ops.sql` | Store system: tables, sale trigger, stock and order functions |
-| `03_supply.sql` | Supplier delivery system: tables, supplier delivery trigger |
-| `04_online.sql` | Online store: bag, pickup options, checkout, website refresh |
-| `05_warehouse.sql` | Dimensions, fact table, website-refresh tables, indexes |
-| `06_etl.sql` | Warehouse product list, store-code mapping, staging, extract triggers, transform view, load |
-| `07_sync.sql` | Records each website refresh in the warehouse |
-| `08_reports.sql` | Report views |
-| `seed/01_reference_data.sql` | Stores, items, suppliers, store codes in each system, warehouse product list |
-| `seed/02_business_history.sql` | Seven days of synthetic trading |
+| Script | Design component | What it creates |
+| --- | --- | --- |
+| `01_schemas.sql` | All layers | The five schemas: three source systems, etl and dw |
+| `02_store_ops.sql` | Source 1: Store system | Stores, products, store stock, sales and reservations; sale trigger; sale, order, transfer, collection and cancellation functions |
+| `03_supply.sql` | Source 2: Supplier system | Suppliers, locations, items and deliveries; delivery trigger that adds cartons × units per carton to the store shelf |
+| `04_online.sql` | Source 3: Online system | Web catalogue, website stock, bags, pickup options, checkout (stock check before payment), orders and the website sync |
+| `05_warehouse.sql` | Data warehouse | Product, store and date dimensions, the stock event fact table, sync tables and indexes |
+| `06_etl.sql` | ETL | Product list, approved store-code mapping, staging tables, extract and load triggers, transformation view, `run_etl()` and data quality view |
+| `07_sync.sql` | ETL / data warehouse | Loads each website sync (before → after) into the warehouse |
+| `08_reports.sql` | Reports | Report views 1–6 used by the dashboard |
+| `seed/01_reference_data.sql` | Synthetic data | Stores, 19 products, suppliers, each system's own store codes and the 15 approved store-code mappings |
+| `seed/02_business_history.sql` | Synthetic data | Seven days of trading, created through the source systems' own functions |
 
-For example, the fact table's check constraint enforces the sign rules from Table 1:
+**Extract, transform and load.** The ETL runs in near real time. When a source system records something, for example a new `sale_line`, an extract trigger copies the record into a staging table (`etl.stg_*`) in its original format, with its source reference. A load trigger then calls `etl.run_etl()`, which checks the item is on the warehouse product list, maps the store code through the approved mapping, converts cartons to units and UTC to Sydney time, and loads one row into `dw.fact_stock_event`. A record that fails a check is not guessed: it stays in staging with a reason (for example "Unknown item P019") and loads automatically once the item is approved. Every run is logged in `etl.etl_run`.
+
+The warehouse also checks its own data. For example, the fact table's check constraint makes sure each event type always has the right effect on shelf and reserved stock (the sign rules in Table 1):
 
 ```sql
 CONSTRAINT ck_fact_signs CHECK (
-       (event_type = 'store_sale'   AND quantity_change = -units AND reserved_change = 0      AND order_ref IS NULL)
-    OR (event_type = 'supplier_delivery'     AND quantity_change =  units AND reserved_change = 0      AND order_ref IS NULL)
-    OR (event_type = 'reservation'  AND quantity_change = -units AND reserved_change =  units AND order_ref IS NOT NULL)
-    ...
+       (event_type = 'store_sale'        AND quantity_change = -units AND reserved_change =  0)
+    OR (event_type = 'supplier_delivery' AND quantity_change =  units AND reserved_change =  0)
+    OR (event_type = 'reservation'       AND quantity_change = -units AND reserved_change =  units)
+    OR (event_type = 'collection'        AND quantity_change =  0     AND reserved_change = -units)
+    ...                                  -- (simplified: 8 event types in total)
 )
 ```
 
-The synthetic data covers five stores and 18 products, plus a new product (P019) that is deliberately left off the warehouse product list. It is created through the source systems' own functions, so every record passes through the ETL just as live data would. The seven days of trading include opening stock and restock supplier deliveries, 28 till receipts, eight online bags (seven paid and one blocked by a stale website number), collections, a cancellation and two website refreshes. Dates are relative to the build day, so "time since the last refresh" and overdue orders always look realistic.
+**Synthetic data.** The sample data covers five stores and 18 products, plus a new product (P019) that is in the store catalogue but not yet on the warehouse product list, so it can be used to test data validation. The data is not inserted directly into the tables. It is created by calling the source systems' own functions, so every record goes through the triggers and the ETL exactly as live data would. The seven days of trading include 30 supplier delivery dockets (opening stock and restocks), 28 till receipts, 8 online bags (7 paid and 1 blocked at checkout because the website number was stale), click-and-collect transfers, 2 collections, 1 cancellation, 1 overdue order and 2 website syncs. Dates are relative to the day the build runs, so "time since last sync" and overdue orders always look realistic.
 
-> **[TODO Figure 9]** Output of `build.py`, ending with 155 records staged, 146 loaded, 0 rejected, 0 not reconciled.
+After a fresh build, 155 source records have been staged and 146 stock events loaded into the warehouse. The other 9 staged records are paid checkout items, which are skipped because the same sale is already loaded as a reservation. No records are rejected, and all 90 store and product combinations reconcile with the Store system.
 
-> **[TODO Figure 10]** One supplier delivery traced from source to warehouse: cartons and UTC in staging, units and Sydney date in the fact table. CloudBeaver: the staging query in section 3 and the fact-table query in section 4 of `demo/video_demo_script.sql`.
+> **[TODO Figure 3.4]** Building the prototype database with one command.
+
+> **[TODO Figure 3.5]** One supplier delivery traced from the source system, through staging, to the warehouse. The same delivery appears as 5 cartons at NSW-CHATS in UTC in the source and staging, and as 20 units at store S03 in Sydney time in the warehouse. The shared `source_ref` links all three.
 
 ### 3.4 Reports and dashboard
 
@@ -249,37 +291,45 @@ The dashboard is read-only. Sales, deliveries, orders and website refreshes are 
 
 #### UC1: business impact (owner)
 
-The Overview helps the owner decide which products and stores need attention. Report 4 supplies sales value by channel and the best-selling products, with units sold and value. A best seller with an empty shelf is marked with the number of stores affected. Needs attention summarises blocked items at checkout, products out of stock and overdue orders by store, with links to their details.
+The Overview page helps the owner track the sales and losses that inventory problems create. Across the top it shows the main figures: sales, potential lost sales, out of stock, website accuracy and the next website refresh. In-store sales count till-sale items at the selling store. Online sales count paid order items at the pickup store, less cancellations, whether or not the customer has collected them. Sales and potential lost-sales values use the current shelf price. Stock, website status and overdue orders show the current position.
 
-Sales, best sellers and the potential lost-sales figure cover the same 7 Sydney calendar days: today and the six preceding days. In-store sales count till-sale items at the selling store. Online sales count paid order items at the pickup store, less cancellations, whether or not the customer has collected them. Sales and potential lost-sales values use the current shelf price. Stock, website status and overdue orders show the current position.
+Needs attention first shows how many products have the wrong stock on the website. It also summarises blocked items at checkout, products out of stock and overdue orders by store, with links to their details. Best sellers ranks the eight products with the most units sold, with each bar split into in-store and online sales. A product that is out of stock is marked with the number of stores affected. Sales, best sellers and the potential lost-sales figure cover the same 7 days: today and the six preceding days, using Sydney time.
 
-Potential lost sales measures items blocked at checkout before payment. Its share of online demand is calculated as units blocked divided by the sum of units sold online and units blocked, over the same period. The detail card lists every recorded blocked item, newest first; only the headline figure is limited to 7 days. Report 3 gives the time, pickup store, quantity wanted, website number, real combined stock and reason for each block. It distinguishes an out-of-date website number from stock split across stores, where the total is sufficient but no single store can supply the whole quantity. Selecting a row opens the original checkout record, including its captured website number, alongside the warehouse's reconstruction. A blocked item is a potential lost sale: nothing was charged, and the data does not establish whether the customer bought it later.
+Potential lost sales measures items blocked at checkout before payment. A blocked item is a potential lost sale: nothing was charged, and the data does not establish whether the customer bought it later. The share of online demand (e.g. 20% of online demand on the Potential lost sales tile in Figure X) is units blocked divided by the sum of units sold online and units blocked, over the same period (Report 3). The detail card lists every recorded blocked item, newest first. Selecting a row opens the original checkout record, including its captured website number and the warehouse's reconstruction.
 
 > **[TODO Figure]** Dashboard, Overview, with the blocked P018 checkout selected and its source checkout record open.
 
 #### UC2: website stock (owner)
 
-Report 2 compares the website number with the combined available shelf stock across all five stores, for products on the warehouse product list. The difference is website stock minus store stock. "Website too high" means the website shows more stock than the stores have; "Website too low" means available stock is hidden from online customers. The page shows whether automatic refresh is running, how long ago the last refresh ran and when the next is due while it is running.
+The core business problem is that the website refresh is not timely, so it shows different data from the in-store data. The owner cares about this because it brings many bad consequences. So the Website stock page shows the owner whether the website is correct now and whether the refresh is keeping it correct. The website shows one stock number for each product, the total stock of the five stores, and that number is only correct after a website refresh. Between refreshes, if in-store sales and supplier deliveries change the real stock, the website can show more or less than the stores have. These situations can lead to lost orders or errors. When the website shows too much, customers put items in their bag that checkout then blocks (UC1). When it shows too little, the customer might not know this item is available to buy, which can stop them ordering because they think it is out of stock.
 
-Refresh history lists the latest refreshes, the time between them, the stock events in between and the website numbers corrected. Selecting a row expands the products' before and after quantities and their changes. The owner can use the history to decide whether the refresh needs attention or whether its interval should be reviewed.
+At the top, a status line shows whether the automatic refresh is running, with its interval and the countdown to the next refresh, and how long ago the last refresh ran. Below it, a banner says either that the website matches the stores for all 18 products, or how many products show the wrong stock, split into too high and too low.
+
+The table of products with the wrong number compares what the website shows for each product with the combined available stock in the five stores (Report 2). The difference is website stock minus store stock. "Website too high" means the website shows more than the stores have, and "Website too low" means the opposite.
+
+Refresh history lists the latest refreshes, newest first. Each row shows the time since the previous refresh, the stock changes in between, the website numbers corrected, and how many products were too high or too low just before it ran. Selecting a refresh shows each corrected number before and after. The owner can use this history to judge whether the refresh interval is short enough. All products lists every product with their online and in-store stock quantity.
 
 > **[TODO Figure]** Dashboard, Website stock, before the manual refresh (P018 "Website too high", P001 "Website too low"), and after it (the refresh history, with the manual refresh opened to show what it corrected).
 
 #### UC3: low stock (store managers)
 
-Report 1 gives available, reserved and on-hand units for each product at each store. Available means shelf stock free to sell; reserved units have already left the shelf. On hand is available plus reserved. Low stock means 2 or fewer available units, including an empty shelf. Stock in transit belongs to no store and is excluded from these balances.
+Store managers are responsible for running their own store. On this problem, they especially need to know which products are running out at their store, so they can reorder before the shelf is empty. An empty shelf loses in-store sales and leaves fewer stores that can supply online orders. The Store stock page shows each store's stock and the items it has sold.
 
-A manager selects a store and uses the stock-and-sales chart to see which products are running out. It places current available and reserved stock beside units sold over the last 7 Sydney calendar days, with the least available stock first. Sales follow Report 4's rule: till sales at that store plus paid online order items assigned to it as the pickup store, less cancellations. The Low stock only filter narrows the products needing attention. Selecting a product in the chart narrows the table: with all stores selected, the table shows that product at each store; with one store selected, it keeps that store. The reorder itself is placed outside the prototype.
+At the top, a store manager can filter to their own store and pick the exact store, category and product. The Low stock filter shows products with 2 or fewer available units. The chart below lists products with the least stock first. Each product has two bars, with available and reserved stock on top. Units sold in the last 7 days sit underneath, counted the same way as on the Overview. When the sold bar is longer than the stock bar, the product sold more last week than the store has left. Selecting only a product shows that product's information.
 
-Selecting a table row opens a stock movements drawer for that product at that store. It lists events newest first in business language, such as "Delivery from Pawfect Foods" or "Sent to Bondi for online order 5". Each event shows the quantity change and, where available, the supplier order or till receipt behind it, for that store only.
+The table gives each product's available, reserved and on-hand stock at the store, with its stock status (Report 1). Available is shelf stock free to sell. Reserved stock is held for click and collect orders and has already left the shelf. On hand is the two together. A product at 1 or 2 available units is marked Low stock; at zero it is marked Out of stock. If a store is out of stock and a customer still wants to pick up there, the store can transfer stock from another store that has it. While the transfer is on the way, stock in transit belongs to neither store and is not counted.
+
+Selecting a product row opens the stock movements for that product at that store, newest first, from the warehouse's stock events. Each line says what happened, such as "Delivery from Pawfect Foods" or "Sent to Bondi for online order 5", with the quantity change and the supplier order or till receipt behind it. In Figure X, Chatswood has 113 Adult Dry Dog Food (P001) on the shelf, and the newest movement is the 20-unit delivery under supplier order PO-3003. The page also shows what is running low. The reorder itself sits outside the prototype; store managers place it themselves.
 
 > **[TODO Figure]** Dashboard, Store stock for Chatswood with P001 selected, showing the event history with supplier order PO-3001.
 
 #### UC4: click and collect orders (store staff)
 
-Report 5 helps store staff decide which click and collect orders to handle first. With My store selected, the page shows orders collected there and the items that store supplies to other pickup stores. Orders are sorted by urgency, with overdue orders first. The order time is when the customer paid and the items were held. Orders are identified by number; no customer names are stored.
+Store staff's job is to carry out inventory. In this scenario, that means the click and collect counter. They need to know which items to send to other stores and which are on their way. They also need to see which orders are ready for customers, with overdue orders first. Uncollected orders also keep stock off the shelf. The Click & collect orders page lists the open orders for one store.
 
-An order is ready only when every item is at the pickup store. It becomes overdue after the whole order has been ready for more than 3 days without collection, so time spent waiting for a transfer does not make it overdue. Overdue and Ready to collect count whole orders; To send and In transit count item lines. Selecting Ready to collect keeps only whole ready orders and all their lines. The Status filter applies to individual lines, whose status changes from Waiting to be sent to In transit and then Ready for collection. Each item line has its own status; an overdue order also has a red Overdue tag under its number.
+At the top, My store picks the store. Four tiles follow the order of the work: Overdue, To send, In transit and Ready to collect. Overdue and Ready to collect count whole orders. To send and In transit count item lines, because one order can take items from several stores. Selecting a tile filters the tables.
+
+Below, one table per pickup store lists its open orders, overdue first (Report 5). Each item line has its own status: Waiting to be sent, In transit or Ready for collection. An order is ready only when every item is at the pickup store. An order becomes overdue when it has been ready for more than 3 days without being collected. Time spent waiting for a transfer does not count. An overdue order has a red Overdue tag under its number. A second table lists the items the selected store must send to other pickup stores. In Figure X, order 3 at Parramatta is overdue. Order 5 at Bondi is not ready because two of its items are still in transit from Chatswood.
 
 > **[TODO Figure]** Dashboard, Click & collect orders, with the overdue order at Parramatta and the Bondi order waiting for two items in transit.
 

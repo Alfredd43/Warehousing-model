@@ -193,7 +193,7 @@ END;
 $$;
 
 -- Add (or change the quantity of) an item. The product page only lets the
--- customer add what the website number says is in stock - and that number
+-- customer add what the website number says is in stock, and that number
 -- may be stale. Example: SELECT online.add_to_basket(1, 'P001', 2);
 CREATE FUNCTION online.add_to_basket(
     p_basket_id bigint, p_item_no text, p_quantity integer, p_at timestamptz DEFAULT now()
@@ -291,7 +291,7 @@ $$;
 --      none is given, the top option (fewest transfers, then nearest). A store
 --      that is not offered (it has none of the items) cannot be chosen.
 --   2. For every item, ask the store system which store can supply the whole
---      quantity from REAL shelf stock - the pickup store first, then the
+--      quantity from REAL shelf stock: the pickup store first, then the
 --      other stores by distance from the pickup store (store_ops.find_stock
 --      locks those rows, so whoever checks out first gets the stock).
 --   3. Any item no single store can supply -> checkout BLOCKED: nothing is

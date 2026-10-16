@@ -6,7 +6,7 @@
 -- Prerequisites: An empty database (scripts/build.py creates one).
 -- Rerun behaviour: Not rerunnable; build.py recreates the database from empty.
 --
--- Medallion view of the layers (naming only - schema names are unchanged):
+-- Medallion view of the layers (naming only; the schema names stay the same):
 --   SOURCES  store_ops, supply, online   operational systems (not a layer)
 --   BRONZE   etl.stg_*                    source records as captured, in their
 --                                         source format (cartons, UTC, source
